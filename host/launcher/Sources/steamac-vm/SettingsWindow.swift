@@ -903,7 +903,7 @@ private struct AdvancedTab: View {
                     Text("Automatic (\(AdvancedTab.autoGiB) GB for this Mac)").tag(true)
                     Text("Custom").tag(false)
                 } label: {
-                    Label2(title: "Memory", detail: "Automatic: half of this Mac's RAM (4 to 16 GB). The Mac's GPU memory "
+                    Label2(title: "Memory", detail: "Automatic: 75% of this Mac's RAM (4 to 16 GB). The Mac's GPU memory "
                            + "comes from the same RAM, so the rest stays with macOS and the games' graphics.",
                            now: false, key: .memMiB)
                 }

@@ -34,12 +34,14 @@ enum VMSizing {
     /// Custom memory above this share of the Mac's RAM gets a warning in Settings.
     static let memWarnShare = 0.6
 
-    /// Half the Mac's RAM, rounded to whole GiB, 4...16 GiB: 8 GB Mac → 4 GiB, 16 → 8, 32 and up → 16.
-    /// The other half stays with macOS and the GPU (MoltenVK device memory, Metal heaps, the
-    /// virtio-gpu blobs the guest maps).
+    /// Three quarters of the Mac's RAM, rounded to whole GiB, 4...16 GiB:
+    /// 8 GB Mac → 6 GiB, 16 → 12, 24 and up → 16. This gives games enough guest
+    /// address space while retaining at least a quarter of RAM for macOS and the
+    /// shared GPU (MoltenVK device memory, Metal heaps and virtio-gpu blobs).
     static func autoMemMiB(_ host: Host) -> Int {
-        let halfMiB = Int(host.memBytes >> 21)
-        let rounded = (halfMiB + 512) / 1024 * 1024
+        let hostMiB = host.memBytes >> 20
+        let threeQuarterMiB = Int(hostMiB / 4 * 3)
+        let rounded = (threeQuarterMiB + 512) / 1024 * 1024
         return min(maxAutoMemMiB, max(minAutoMemMiB, rounded))
     }
 
@@ -72,7 +74,7 @@ enum VMSizing {
         let cores = host.perfCores.map { "\($0) performance cores of \(host.cores)" } ?? "\(host.cores) cores"
         let cpuWhy = cpusSource == .auto ? "automatic: \(cores), \(minAutoCPUs)-\(maxAutoCPUs)" : cpusSource.rawValue
         let memWhy = memSource == .auto
-            ? "automatic: half of \(host.memGiB) GB RAM, \(minAutoMemMiB / 1024)-\(maxAutoMemMiB / 1024) GB" : memSource.rawValue
+            ? "automatic: 75% of \(host.memGiB) GB RAM, \(minAutoMemMiB / 1024)-\(maxAutoMemMiB / 1024) GB" : memSource.rawValue
         return "\(cpus) vCPUs (\(cpuWhy)), \(memMiB) MiB memory (\(memWhy))"
     }
 
@@ -81,7 +83,7 @@ enum VMSizing {
         let gib: UInt64 = 1 << 30
         var failures: [String] = []
         func host(_ gb: UInt64, _ p: Int?, _ cores: Int) -> Host { Host(memBytes: gb * gib, perfCores: p, cores: cores) }
-        let mem: [(UInt64, Int)] = [(8, 4096), (16, 8192), (18, 9216), (24, 12288), (32, 16384), (36, 16384),
+        let mem: [(UInt64, Int)] = [(8, 6144), (16, 12288), (18, 14336), (24, 16384), (32, 16384), (36, 16384),
                                     (64, 16384), (128, 16384)]
         for (gb, want) in mem where autoMemMiB(host(gb, 4, 8)) != want {
             failures.append("sizing: \(gb) GB → \(autoMemMiB(host(gb, 4, 8))) MiB, want \(want)")

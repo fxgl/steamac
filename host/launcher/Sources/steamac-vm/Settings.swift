@@ -295,7 +295,7 @@ final class LauncherSettings: ObservableObject {
     @Published var soundMute = false { didSet { save(.soundMute, soundMute) } }
     @Published var soundLatency = Latency.normal { didSet { save(.soundLatency, soundLatency.rawValue) } }
     // Advanced
-    /// 0 = automatic (VMSizing: this Mac's performance cores / half its RAM); the key is then absent.
+    /// 0 = automatic (VMSizing: this Mac's performance cores / 75% of its RAM); the key is then absent.
     @Published var cpus = 0 { didSet { saveSize(.cpus, cpus) } }
     @Published var memMiB = 0 { didSet { saveSize(.memMiB, memMiB) } }
     /// SSH into the guest (gvproxy forward + guest sshd; `steamac.ssh=0|1`). Off by default in
