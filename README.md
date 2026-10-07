@@ -929,8 +929,8 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
   Stellar Blade Demo (UE4) runs at 1280×800, 60 FPS on an M4 Max; the first run spends minutes compiling shaders. The
   x86 emulator in Proton ARM64 (FEX) stopped it once after 20 minutes (DEP check in its protected .exe).
 - Audio: virtio-snd → CoreAudio (default device or one selected in settings), latency ≈65 ms on built-in
-  speakers. At boot, playback automatically exposes up to 8 PCM channels from the output device's
-  configured speaker layout, including height speakers (e.g. 5.1.2) when explicitly identified by
+  speakers. At boot, playback automatically exposes up to 12 PCM channels from the output device's
+  configured speaker layout, including height speakers (e.g. 5.1.2 or 7.1.4) when explicitly identified by
   CoreAudio. An unclassified/discrete layout falls back to mono/stereo; 8 channels alone do not imply
   5.1.2 or Dolby Atmos encoding. Before WirePlumber starts, `audio-layout` reads the VirtIO ALSA
   playback map and overrides SteamOS's platform stereo policy with the matching Pro Audio output.
@@ -941,7 +941,8 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
   switching to a device with more channels or a different speaker layout requires restarting the VM
   to expose the new layout to games. `STEAMAC_SND_TRACE=1` logs detected guest and device maps;
   `STEAMAC_SND_DUMP` records guest PCM before speaker mapping. The microphone remains mono/stereo
-  and has not been tested.
+  and has not been tested. 5.1.2 was tested on hardware; 7.1.4 has automated mapping coverage
+  but has not been tested on a physical 7.1.4 output.
 - Anti-cheat systems that block VMs will not work.
 - `logicOp` is unavailable (the private Metal API in the MoltenVK fork does not build); zink emits a warning.
 

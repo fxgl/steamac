@@ -1,0 +1,56 @@
+diff --git a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+--- a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
++++ b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+@@ -2,5 +2,5 @@
+ use super::super::virtio_sound::*;
+ 
+-pub const MAX_CHANNELS: usize = 8;
++pub const MAX_CHANNELS: usize = 12;
+ pub const MAX_DEVICE_CHANNELS: usize = 32;
+ 
+@@ -335,5 +335,34 @@
+         );
+         assert_eq!(guest_maps(&[0, 3, 0, 4]), [vec![2], vec![3, 4]]);
+-        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 22, 23]).len(), 8);
++        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 22, 23]).len(), 10);
++        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 21, 22, 23, 24, 25, 26, 30, 31]).len(), 12);
++    }
++    #[test]
++    fn seven_one_four_preserves_all_speakers_and_routes_each_channel() {
++        // Physical order: front pair, center/LFE, sides, rears, top front/rear.
++        let speakers = [3, 4, 7, 8, 9, 10, 5, 6, 22, 23, 25, 26];
++        let maps = guest_maps(&speakers);
++        let source = [3, 4, 5, 6, 7, 8, 9, 10, 22, 23, 25, 26];
++        assert_eq!(maps.len(), 12);
++        assert_eq!(maps[11], source);
++        let output = [26, 25, 23, 22, 6, 5, 10, 9, 8, 7, 4, 3];
++        for channel in 0..12 {
++            let mut input = [0.0; 12];
++            input[channel] = 0.5;
++            let rendered = route(&source, &output, &input);
++            for (index, speaker) in output.iter().enumerate() {
++                assert_eq!(rendered[index], if *speaker == source[channel] { 0.5 } else { 0.0 });
++            }
++            let stereo = route(&source, &[3, 4], &input);
++            assert!(stereo.iter().any(|sample| *sample > 0.0));
++        }
++        assert!(route(&source, &[3, 4], &[1.0; 12]).iter().all(|sample| *sample <= 1.0));
++        let mut bytes = vec![0; 12 + 12 * 20];
++        bytes[8..12].copy_from_slice(&12u32.to_ne_bytes());
++        let labels = [1u32, 2, 3, 4, 5, 6, 33, 34, 13, 15, 16, 18];
++        for (index, label) in labels.iter().enumerate() {
++            bytes[12 + index * 20..16 + index * 20].copy_from_slice(&label.to_ne_bytes());
++        }
++        assert_eq!(descriptions(&bytes, 12).unwrap(), speakers);
+     }
+     #[test]
+diff --git a/src/devices/tests/macos_audio.rs b/src/devices/tests/macos_audio.rs
+--- a/src/devices/tests/macos_audio.rs
++++ b/src/devices/tests/macos_audio.rs
+@@ -20,5 +20,5 @@
+     device.read_config(0, &mut config);
+     let maps = control.playback_maps().clone();
+-    assert!((1..=8).contains(&maps.len()));
++    assert!((1..=12).contains(&maps.len()));
+     for (i, map) in maps.iter().enumerate() {
+         assert_eq!(map.len(), i + 1);

@@ -13,7 +13,7 @@ def playback_map(text):
     maps = []
     for match in re.finditer(r"\bchmap-fixed=([^\n]+)", text):
         positions = match[1].strip().split(",")
-        if 1 <= len(positions) <= 8 and len(set(positions)) == len(positions) and all(p in POSITIONS for p in positions):
+        if 1 <= len(positions) <= 12 and len(set(positions)) == len(positions) and all(p in POSITIONS for p in positions):
             maps.append(positions)
     return max(maps, key=len, default=[])
 
