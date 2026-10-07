@@ -16,7 +16,7 @@
 # Features: make GPU=1 BLK=1 NET=1 INPUT=1 SND=1. v1.19.6 has no TIMESYNC make flag (the
 # vsock timesync is always built). SND on macOS uses the CoreAudio virtio-snd backend from
 # patch 0014 (no PipeWire); its debug knob STEAMAC_SND_DUMP=/path.wav records the playback
-# stream as handed to CoreAudio.
+# guest PCM before speaker mapping (patch 0017 detects and routes output speakers).
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -102,6 +102,9 @@ done
 	cd src/devices
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features gpu --lib -- virtio::gpu
+	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features snd --test macos_audio
 )
 
 # --- install (temp file + rename for every output)

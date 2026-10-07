@@ -1,0 +1,1119 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] virtio-snd: detect macOS output speakers and route up to eight PCM channels
+
+Snapshot the selected/default output's configured speaker layout when the guest
+first reads device config. Advertise fixed mono-to-eight-channel PCM maps in ALSA
+order, retaining explicitly identified height speakers. Do not infer 5.1.2 from
+an eight-channel count: unclassified/discrete layouts use the preferred stereo
+pair. Capture remains mono/stereo. Correct config.chmaps to match all entries.
+
+Use a device-bound HAL output unit and recheck the default/selected device and
+layout once a second. The callback consumes guest-format PCM on the existing
+ring/clock, then applies a precomputed speaker matrix into interleaved Float32
+physical outputs. Missing speakers fold into front channels with headroom;
+unknown physical channels stay silent. Rebuild/retry output units on hotplug
+without changing guest frame accounting or allocating/locking in the callback.
+The WAV diagnostic now captures guest PCM before mapping.
+
+Guest maps remain fixed for a boot: virtio-snd/ALSA cache PCM capabilities and
+there is no PCM-info/channel-map-change event. Restart the VM to expose added
+channels or a new guest speaker layout. This is PCM routing, not Atmos encoding.
+
+Validation: cargo check -p krun-devices --features snd; cargo test -p
+krun-devices --features snd --test macos_audio (11 tests). HAL Float32 format,
+identity channel map and initialization also checked on an eight-channel Mac
+output. Physical speaker listening and live device-switch tests remain.
+---
+diff --git a/src/devices/src/virtio/snd/audio_backends.rs b/src/devices/src/virtio/snd/audio_backends.rs
+index 65aa761..3046a90 100644
+--- a/src/devices/src/virtio/snd/audio_backends.rs
++++ b/src/devices/src/virtio/snd/audio_backends.rs
+@@ -1,6 +1,8 @@
+ // Manos Pitsidianakis <manos.pitsidianakis@linaro.org>
+ // SPDX-License-Identifier: Apache-2.0 or BSD-3-Clause
+ 
++#[cfg(target_os = "macos")]
++mod channel_layout;
+ #[cfg(target_os = "macos")]
+ mod coreaudio;
+ #[cfg(target_os = "linux")]
+@@ -8,10 +10,10 @@ mod pipewire;
+ 
+ use std::sync::{Arc, RwLock};
+ 
+-#[cfg(target_os = "macos")]
+-pub use self::coreaudio::output_device_exists;
+ #[cfg(target_os = "macos")]
+ use self::coreaudio::CoreAudioBackend;
++#[cfg(target_os = "macos")]
++pub use self::coreaudio::{output_device_exists, playback_maps};
+ #[cfg(target_os = "linux")]
+ use self::pipewire::PwBackend;
+ use super::{stream::Stream, BackendType, Result, SndControl, VirtioSndPcmSetParams};
+diff --git a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+new file mode 100644
+index 0000000..bd9901b
+--- /dev/null
++++ b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+@@ -0,0 +1,360 @@
++// Speaker positions and allocation-free PCM routing for the macOS backend.
++use super::super::virtio_sound::*;
++
++pub const MAX_CHANNELS: usize = 8;
++pub const MAX_DEVICE_CHANNELS: usize = 32;
++
++pub fn apple_position(label: u32) -> u8 {
++    match label {
++        1 | 301 => VIRTIO_SND_CHMAP_FL,
++        2 | 302 => VIRTIO_SND_CHMAP_FR,
++        3 => VIRTIO_SND_CHMAP_FC,
++        4 => VIRTIO_SND_CHMAP_LFE,
++        5 | 10 | 55 => VIRTIO_SND_CHMAP_SL,
++        6 | 11 | 56 => VIRTIO_SND_CHMAP_SR,
++        7 => VIRTIO_SND_CHMAP_FLC,
++        8 => VIRTIO_SND_CHMAP_FRC,
++        9 | 44 => VIRTIO_SND_CHMAP_RC,
++        12 => VIRTIO_SND_CHMAP_TC,
++        13 => VIRTIO_SND_CHMAP_TFL,
++        14 => VIRTIO_SND_CHMAP_TFC,
++        15 => VIRTIO_SND_CHMAP_TFR,
++        16 | 52 => VIRTIO_SND_CHMAP_TRL,
++        17 | 53 => VIRTIO_SND_CHMAP_TRC,
++        18 | 54 => VIRTIO_SND_CHMAP_TRR,
++        33 | 63 => VIRTIO_SND_CHMAP_RL,
++        34 | 64 => VIRTIO_SND_CHMAP_RR,
++        42 => VIRTIO_SND_CHMAP_MONO,
++        49 | 60 => VIRTIO_SND_CHMAP_TSL,
++        51 | 61 => VIRTIO_SND_CHMAP_TSR,
++        _ => VIRTIO_SND_CHMAP_NONE,
++    }
++}
++
++/// Decode expanded AudioChannelLayout descriptions; never infer speakers from count.
++pub fn descriptions(bytes: &[u8], channels: usize) -> Option<Vec<u8>> {
++    let word = |i| {
++        bytes
++            .get(i..i + 4)
++            .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
++    };
++    if word(0)? != 0
++        || word(8)? as usize != channels
++        || channels == 0
++        || channels > MAX_DEVICE_CHANNELS
++        || bytes.len() < 12 + channels * 20
++    {
++        return None;
++    }
++    let positions: Vec<_> = (0..channels)
++        .map(|i| apple_position(word(12 + i * 20).unwrap()))
++        .collect();
++    // Discrete/coordinate/duplicate labels cannot identify a surround speaker layout.
++    if positions.contains(&VIRTIO_SND_CHMAP_NONE)
++        || positions
++            .iter()
++            .enumerate()
++            .any(|(i, p)| positions[..i].contains(p))
++    {
++        return None;
++    }
++    Some(positions)
++}
++
++/// ALSA order, plus the detected height positions. One fixed map per channel count.
++pub fn guest_maps(device: &[u8]) -> Vec<Vec<u8>> {
++    let order = [
++        VIRTIO_SND_CHMAP_FL,
++        VIRTIO_SND_CHMAP_FR,
++        VIRTIO_SND_CHMAP_RL,
++        VIRTIO_SND_CHMAP_RR,
++        VIRTIO_SND_CHMAP_FC,
++        VIRTIO_SND_CHMAP_LFE,
++        VIRTIO_SND_CHMAP_SL,
++        VIRTIO_SND_CHMAP_SR,
++        VIRTIO_SND_CHMAP_RC,
++        VIRTIO_SND_CHMAP_FLC,
++        VIRTIO_SND_CHMAP_FRC,
++        VIRTIO_SND_CHMAP_TC,
++        VIRTIO_SND_CHMAP_TFL,
++        VIRTIO_SND_CHMAP_TFR,
++        VIRTIO_SND_CHMAP_TFC,
++        VIRTIO_SND_CHMAP_TRL,
++        VIRTIO_SND_CHMAP_TRR,
++        VIRTIO_SND_CHMAP_TRC,
++        VIRTIO_SND_CHMAP_TSL,
++        VIRTIO_SND_CHMAP_TSR,
++    ];
++    let ordered: Vec<_> = order
++        .into_iter()
++        .filter(|p| device.contains(p))
++        .take(MAX_CHANNELS)
++        .collect();
++    if !ordered.starts_with(&[VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR]) {
++        return vec![vec![VIRTIO_SND_CHMAP_MONO]];
++    }
++    let mut maps = vec![vec![VIRTIO_SND_CHMAP_MONO]];
++    for n in 2..=ordered.len() {
++        maps.push(ordered[..n].to_vec());
++    }
++    maps
++}
++
++#[derive(Clone)]
++pub struct Mixer {
++    pub format: u8,
++    pub source_channels: usize,
++    pub output_channels: usize,
++    weights: [[f32; MAX_CHANNELS]; MAX_DEVICE_CHANNELS],
++}
++
++impl Default for Mixer {
++    fn default() -> Self {
++        Self::new(
++            VIRTIO_SND_PCM_FMT_S16,
++            &[VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR],
++            &[VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR],
++        )
++    }
++}
++
++impl Mixer {
++    pub fn new(format: u8, source: &[u8], output: &[u8]) -> Self {
++        assert!(!source.is_empty() && source.len() <= MAX_CHANNELS);
++        assert!(!output.is_empty() && output.len() <= MAX_DEVICE_CHANNELS);
++        let mut weights = [[0.0; MAX_CHANNELS]; MAX_DEVICE_CHANNELS];
++        for (s, position) in source.iter().copied().enumerate() {
++            if let Some(d) = output.iter().position(|p| *p == position) {
++                weights[d][s] = 1.0;
++                continue;
++            }
++            let counterpart = match position {
++                VIRTIO_SND_CHMAP_SL => VIRTIO_SND_CHMAP_RL,
++                VIRTIO_SND_CHMAP_SR => VIRTIO_SND_CHMAP_RR,
++                VIRTIO_SND_CHMAP_RL => VIRTIO_SND_CHMAP_SL,
++                VIRTIO_SND_CHMAP_RR => VIRTIO_SND_CHMAP_SR,
++                _ => VIRTIO_SND_CHMAP_NONE,
++            };
++            if counterpart != VIRTIO_SND_CHMAP_NONE {
++                if let Some(d) = output.iter().position(|p| *p == counterpart) {
++                    weights[d][s] = 1.0;
++                    continue;
++                }
++            }
++            let left = matches!(
++                position,
++                VIRTIO_SND_CHMAP_FL
++                    | VIRTIO_SND_CHMAP_RL
++                    | VIRTIO_SND_CHMAP_SL
++                    | VIRTIO_SND_CHMAP_FLC
++                    | VIRTIO_SND_CHMAP_TFL
++                    | VIRTIO_SND_CHMAP_TRL
++                    | VIRTIO_SND_CHMAP_TSL
++            );
++            let right = matches!(
++                position,
++                VIRTIO_SND_CHMAP_FR
++                    | VIRTIO_SND_CHMAP_RR
++                    | VIRTIO_SND_CHMAP_SR
++                    | VIRTIO_SND_CHMAP_FRC
++                    | VIRTIO_SND_CHMAP_TFR
++                    | VIRTIO_SND_CHMAP_TRR
++                    | VIRTIO_SND_CHMAP_TSR
++            );
++            for (d, target) in output.iter().copied().enumerate() {
++                if (target == VIRTIO_SND_CHMAP_FL && !right)
++                    || (target == VIRTIO_SND_CHMAP_FR && !left)
++                    || target == VIRTIO_SND_CHMAP_MONO
++                    || (output.len() == 1 && target != VIRTIO_SND_CHMAP_NONE)
++                {
++                    weights[d][s] = if position == VIRTIO_SND_CHMAP_MONO {
++                        1.0
++                    } else if position == VIRTIO_SND_CHMAP_LFE {
++                        0.5
++                    } else {
++                        std::f32::consts::FRAC_1_SQRT_2
++                    };
++                }
++            }
++        }
++        // Headroom for a full-scale correlated downmix; direct routing remains unity gain.
++        for row in &mut weights {
++            let sum: f32 = row.iter().sum();
++            if sum > 1.0 {
++                for w in row {
++                    *w /= sum;
++                }
++            }
++        }
++        Self {
++            format,
++            source_channels: source.len(),
++            output_channels: output.len(),
++            weights,
++        }
++    }
++
++    pub fn sample_bytes(&self) -> usize {
++        match self.format {
++            VIRTIO_SND_PCM_FMT_U8 => 1,
++            VIRTIO_SND_PCM_FMT_S16 => 2,
++            _ => 4,
++        }
++    }
++
++    /// Guest interleaved PCM -> device interleaved Float32. No heap work on the IO thread.
++    pub fn render(&self, source: &[u8], output: &mut [u8]) {
++        output.fill(0);
++        let bytes = self.sample_bytes();
++        for (frame, dest) in source
++            .chunks_exact(bytes * self.source_channels)
++            .zip(output.chunks_exact_mut(4 * self.output_channels))
++        {
++            let mut samples = [0.0; MAX_CHANNELS];
++            for (s, value) in frame.chunks_exact(bytes).enumerate() {
++                samples[s] = match self.format {
++                    VIRTIO_SND_PCM_FMT_U8 => (value[0] as f32 - 128.0) / 128.0,
++                    VIRTIO_SND_PCM_FMT_S16 => {
++                        i16::from_le_bytes(value.try_into().unwrap()) as f32 / 32768.0
++                    }
++                    VIRTIO_SND_PCM_FMT_S32 => {
++                        i32::from_le_bytes(value.try_into().unwrap()) as f32 / 2147483648.0
++                    }
++                    _ => {
++                        let v = f32::from_le_bytes(value.try_into().unwrap());
++                        if v.is_finite() {
++                            v
++                        } else {
++                            0.0
++                        }
++                    }
++                };
++            }
++            for (d, sample) in dest.chunks_exact_mut(4).enumerate() {
++                let value: f32 = samples
++                    .iter()
++                    .zip(self.weights[d])
++                    .map(|(v, w)| v * w)
++                    .sum();
++                sample.copy_from_slice(&value.clamp(-1.0, 1.0).to_le_bytes());
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn route(source: &[u8], output: &[u8], values: &[f32]) -> Vec<f32> {
++        let mixer = Mixer::new(VIRTIO_SND_PCM_FMT_FLOAT, source, output);
++        let input: Vec<_> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
++        let mut data = vec![0; output.len() * 4];
++        mixer.render(&input, &mut data);
++        data.chunks_exact(4)
++            .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
++            .collect()
++    }
++    #[test]
++    fn maps_preserve_height_and_alsa_order() {
++        let speakers = [3, 4, 7, 8, 9, 10, 22, 23];
++        let maps = guest_maps(&speakers);
++        assert_eq!(maps.len(), 8);
++        assert_eq!(maps[7], [3, 4, 7, 8, 9, 10, 22, 23]);
++        assert!(!maps[7].contains(&VIRTIO_SND_CHMAP_RL));
++        assert_eq!(
++            guest_maps(&[3, 4, 7, 8, 9, 10, 5, 6])[7],
++            [3, 4, 5, 6, 7, 8, 9, 10]
++        );
++    }
++    #[test]
++    fn permutation_and_height_impulses() {
++        let source = [3, 4, 7, 8, 9, 10, 22, 23];
++        let device = [22, 23, 9, 10, 8, 7, 4, 3];
++        for channel in 0..8 {
++            let mut input = [0.0; 8];
++            input[channel] = 0.5;
++            let out = route(&source, &device, &input);
++            for d in 0..8 {
++                assert_eq!(
++                    out[d],
++                    if source[channel] == device[d] {
++                        0.5
++                    } else {
++                        0.0
++                    }
++                );
++            }
++        }
++    }
++    #[test]
++    fn switching_to_stereo_keeps_center_lfe_and_height_audible() {
++        let source = [3, 4, 7, 8, 9, 10, 22, 23];
++        for channel in 0..8 {
++            let mut input = [0.0; 8];
++            input[channel] = 1.0;
++            let out = route(&source, &[3, 4], &input);
++            assert!(out.iter().any(|v| *v > 0.0));
++            if [0, 4, 6].contains(&channel) {
++                assert_eq!(out[1], 0.0);
++            }
++            if [1, 5, 7].contains(&channel) {
++                assert_eq!(out[0], 0.0);
++            }
++        }
++        assert!(route(&source, &[3, 4], &[1.0; 8]).iter().all(|v| *v <= 1.0));
++    }
++    #[test]
++    fn stereo_does_not_fill_height_speakers() {
++        assert_eq!(
++            route(&[3, 4], &[3, 4, 22, 23], &[0.25, -0.5]),
++            [0.25, -0.5, 0.0, 0.0]
++        );
++        assert_eq!(route(&[2], &[3, 4], &[0.5]), [0.5, 0.5]);
++    }
++    #[test]
++    fn mono_center_device_is_audible_and_surround_aliases_route() {
++        assert_eq!(route(&[2], &[7], &[0.5]), [0.5]);
++        let out = route(&[3, 4, 7, 8, 9, 10], &[7], &[1.0; 6]);
++        assert!(out[0] > 0.0 && out[0] <= 1.0);
++        assert_eq!(route(&[9, 10], &[5, 6], &[0.25, -0.5]), [0.25, -0.5]);
++    }
++    #[test]
++    fn unknown_physical_channels_remain_silent_and_guest_maps_are_bounded() {
++        assert_eq!(
++            route(&[3, 4], &[0, 3, 0, 4], &[0.25, -0.5]),
++            [0.0, 0.25, 0.0, -0.5]
++        );
++        assert_eq!(guest_maps(&[0, 3, 0, 4]), [vec![2], vec![3, 4]]);
++        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 22, 23]).len(), 8);
++    }
++    #[test]
++    fn parses_labels_but_rejects_unknown_truncated_and_duplicate_layouts() {
++        let mut bytes = vec![0; 12 + 8 * 20];
++        bytes[8..12].copy_from_slice(&8u32.to_ne_bytes());
++        for (i, label) in [1u32, 2, 3, 4, 5, 6, 13, 15].iter().enumerate() {
++            bytes[12 + i * 20..16 + i * 20].copy_from_slice(&label.to_ne_bytes());
++        }
++        assert_eq!(
++            descriptions(&bytes, 8).unwrap(),
++            [3, 4, 7, 8, 9, 10, 22, 23]
++        );
++        assert!(descriptions(&bytes[..20], 8).is_none());
++        bytes[12..16].copy_from_slice(&0x10000u32.to_ne_bytes());
++        assert!(descriptions(&bytes, 8).is_none());
++        bytes[12..16].copy_from_slice(&2u32.to_ne_bytes());
++        assert!(descriptions(&bytes, 8).is_none());
++    }
++    #[test]
++    fn decodes_all_advertised_sample_formats() {
++        for (format, bytes) in [
++            (VIRTIO_SND_PCM_FMT_U8, vec![192]),
++            (VIRTIO_SND_PCM_FMT_S16, 16384i16.to_le_bytes().to_vec()),
++            (VIRTIO_SND_PCM_FMT_S32, 1073741824i32.to_le_bytes().to_vec()),
++            (VIRTIO_SND_PCM_FMT_FLOAT, 0.5f32.to_le_bytes().to_vec()),
++        ] {
++            let mut out = [0; 4];
++            Mixer::new(format, &[2], &[2]).render(&bytes, &mut out);
++            assert_eq!(f32::from_le_bytes(out), 0.5);
++        }
++    }
++}
+diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+index 8279afb..689b407 100644
+--- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
++++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+@@ -2,12 +2,11 @@
+ //
+ // CoreAudio backend for virtio-snd (macOS).
+ //
+-// Playback: a default-output AudioUnit (kAudioUnitSubType_DefaultOutput, which follows the
+-// system default output device, e.g. when AirPods connect) is fed the guest's PCM in the
+-// guest's own format; the unit converts format and rate to the device. Guest data is copied
+-// into a lock-free SPSC byte ring by a pump thread as soon as the guest queues it (since Linux
+-// 6.7 the driver only queues what the application has written), and the real-time render
+-// callback only copies out of the ring. A playback message is completed once the device has
++// Playback: a HAL AudioUnit bound to the selected or current default output device.
++// Speaker layouts are detected at boot and checked once a second. The guest's PCM stays in
++// its own format in the lock-free SPSC ring; the callback converts it to interleaved Float32
++// in physical speaker order, with a precomputed matrix for downmixing missing speakers.
++// A playback message is completed once the device has
+ // played up to a host FIFO before its end (fifo_bytes: one device IO buffer plus safety offset,
+ // plus the SndControl buffer, at most the guest buffer minus two periods), with the callback's
+ // chunks spread over their play time, so the guest's hw_ptr advances smoothly at the device
+@@ -26,7 +25,7 @@
+ // by more data counts as one underrun and is logged by the pump thread. Device and device
+ // rate changes are picked up once a second (FIFO, latency and log line follow).
+ //
+-// STEAMAC_SND_DUMP=/path.wav writes every byte handed to CoreAudio for the playback stream
++// STEAMAC_SND_DUMP=/path.wav writes guest PCM before speaker mapping for the playback stream
+ // while it runs (underrun silence included) to a WAV file (a new file per format change).
+ // STEAMAC_SND_TRACE=1 logs PCM commands and a per-second heartbeat of the stream state.
+ 
+@@ -47,6 +46,7 @@ use super::super::{
+     virtio_sound::*,
+     Direction, Error, Result, SndControl, Stream,
+ };
++use super::channel_layout::{self, Mixer, MAX_CHANNELS, MAX_DEVICE_CHANNELS};
+ use super::AudioBackend;
+ 
+ #[allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
+@@ -145,7 +145,6 @@ mod ffi {
+     }
+ 
+     pub const kAudioUnitType_Output: u32 = fourcc(b"auou");
+-    pub const kAudioUnitSubType_DefaultOutput: u32 = fourcc(b"def ");
+     pub const kAudioUnitSubType_HALOutput: u32 = fourcc(b"ahal");
+     pub const kAudioUnitManufacturer_Apple: u32 = fourcc(b"appl");
+ 
+@@ -153,6 +152,7 @@ mod ffi {
+     pub const kAudioUnitProperty_Latency: u32 = 12;
+     pub const kAudioUnitProperty_SetRenderCallback: u32 = 23;
+     pub const kAudioOutputUnitProperty_CurrentDevice: u32 = 2000;
++    pub const kAudioOutputUnitProperty_ChannelMap: u32 = 2002;
+     pub const kAudioOutputUnitProperty_EnableIO: u32 = 2003;
+     pub const kAudioOutputUnitProperty_SetInputCallback: u32 = 2005;
+ 
+@@ -167,6 +167,12 @@ mod ffi {
+     pub const kAudioUnitRenderAction_OutputIsSilence: u32 = 1 << 4;
+ 
+     pub const kAudioObjectSystemObject: AudioObjectID = 1;
++    pub const kAudioHardwarePropertyDefaultOutputDevice: u32 = fourcc(b"dOut");
++    pub const kAudioDevicePropertyStreamConfiguration: u32 = fourcc(b"slay");
++    pub const kAudioDevicePropertyPreferredChannelLayout: u32 = fourcc(b"srnd");
++    pub const kAudioDevicePropertyPreferredChannelsForStereo: u32 = fourcc(b"dch2");
++    pub const kAudioFormatProperty_ChannelLayoutForTag: u32 = fourcc(b"cmpl");
++    pub const kAudioFormatProperty_ChannelLayoutForBitmap: u32 = fourcc(b"cmpb");
+     pub const kAudioHardwarePropertyDefaultInputDevice: u32 = fourcc(b"dIn ");
+     pub const kAudioHardwarePropertyTranslateUIDToDevice: u32 = fourcc(b"uidd");
+     pub const kHALOutputParam_Volume: u32 = 14;
+@@ -231,6 +237,19 @@ mod ffi {
+             offset_frames: u32,
+         ) -> OSStatus;
+ 
++        pub fn AudioFormatGetPropertyInfo(
++            id: u32,
++            spec_size: u32,
++            spec: *const c_void,
++            size: *mut u32,
++        ) -> OSStatus;
++        pub fn AudioFormatGetProperty(
++            id: u32,
++            spec_size: u32,
++            spec: *const c_void,
++            size: *mut u32,
++            data: *mut c_void,
++        ) -> OSStatus;
+         pub fn AudioConverterNew(
+             inSourceFormat: *const AudioStreamBasicDescription,
+             inDestinationFormat: *const AudioStreamBasicDescription,
+@@ -516,7 +535,7 @@ fn ticks_to_nanos(ticks: u64) -> u64 {
+ /// State shared with a CoreAudio IO thread. Everything the callbacks touch is lock-free.
+ struct Shared {
+     ring: Ring,
+-    /// Playback only: copy of what the render callback hands to CoreAudio.
++    /// Playback only: guest PCM consumed by the callback, before speaker mapping.
+     dump: Option<Ring>,
+     /// Between START and STOP.
+     running: AtomicBool,
+@@ -551,12 +570,14 @@ struct Shared {
+     unit: AtomicPtr<c_void>,
+     /// Capture: AudioUnitRender target, touched only by the IO thread.
+     scratch: UnsafeCell<Box<[u8]>>,
++    /// Changed only while the output unit is stopped/uninitialized.
++    mixer: UnsafeCell<Mixer>,
+     wake: Arc<Semaphore>,
+ }
+ 
+ // SAFETY: `scratch` is only accessed from the IO thread of the single unit using this
+ // `Shared`; the rings are SPSC with one producer and one consumer thread each; everything
+-// else is atomic.
++// else is atomic. The mixer is changed only with the unit stopped/uninitialized.
+ unsafe impl Sync for Shared {}
+ unsafe impl Send for Shared {}
+ 
+@@ -564,7 +585,9 @@ impl Shared {
+     fn new(direction: Direction, dump: bool, wake: Arc<Semaphore>) -> Self {
+         let scratch = match direction {
+             Direction::Input => vec![0u8; CAPTURE_MAX_FRAMES * 2 * 4].into_boxed_slice(),
+-            Direction::Output => Box::default(),
++            Direction::Output => {
++                vec![0u8; CAPTURE_MAX_FRAMES * MAX_CHANNELS * 4].into_boxed_slice()
++            }
+         };
+         Self {
+             ring: Ring::new(RING_BYTES),
+@@ -586,6 +609,7 @@ impl Shared {
+             silence_bytes: AtomicU64::new(0),
+             unit: AtomicPtr::new(ptr::null_mut()),
+             scratch: UnsafeCell::new(scratch),
++            mixer: UnsafeCell::new(Mixer::default()),
+             wake,
+         }
+     }
+@@ -603,7 +627,7 @@ extern "C" fn render_output(
+     // SAFETY: refcon is the Arc<Shared> kept alive by the HostStream owning the unit, and the
+     // unit is stopped and disposed before that Arc is released. `io` holds one interleaved
+     // buffer of `mDataByteSize` bytes (the format set on the unit's input scope).
+-    let (sh, out) = unsafe {
++    let (sh, device_out) = unsafe {
+         let buf = &mut (*io).mBuffers[0];
+         if buf.mData.is_null() {
+             return 0;
+@@ -618,7 +642,12 @@ extern "C" fn render_output(
+     sh.callbacks.fetch_add(1, Ordering::Relaxed);
+     sh.last_callback.store(now, Ordering::Relaxed);
+     let fb = sh.frame_bytes.load(Ordering::Relaxed) as usize;
+-    let want = out.len();
++    // SAFETY: the callback exclusively owns scratch; mixer is immutable while the unit runs.
++    let (scratch, mixer) = unsafe { (&mut *sh.scratch.get(), &*sh.mixer.get()) };
++    let frames = device_out.len() / (mixer.output_channels * 4);
++    let want = frames.min(scratch.len() / fb) * fb;
++    let out = &mut scratch[..want];
++    device_out.fill(0);
+     let running = sh.running.load(Ordering::Acquire);
+     let playable = sh
+         .limit
+@@ -651,6 +680,7 @@ extern "C" fn render_output(
+     if off < want {
+         out[off..].fill(sh.silence.load(Ordering::Relaxed));
+     }
++    mixer.render(out, device_out);
+     if running {
+         if off < want {
+             sh.silence_bytes
+@@ -776,11 +806,13 @@ impl Format {
+             | VIRTIO_SND_PCM_FMT_FLOAT => {}
+             _ => return None,
+         }
+-        (1..=2).contains(&p.channels).then_some(Self {
+-            format: p.format,
+-            rate,
+-            channels: p.channels as u32,
+-        })
++        (1..=MAX_CHANNELS as u8)
++            .contains(&p.channels)
++            .then_some(Self {
++                format: p.format,
++                rate,
++                channels: p.channels as u32,
++            })
+     }
+ 
+     fn sample_bytes(&self) -> u32 {
+@@ -868,6 +900,169 @@ fn object_property<T: Copy + Default>(
+     (status == 0).then_some(value)
+ }
+ 
++/// Aligned backing storage also handles AudioBufferList's pointer-sized fields.
++fn property_bytes(device: AudioObjectID, selector: u32) -> Option<Vec<u8>> {
++    let addr = property_address(selector, kAudioObjectPropertyScopeOutput);
++    let mut size = 0;
++    // SAFETY: valid address and size pointer; no qualifier.
++    if unsafe { AudioObjectGetPropertyDataSize(device, &addr, 0, ptr::null(), &mut size) } != 0
++        || size == 0
++        || size > 65536
++    {
++        return None;
++    }
++    let mut storage = vec![0u64; (size as usize).div_ceil(8)];
++    let capacity = storage.len() * 8;
++    // SAFETY: u64 allocation is suitably aligned for all CoreAudio property structures.
++    if unsafe {
++        AudioObjectGetPropertyData(
++            device,
++            &addr,
++            0,
++            ptr::null(),
++            &mut size,
++            storage.as_mut_ptr().cast(),
++        )
++    } != 0
++        || size as usize > capacity
++    {
++        return None;
++    }
++    // SAFETY: size bytes were initialized in the zero-initialized allocation.
++    Some(unsafe { std::slice::from_raw_parts(storage.as_ptr().cast(), size as usize) }.to_vec())
++}
++
++fn device_channels(device: AudioObjectID) -> Option<usize> {
++    let bytes = property_bytes(device, kAudioDevicePropertyStreamConfiguration)?;
++    let count = u32::from_ne_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
++    let offset = std::mem::offset_of!(AudioBufferList, mBuffers);
++    let stride = std::mem::size_of::<AudioBuffer>();
++    if count > MAX_DEVICE_CHANNELS || bytes.len() < offset + count * stride {
++        return None;
++    }
++    let channels: usize = (0..count)
++        .map(|i| {
++            u32::from_ne_bytes(
++                bytes[offset + i * stride..offset + i * stride + 4]
++                    .try_into()
++                    .unwrap(),
++            ) as usize
++        })
++        .sum();
++    (1..=MAX_DEVICE_CHANNELS)
++        .contains(&channels)
++        .then_some(channels)
++}
++
++fn expanded_layout(mut bytes: Vec<u8>) -> Option<Vec<u8>> {
++    let tag = u32::from_ne_bytes(bytes.get(..4)?.try_into().ok()?);
++    if tag == 0 {
++        return Some(bytes);
++    }
++    let (property, spec) = if tag == 1 << 16 {
++        (
++            kAudioFormatProperty_ChannelLayoutForBitmap,
++            u32::from_ne_bytes(bytes.get(4..8)?.try_into().ok()?),
++        )
++    } else {
++        (kAudioFormatProperty_ChannelLayoutForTag, tag)
++    };
++    let mut size = 0;
++    // SAFETY: scalar specifier and writable size pointer.
++    if unsafe { AudioFormatGetPropertyInfo(property, 4, (&spec as *const u32).cast(), &mut size) }
++        != 0
++        || size < 12
++        || size > 65536
++    {
++        return None;
++    }
++    let mut storage = vec![0u32; (size as usize).div_ceil(4)];
++    let capacity = storage.len() * 4;
++    // SAFETY: aligned writable buffer of at least size bytes.
++    if unsafe {
++        AudioFormatGetProperty(
++            property,
++            4,
++            (&spec as *const u32).cast(),
++            &mut size,
++            storage.as_mut_ptr().cast(),
++        )
++    } != 0
++        || size as usize > capacity
++    {
++        return None;
++    }
++    bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast(), size as usize) }.to_vec();
++    Some(bytes)
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct OutputRoute {
++    device: AudioObjectID,
++    /// Physical device order; NONE leaves an unclassified output silent.
++    positions: Vec<u8>,
++}
++
++fn output_route(control: &SndControl) -> Option<OutputRoute> {
++    let device = control
++        .output_device()
++        .as_deref()
++        .and_then(resolve_output_device)
++        .or_else(|| {
++            object_property(
++                kAudioObjectSystemObject,
++                kAudioHardwarePropertyDefaultOutputDevice,
++                kAudioObjectPropertyScopeGlobal,
++            )
++        })
++        .filter(|id| *id != 0)?;
++    let channels = device_channels(device)?;
++    let positions = property_bytes(device, kAudioDevicePropertyPreferredChannelLayout)
++        .and_then(expanded_layout)
++        .and_then(|bytes| channel_layout::descriptions(&bytes, channels))
++        .filter(|p| {
++            channels == 1 || (p.contains(&VIRTIO_SND_CHMAP_FL) && p.contains(&VIRTIO_SND_CHMAP_FR))
++        })
++        .unwrap_or_else(|| {
++            let mut positions = vec![VIRTIO_SND_CHMAP_NONE; channels];
++            if channels == 1 {
++                positions[0] = VIRTIO_SND_CHMAP_MONO;
++            } else {
++                let pair: [u32; 2] = object_property(
++                    device,
++                    kAudioDevicePropertyPreferredChannelsForStereo,
++                    kAudioObjectPropertyScopeOutput,
++                )
++                .unwrap_or([1, 2]);
++                let valid =
++                    pair[0] != pair[1] && pair.iter().all(|c| *c > 0 && *c as usize <= channels);
++                let pair = if valid { pair } else { [1, 2] };
++                positions[pair[0] as usize - 1] = VIRTIO_SND_CHMAP_FL;
++                positions[pair[1] as usize - 1] = VIRTIO_SND_CHMAP_FR;
++            }
++            positions
++        });
++    Some(OutputRoute { device, positions })
++}
++
++pub fn playback_maps(control: &SndControl) -> Vec<Vec<u8>> {
++    let route = output_route(control);
++    let maps = channel_layout::guest_maps(
++        route
++            .as_ref()
++            .map_or(&[VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR][..], |r| {
++                r.positions.as_slice()
++            }),
++    );
++    log::info!(
++        "snd: boot playback supports {} channels; output {:?}; guest maps {:?}",
++        maps.len(),
++        route,
++        maps
++    );
++    maps
++}
++
+ fn device_name(device: AudioObjectID) -> String {
+     let addr = property_address(kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal);
+     let mut cfstr: *const c_void = ptr::null();
+@@ -1302,7 +1497,8 @@ struct HostStream {
+     /// Control generation last applied.
+     seen_generation: u64,
+     /// Playback: device the unit was created for (None = the default-output unit).
+-    output_target: Option<AudioObjectID>,
++    output_route: Option<OutputRoute>,
++    output_restart_pending: bool,
+     /// The unit is stopped because the VM is paused (SndControl::paused) and starts again on
+     /// resume.
+     suspended: bool,
+@@ -1341,7 +1537,8 @@ impl HostStream {
+             dump_files: 0,
+             control,
+             seen_generation: u64::MAX,
+-            output_target: None,
++            output_route: None,
++            output_restart_pending: false,
+             suspended: false,
+             traced_callbacks: 0,
+         }
+@@ -1415,22 +1612,29 @@ impl HostStream {
+         let Some(fmt) = self.format else {
+             return; // applied by configure()
+         };
+-        let target = self
+-            .control
+-            .output_device()
+-            .as_deref()
+-            .and_then(resolve_output_device);
+-        if target != self.output_target && self.unit.is_some() {
+-            // Restart the output on the new device; the ring and the guest stream carry on.
+-            let started = self.unit.as_ref().is_some_and(|u| u.started);
++        let route = output_route(&self.control);
++        if route != self.output_route || self.unit.as_ref().is_none_or(|u| !u.initialized) {
++            // Dispose first: no callback may observe the mixer while it is being replaced.
++            self.output_restart_pending |= self.unit.as_ref().is_some_and(|u| u.started);
+             self.unit = None;
+-            let result =
+-                self.configure(fmt)
+-                    .and_then(|()| if started { self.start_unit() } else { Ok(()) });
+-            if let Err(err) = result {
+-                log::error!("snd: stream {}: switching output device: {err}", self.id);
++            self.output_route = None;
++            if route.is_some() {
++                let result = self.configure(fmt).and_then(|()| {
++                    if self.output_restart_pending && !self.control.paused() {
++                        self.start_unit()
++                    } else {
++                        Ok(())
++                    }
++                });
++                if let Err(err) = result {
++                    // Retry at the next housekeeping pass; retain queued guest PCM and clock.
++                    self.unit = None;
++                    log::error!("snd: stream {}: switching output device: {err}", self.id);
++                } else {
++                    self.output_restart_pending = false;
++                    self.trace_state("output switched", None);
++                }
+             }
+-            self.trace_state("output switched", None);
+         }
+         if let Some(unit) = self.unit.as_ref() {
+             unit.set_volume(self.control.volume());
+@@ -1445,12 +1649,13 @@ impl HostStream {
+     /// FIFO) and playback carries on from the same sample without an underrun.
+     fn follow_pause(&mut self) {
+         if self.control.paused() {
++            self.suspended |= self.output_restart_pending;
+             if self.unit.as_ref().is_some_and(|u| u.started) {
+                 self.stop_unit();
+                 self.suspended = true;
+                 self.trace_state("suspended (VM paused)", None);
+             }
+-        } else if self.suspended {
++        } else if self.suspended && self.unit.as_ref().is_some_and(|u| u.initialized) {
+             self.suspended = false;
+             if let Err(err) = self.start_unit() {
+                 log::error!("snd: stream {}: restarting after VM pause: {err}", self.id);
+@@ -1469,27 +1674,18 @@ impl HostStream {
+         }
+         let unit = match self.direction {
+             Direction::Output => {
+-                // A selected device gets a HAL unit bound to it; otherwise the default-output
+-                // unit, which follows the system default device by itself.
+-                self.output_target = self
+-                    .control
+-                    .output_device()
+-                    .as_deref()
+-                    .and_then(resolve_output_device);
+-                let unit = match self.output_target {
+-                    Some(device) => {
+-                        let unit = Unit::new(kAudioUnitSubType_HALOutput)?;
+-                        unit.set(
+-                            kAudioOutputUnitProperty_CurrentDevice,
+-                            kAudioUnitScope_Global,
+-                            0,
+-                            &device,
+-                            "CurrentDevice(output)",
+-                        )?;
+-                        unit
+-                    }
+-                    None => Unit::new(kAudioUnitSubType_DefaultOutput)?,
+-                };
++                let route = output_route(&self.control).ok_or_else(|| {
++                    Error::UnexpectedAudioBackendError("no usable output device".into())
++                })?;
++                let unit = Unit::new(kAudioUnitSubType_HALOutput)?;
++                unit.set(
++                    kAudioOutputUnitProperty_CurrentDevice,
++                    kAudioUnitScope_Global,
++                    0,
++                    &route.device,
++                    "CurrentDevice(output)",
++                )?;
++                self.output_route = Some(route);
+                 let cb = AURenderCallbackStruct {
+                     inputProc: render_output,
+                     inputProcRefCon: self.refcon(),
+@@ -1545,13 +1741,46 @@ impl HostStream {
+         unit.uninitialize();
+         match self.direction {
+             Direction::Output => {
++                let route = self.output_route.as_ref().unwrap();
++                let source = self
++                    .control
++                    .playback_maps()
++                    .get(fmt.channels as usize - 1)
++                    .ok_or(Error::UnexpectedAudioBackendConfiguration)?;
++                let mixer = Mixer::new(fmt.format, source, &route.positions);
+                 unit.set(
+                     kAudioUnitProperty_StreamFormat,
+                     kAudioUnitScope_Input,
+                     0,
+-                    &fmt.asbd(),
++                    &float_asbd(fmt.rate as f64, mixer.output_channels as u32),
+                     "StreamFormat(output)",
+                 )?;
++                let map: Vec<i32> = (0..mixer.output_channels as i32).collect();
++                // SAFETY: map is a live array of physical output-channel indices.
++                check(
++                    unsafe {
++                        AudioUnitSetProperty(
++                            unit.au,
++                            kAudioOutputUnitProperty_ChannelMap,
++                            kAudioUnitScope_Input,
++                            0,
++                            map.as_ptr().cast(),
++                            (map.len() * 4) as u32,
++                        )
++                    },
++                    "ChannelMap(output)",
++                )?;
++                // SAFETY: configure uninitialized the unit, so no render callback can read it.
++                unsafe {
++                    *self.shared.mixer.get() = mixer;
++                }
++                log::info!(
++                    "snd: stream {} routes guest {:?} to '{}' speakers {:?}",
++                    self.id,
++                    source,
++                    device_name(route.device),
++                    route.positions
++                );
+                 self.shared
+                     .frame_bytes
+                     .store(fmt.frame_bytes(), Ordering::Relaxed);
+diff --git a/src/devices/src/virtio/snd/device.rs b/src/devices/src/virtio/snd/device.rs
+index 8dc1036..ca9f65b 100644
+--- a/src/devices/src/virtio/snd/device.rs
++++ b/src/devices/src/virtio/snd/device.rs
+@@ -74,7 +74,16 @@ impl VirtioDevice for Snd {
+         let config = VirtioSoundConfig {
+             jacks: 0.into(),
+             streams: 2.into(),
+-            chmaps: 1.into(),
++            chmaps: {
++                #[cfg(target_os = "macos")]
++                {
++                    (self.control.playback_maps().len() as u32 + 2).into()
++                }
++                #[cfg(not(target_os = "macos"))]
++                {
++                    2.into()
++                }
++            },
+         };
+ 
+         let config_slice = config.as_slice();
+diff --git a/src/devices/src/virtio/snd/mod.rs b/src/devices/src/virtio/snd/mod.rs
+index c95b407..c22c68f 100644
+--- a/src/devices/src/virtio/snd/mod.rs
++++ b/src/devices/src/virtio/snd/mod.rs
+@@ -24,6 +24,8 @@ pub use self::audio_backends::output_device_exists;
+ /// Host-side audio settings changed at runtime (krun_snd_set_*), shared between the embedder
+ /// and the audio backend. Every change bumps `generation` and wakes the backend.
+ pub struct SndControl {
++    #[cfg(target_os = "macos")]
++    playback_maps: std::sync::OnceLock<Vec<Vec<u8>>>,
+     /// CoreAudio device UID of the output, None = the system default (followed).
+     output_device: Mutex<Option<String>>,
+     gain: AtomicU32,
+@@ -38,6 +40,8 @@ pub struct SndControl {
+ impl Default for SndControl {
+     fn default() -> Self {
+         Self {
++            #[cfg(target_os = "macos")]
++            playback_maps: std::sync::OnceLock::new(),
+             output_device: Mutex::new(None),
+             gain: AtomicU32::new(1.0f32.to_bits()),
+             mute: AtomicBool::new(false),
+@@ -50,6 +54,13 @@ impl Default for SndControl {
+ }
+ 
+ impl SndControl {
++    /// Frozen when the guest first reads config; virtio-snd/ALSA cache PCM capabilities.
++    #[cfg(target_os = "macos")]
++    pub fn playback_maps(&self) -> &Vec<Vec<u8>> {
++        self.playback_maps
++            .get_or_init(|| audio_backends::playback_maps(self))
++    }
++
+     /// Measured in a SteamOS guest: PipeWire stalls of 25-40 ms under load (Steam startup)
+     /// starve a smaller host buffer.
+     pub const DEFAULT_BUFFER_MS: u32 = 40;
+@@ -163,7 +174,7 @@ mod defs {
+ 
+     pub const CHANNELS_MIN: u8 = 1;
+     #[cfg(target_os = "macos")]
+-    pub const CHANNELS_MAX: u8 = 2;
++    pub const CHANNELS_MAX: u8 = 8;
+     #[cfg(not(target_os = "macos"))]
+     pub const CHANNELS_MAX: u8 = 6;
+ 
+diff --git a/src/devices/src/virtio/snd/worker.rs b/src/devices/src/virtio/snd/worker.rs
+index 4ff20f9..dd34da2 100644
+--- a/src/devices/src/virtio/snd/worker.rs
++++ b/src/devices/src/virtio/snd/worker.rs
+@@ -47,7 +47,8 @@ impl SndWorker {
+         stop_fd: EventFd,
+         control: Arc<SndControl>,
+     ) -> Self {
+-        let streams = vec![
++        #[allow(unused_mut)]
++        let mut streams = vec![
+             Stream {
+                 id: 0,
+                 direction: Direction::Output,
+@@ -59,12 +60,22 @@ impl SndWorker {
+                 ..Stream::default()
+             },
+         ];
++        #[cfg(target_os = "macos")]
++        {
++            streams[0].channels_max = control.playback_maps().len() as u8;
++            streams[1].channels_max = 2;
++        }
+         let streams_no = streams.len();
+         let streams = Arc::new(RwLock::new(streams));
+         let jacks: Arc<RwLock<Vec<VirtioSoundJackInfo>>> = Arc::new(RwLock::new(Vec::new()));
+-        let mut positions = [VIRTIO_SND_CHMAP_NONE; VIRTIO_SND_CHMAP_MAX_SIZE];
+-        positions[0] = VIRTIO_SND_CHMAP_FL;
+-        positions[1] = VIRTIO_SND_CHMAP_FR;
++        #[cfg(not(target_os = "macos"))]
++        let positions = {
++            let mut positions = [VIRTIO_SND_CHMAP_NONE; VIRTIO_SND_CHMAP_MAX_SIZE];
++            positions[0] = VIRTIO_SND_CHMAP_FL;
++            positions[1] = VIRTIO_SND_CHMAP_FR;
++            positions
++        };
++        #[cfg(not(target_os = "macos"))]
+         let chmaps_info: Vec<VirtioSoundChmapInfo> = vec![
+             VirtioSoundChmapInfo {
+                 direction: VIRTIO_SND_D_OUTPUT,
+@@ -79,6 +90,29 @@ impl SndWorker {
+                 ..VirtioSoundChmapInfo::default()
+             },
+         ];
++        #[cfg(target_os = "macos")]
++        let chmaps_info: Vec<VirtioSoundChmapInfo> = control
++            .playback_maps()
++            .iter()
++            .map(|map| (VIRTIO_SND_D_OUTPUT, map.clone()))
++            .chain([
++                (VIRTIO_SND_D_INPUT, vec![super::VIRTIO_SND_CHMAP_MONO]),
++                (
++                    VIRTIO_SND_D_INPUT,
++                    vec![VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR],
++                ),
++            ])
++            .map(|(direction, map)| {
++                let mut positions = [VIRTIO_SND_CHMAP_NONE; VIRTIO_SND_CHMAP_MAX_SIZE];
++                positions[..map.len()].copy_from_slice(&map);
++                VirtioSoundChmapInfo {
++                    direction,
++                    channels: map.len() as u8,
++                    positions,
++                    ..VirtioSoundChmapInfo::default()
++                }
++            })
++            .collect();
+         let chmaps: Arc<RwLock<Vec<VirtioSoundChmapInfo>>> = Arc::new(RwLock::new(chmaps_info));
+ 
+         let audio_backend = RwLock::new(
+diff --git a/src/devices/tests/macos_audio.rs b/src/devices/tests/macos_audio.rs
+new file mode 100644
+index 0000000..d159bed
+--- /dev/null
++++ b/src/devices/tests/macos_audio.rs
+@@ -0,0 +1,39 @@
++#![cfg(all(target_os = "macos", feature = "snd"))]
++#![allow(dead_code)]
++// Integration target avoids unrelated, stale upstream virtio-snd unit tests.
++mod virtio_sound {
++    include!("../src/virtio/snd/virtio_sound.rs");
++}
++mod audio_backends {
++    mod channel_layout {
++        include!("../src/virtio/snd/audio_backends/channel_layout.rs");
++    }
++}
++use krun_devices::virtio::{snd::Snd, SndControl, VirtioDevice};
++use std::sync::Arc;
++
++#[test]
++fn detected_maps_match_config_and_stay_stable_across_output_changes() {
++    let control = Arc::new(SndControl::default());
++    let device = Snd::new(control.clone()).unwrap();
++    let mut config = [0; 12];
++    device.read_config(0, &mut config);
++    let maps = control.playback_maps().clone();
++    assert!((1..=8).contains(&maps.len()));
++    for (i, map) in maps.iter().enumerate() {
++        assert_eq!(map.len(), i + 1);
++    }
++    assert_eq!(
++        u32::from_le_bytes(config[8..12].try_into().unwrap()),
++        maps.len() as u32 + 2
++    );
++    eprintln!("Detected guest playback maps: {maps:?}");
++    // A missing selected UID falls back to default; cached guest maps never change midstream.
++    control.set_output_device(Some("steamac-test-nonexistent-device".into()));
++    assert_eq!(*control.playback_maps(), maps);
++    device.read_config(0, &mut config);
++    assert_eq!(
++        u32::from_le_bytes(config[8..12].try_into().unwrap()),
++        maps.len() as u32 + 2
++    );
++}

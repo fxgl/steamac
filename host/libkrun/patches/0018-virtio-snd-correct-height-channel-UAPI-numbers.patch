@@ -1,0 +1,41 @@
+diff --git a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+index bd9901b..4ac3740 100644
+--- a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
++++ b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+@@ -256,4 +256,13 @@ mod tests {
+     }
+     #[test]
++    fn dolby_top_middle_uses_linux_uapi_numbers() {
++        let speakers: Vec<_> = [1, 2, 3, 4, 5, 6, 49, 51]
++            .iter().map(|&label| apple_position(label)).collect();
++        assert_eq!(guest_maps(&speakers)[7], [3, 4, 7, 8, 9, 10, 30, 31]);
++        assert_eq!([VIRTIO_SND_CHMAP_LLFE, VIRTIO_SND_CHMAP_RLFE,
++            VIRTIO_SND_CHMAP_BC, VIRTIO_SND_CHMAP_BLC, VIRTIO_SND_CHMAP_BRC],
++            [32, 33, 34, 35, 36]);
++    }
++    #[test]
+     fn maps_preserve_height_and_alsa_order() {
+         let speakers = [3, 4, 7, 8, 9, 10, 22, 23];
+diff --git a/src/devices/src/virtio/snd/virtio_sound.rs b/src/devices/src/virtio/snd/virtio_sound.rs
+index a666b3f..023a7bc 100644
+--- a/src/devices/src/virtio/snd/virtio_sound.rs
++++ b/src/devices/src/virtio/snd/virtio_sound.rs
+@@ -142,11 +142,11 @@ pub const VIRTIO_SND_CHMAP_TRC: u8 = 27; /* top rear center */
+ pub const VIRTIO_SND_CHMAP_TFLC: u8 = 28; /* top front left center */
+ pub const VIRTIO_SND_CHMAP_TFRC: u8 = 29; /* top front right center */
+-pub const VIRTIO_SND_CHMAP_TSL: u8 = 34; /* top side left */
+-pub const VIRTIO_SND_CHMAP_TSR: u8 = 35; /* top side right */
+-pub const VIRTIO_SND_CHMAP_LLFE: u8 = 36; /* left LFE */
+-pub const VIRTIO_SND_CHMAP_RLFE: u8 = 37; /* right LFE */
+-pub const VIRTIO_SND_CHMAP_BC: u8 = 38; /* bottom center */
+-pub const VIRTIO_SND_CHMAP_BLC: u8 = 39; /* bottom left center */
+-pub const VIRTIO_SND_CHMAP_BRC: u8 = 40; /* bottom right center */
++pub const VIRTIO_SND_CHMAP_TSL: u8 = 30; /* top side left */
++pub const VIRTIO_SND_CHMAP_TSR: u8 = 31; /* top side right */
++pub const VIRTIO_SND_CHMAP_LLFE: u8 = 32; /* left LFE */
++pub const VIRTIO_SND_CHMAP_RLFE: u8 = 33; /* right LFE */
++pub const VIRTIO_SND_CHMAP_BC: u8 = 34; /* bottom center */
++pub const VIRTIO_SND_CHMAP_BLC: u8 = 35; /* bottom left center */
++pub const VIRTIO_SND_CHMAP_BRC: u8 = 36; /* bottom right center */
+ // maximum possible number of channels
+ pub const VIRTIO_SND_CHMAP_MAX_SIZE: usize = 18;
