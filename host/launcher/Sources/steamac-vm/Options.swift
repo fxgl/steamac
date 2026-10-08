@@ -163,6 +163,7 @@ struct Options {
                            this DPI (physical size = new size x the same mm per pixel).
       --headless           no window and no input devices; SIGUSR1 dumps the latest frame
       --log FILE           also append the hvc0 console to FILE
+      -AppleLanguages '(L)' UI language for this run: en, ru or zh-Hans (default: the macOS language)
       --no-net             no virtio-net / gvproxy
       --lan-remote-play    expose Steam Remote Play on the LAN (Settings > Advanced; off by default)
       --no-lan-remote-play disable the LAN discovery relay and Remote Play forwards for this boot
@@ -293,6 +294,8 @@ struct Options {
         while i < argv.count {
             let a = argv[i]
             if a.hasPrefix("-psn_") { i += 1; continue }   // old Finder process serial number
+            // Cocoa argument-domain overrides of the UI language (NSUserDefaults reads them itself).
+            if a == "-AppleLanguages" || a == "-AppleLocale" { i += 2; continue }
             o.explicit.insert(a)
             switch a {
             case "--kernel": o.kernel = try value(a)
@@ -616,7 +619,11 @@ enum MacTime {
     }
 }
 
-struct OptionError: Error, CustomStringConvertible {
+/// `description`: English, for the CLI, logs and crash reports ("\(error)"). `localizedDescription`:
+/// the UI text, `localized` when given (String(localized:)), else the English text.
+struct OptionError: LocalizedError, CustomStringConvertible {
     let description: String
-    init(_ d: String) { description = d }
+    let localized: String?
+    init(_ d: String, localized: String? = nil) { description = d; self.localized = localized }
+    var errorDescription: String? { localized ?? description }
 }

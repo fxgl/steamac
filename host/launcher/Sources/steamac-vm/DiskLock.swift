@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 
 /// Exclusive lock (flock) on the writable disk images of a running VM. libkrun does not lock them,
 /// and two VMs writing one image (two launcher copies, e.g. a source build and /Applications)
@@ -6,11 +7,14 @@ import Darwin
 /// attaching a disk and holds it until it exits, also while the guest shuts down after the
 /// supervisor was killed; the supervisor checks before each boot to refuse with an alert.
 enum DiskLock {
-    struct InUse: Error, CustomStringConvertible {
+    struct InUse: LocalizedError, CustomStringConvertible {
         let path: String
         var description: String {
             "the SteamOS disk \(path) is in use by another FX Steam Launcher (or steamac-vm). "
                 + "Quit it first: two VMs writing one disk corrupt its file systems."
+        }
+        var errorDescription: String? {
+            String(localized: "the SteamOS disk \(path) is in use by another FX Steam Launcher (or steamac-vm). Quit it first: two VMs writing one disk corrupt its file systems.")
         }
     }
 

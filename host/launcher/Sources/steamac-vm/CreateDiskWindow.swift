@@ -46,8 +46,8 @@ final class CreateDiskModel: ObservableObject {
         while !FileManager.default.fileExists(atPath: dir) && dir != "/" { dir = (dir as NSString).deletingLastPathComponent }
         guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: dir),
               let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value else { return "" }
-        return String(format: "%.0f GB free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache.",
-                      Double(free) / 1e9)
+        let gigabytes = String(format: "%.0f", Double(free) / 1e9)
+        return String(localized: "\(gigabytes) GB free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache.")
     }
 
     func start() {
@@ -81,7 +81,7 @@ final class CreateDiskModel: ObservableObject {
                 case .failure(let e):
                     log("create-disk (UI): error: \(e)")
                     CrashReporting.diskCreationFailed(e, branch: request.branch)
-                    self.error = NetworkFailure.message(e, server: .valve)
+                    self.error = NetworkFailure.localizedMessage(e, server: .valve)
                     self.interrupted = true
                 }
             }
@@ -99,13 +99,12 @@ private struct CreateDiskView: View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section {
-                    Text("Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature "
-                         + "and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM.")
+                    Text("Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Section {
                     Picker("SteamOS branch", selection: $model.branch) {
-                        ForEach(DiskCreator.branches, id: \.self) { Text($0).tag($0) }
+                        ForEach(DiskCreator.branches, id: \.self) { Text(verbatim: $0).tag($0) }
                     }
                     Stepper(value: $model.homeGiB, in: 16...2048, step: 16) {
                         HStack {
@@ -118,11 +117,11 @@ private struct CreateDiskView: View {
                         HStack {
                             Text("Location")
                             Spacer()
-                            Text((model.path as NSString).abbreviatingWithTildeInPath)
+                            Text(verbatim: (model.path as NSString).abbreviatingWithTildeInPath)
                                 .lineLimit(1).truncationMode(.middle).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                             Button("Choose…") { choose() }
                         }
-                        Text(model.pathExists ? "A file with this name exists; it is never overwritten. Choose another name."
+                        Text(verbatim: model.pathExists ? String(localized: "A file with this name exists; it is never overwritten. Choose another name.")
                              : model.freeSpace)
                             .font(.caption).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                     }
@@ -144,7 +143,7 @@ private struct CreateDiskView: View {
                     Toggle(isOn: $model.licenseAccepted) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("I accept Valve's SteamOS license and the Steam Subscriber Agreement")
-                            Text(SteamOSLicense.summary)
+                            Text(verbatim: SteamOSLicense.localizedSummary)
                                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             HStack(spacing: 12) {
                                 Link("SteamOS End User License Agreement", destination: SteamOSLicense.eulaURL)
@@ -159,11 +158,11 @@ private struct CreateDiskView: View {
                 if model.running || model.status != nil || model.error != nil {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.error != nil ? "Failed" : model.interrupted ? "Stopped — Create continues where it left off"
-                                 : model.status?.title ?? "Starting…")
+                            Text(verbatim: model.error != nil ? String(localized: "Failed") : model.interrupted ? String(localized: "Stopped — Create continues where it left off")
+                                 : model.status?.localizedTitle ?? String(localized: "Starting…"))
                                 .font(.headline)
                             ProgressView(value: model.status?.fraction ?? 0)
-                            Text(model.error ?? model.status?.detail ?? "")
+                            Text(verbatim: model.error ?? model.status?.localizedDetail ?? "")
                                 .font(.caption).foregroundStyle(model.error != nil ? Color.red : Color.secondary)
                                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                         }
@@ -177,7 +176,7 @@ private struct CreateDiskView: View {
                     Button("Stop") { model.cancel() }
                 } else {
                     Button("Cancel") { close() }.keyboardShortcut(.cancelAction)
-                    Button(model.interrupted ? "Resume" : "Create") { model.start() }
+                    Button(model.interrupted ? String(localized: "Resume") : String(localized: "Create")) { model.start() }
                         .keyboardShortcut(.defaultAction)
                         .disabled(model.pathExists || model.result != nil || !model.licenseAccepted)
                 }
@@ -189,7 +188,7 @@ private struct CreateDiskView: View {
 
     private func choose() {
         let panel = NSSavePanel()
-        panel.title = "Location of the new SteamOS disk"
+        panel.title = String(localized: "Location of the new SteamOS disk")
         panel.nameFieldStringValue = (model.path as NSString).lastPathComponent
         panel.directoryURL = URL(fileURLWithPath: (model.path as NSString).deletingLastPathComponent)
         panel.canCreateDirectories = true
@@ -213,7 +212,7 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        window.title = "Create SteamOS Disk"
+        window.title = String(localized: "Create SteamOS Disk")
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: CreateDiskView(model: model) { [weak self] in self?.window.performClose(nil) })
@@ -249,10 +248,10 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard model.running else { return true }
         let alert = NSAlert()
-        alert.messageText = "Stop creating the disk?"
-        alert.informativeText = "Downloaded data is kept; creating the disk again continues from there."
-        alert.addButton(withTitle: "Stop")
-        alert.addButton(withTitle: "Continue")
+        alert.messageText = String(localized: "Stop creating the disk?")
+        alert.informativeText = String(localized: "Downloaded data is kept; creating the disk again continues from there.")
+        alert.addButton(withTitle: String(localized: "Stop"))
+        alert.addButton(withTitle: String(localized: "Continue"))
         if alert.runModal() == .alertFirstButtonReturn { model.cancel() }
         return false
     }

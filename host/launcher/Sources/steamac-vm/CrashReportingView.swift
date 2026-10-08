@@ -17,7 +17,7 @@ struct CrashReportsToggle: View {
         let toggle = Toggle(isOn: $settings.sendCrashReports) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Send crash reports and diagnostics")
-                Text(CrashReporting.summary)
+                Text(verbatim: CrashReporting.summary)
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("What is sent") { showDetails.toggle() }
                     .buttonStyle(.link)
@@ -40,15 +40,14 @@ struct WhatIsSentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("What is sent").font(.headline)
-            ForEach(CrashReporting.whatIsSent, id: \.self) { item in
+            ForEach(CrashReporting.whatIsSent.indices, id: \.self) { index in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("•")
-                    Text(item).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: "•")
+                    Text(verbatim: CrashReporting.whatIsSent[index]).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.callout)
             }
-            Text("Reports go to the developers' own Sentry server (sentry.fxgam.es). Turn this off any time in "
-                 + "Settings > General, or for one run with --no-crash-reports / STEAMAC_SENTRY=0.")
+            Text("Reports go to the developers' own Sentry server (sentry.fxgam.es). Turn this off any time in Settings > General, or for one run with --no-crash-reports / STEAMAC_SENTRY=0.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)

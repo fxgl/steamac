@@ -11,9 +11,12 @@ struct RaucBundle {
     /// SHA-256 of the DER of scripts/keys/steamdeck-images.pem (= STEAMOS_CA_FP_SHA256 in config.env).
     static let caFingerprint = "D562FEFE251B76EAB0E9E999354AD186B8EB2E2FB3450FADBEC7F6AA59B602D9"
 
-    struct DevelopmentSignature: Error, CustomStringConvertible {
+    struct DevelopmentSignature: LocalizedError, CustomStringConvertible {
         var description: String {
             "This SteamOS build is signed with Valve's development key (steamos-dev-images) and can't be verified; choose stable or try again later."
+        }
+        var errorDescription: String? {
+            String(localized: "This SteamOS build is signed with Valve's development key (steamos-dev-images) and can't be verified; choose stable or try again later.")
         }
     }
 

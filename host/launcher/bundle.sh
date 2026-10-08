@@ -7,7 +7,8 @@
 #   Contents/Resources/                 gvproxy, Image, initramfs.cpio.gz, steamac-layer.img,
 #                                       desync + steamdeck-images.pem (Valve RAUC CA) for
 #                                       "Create New Disk…", generated licenses/ notices,
-#                                       Assets.car + AppIcon.icns (app icon, see below)
+#                                       Assets.car + AppIcon.icns (app icon, see below),
+#                                       <lang>.lproj (string catalogs compiled by build.sh)
 # The SteamOS disk is not bundled (Settings > Advanced "Disk image" / "Create New Disk…"). Ad-hoc
 # signed with the hypervisor + disable-library-validation entitlements. Built in a temp dir,
 # then moved in place.
@@ -113,6 +114,10 @@ chmod 755 "$TMP/Contents/Resources/gvproxy" "$TMP/Contents/Resources/desync"
 cp "$ROOT/scripts/keys/steamdeck-images.pem" "$TMP/Contents/Resources/steamdeck-images.pem"
 mkdir -p "$TMP/Contents/Resources/licenses"
 cp -R "$OUT/licenses/." "$TMP/Contents/Resources/licenses/"
+for lproj in "$HERE/.build/l10n"/*.lproj; do
+    [[ -d $lproj ]] || { echo "bundle.sh: no compiled localizations in $HERE/.build/l10n (run build.sh)" >&2; exit 1; }
+    cp -R "$lproj" "$TMP/Contents/Resources/"
+done
 
 # App icon: AppIcon.icon (Icon Composer document) compiled by Xcode 26's actool into Assets.car
 # (layered Liquid Glass icon for macOS 26, pre-rendered squircle renditions for macOS 15) and an

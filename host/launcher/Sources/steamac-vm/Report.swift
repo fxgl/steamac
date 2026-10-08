@@ -233,11 +233,11 @@ final class ReportBundle: @unchecked Sendable {
     @MainActor
     static func collect(context: ReportContext, choices: ReportChoices, status: (String) -> Void) async throws -> ReportBundle {
         let b = try ReportBundle(context: context, choices: choices)
-        status(choices.launcherLogs ? "Collecting launcher logs…" : "Collecting system information…")
+        status(choices.launcherLogs ? String(localized: "Collecting launcher logs…") : String(localized: "Collecting system information…"))
         await Task.detached { b.writeHostFiles() }.value
         if choices.screenshot {
             if let capture = context.captureScreenshot {
-                status("Taking a screenshot of the VM window…")
+                status(String(localized: "Taking a screenshot of the VM window…"))
                 let image: CGImage? = await withCheckedContinuation { c in
                     var resumed = false
                     let once = { (img: CGImage?) in
@@ -259,7 +259,7 @@ final class ReportBundle: @unchecked Sendable {
         }
         if choices.guestLogs {
             if let guest = context.guest, guest.agentRunning {
-                status("Asking SteamOS for its logs (up to \(Int(guestTimeout)) s)…")
+                status(String(localized: "Asking SteamOS for its logs (up to \(Int(guestTimeout)) s)…"))
                 let r: Result<Data, OptionError> = await withCheckedContinuation { c in
                     guest.request(timeout: guestTimeout) { c.resume(returning: $0) }
                 }
@@ -279,7 +279,7 @@ final class ReportBundle: @unchecked Sendable {
                     : "the SteamOS agent is not running or not responding") + ")")
             }
         }
-        status("Collecting system information…")
+        status(String(localized: "Collecting system information…"))
         await Task.detached { b.writeSystemInfo() }.value
         log("report: collected \(b.shortId) in \((b.dir as NSString).abbreviatingWithTildeInPath)")
         return b
@@ -526,11 +526,13 @@ enum FeedbackSender {
                      progress: @escaping @Sendable (Double) -> Void) async throws -> String {
         let dsn = dsnOverride ?? CrashReporting.dsn
         guard let url = URL(string: dsn), let host = url.host, let key = url.user, let scheme = url.scheme else {
-            throw OptionError("bad DSN \(dsn)")
+            throw OptionError("bad DSN \(dsn)", localized: String(localized: "Invalid report server address: \(dsn)"))
         }
         let project = url.lastPathComponent
         let port = url.port.map { ":\($0)" } ?? ""
-        guard let endpoint = URL(string: "\(scheme)://\(host)\(port)/api/\(project)/envelope/") else { throw OptionError("bad DSN \(dsn)") }
+        guard let endpoint = URL(string: "\(scheme)://\(host)\(port)/api/\(project)/envelope/") else {
+            throw OptionError("bad DSN \(dsn)", localized: String(localized: "Invalid report server address: \(dsn)"))
+        }
         var items = loadItems(b.dir)
         var cap = budget
         for attempt in 1...4 {
@@ -560,12 +562,21 @@ enum FeedbackSender {
                 log("report: HTTP 413 (too large: \(text.isEmpty ? "no detail" : text)); retrying with attachments capped at \(cap) bytes")
             case 429:
                 let after = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "later"
-                throw OptionError("the server is busy (HTTP 429); try again \(after == "later" ? "later" : "in \(after) s")")
+                let localized = after == "later"
+                    ? String(localized: "The server is busy (HTTP 429); try again later.")
+                    : String(localized: "The server is busy (HTTP 429); try again in \(after) s.")
+                throw OptionError("the server is busy (HTTP 429); try again \(after == "later" ? "later" : "in \(after) s")",
+                                  localized: localized)
             default:
-                throw OptionError("the server answered HTTP \(status)" + (text.isEmpty ? "" : ": \(text.prefix(200))"))
+                let localized = text.isEmpty
+                    ? String(localized: "The server answered HTTP \(status).")
+                    : String(localized: "The server answered HTTP \(status): \(String(text.prefix(200)))")
+                throw OptionError("the server answered HTTP \(status)" + (text.isEmpty ? "" : ": \(text.prefix(200))"),
+                                  localized: localized)
             }
         }
-        throw OptionError("the report is too large for the server even after shrinking it")
+        throw OptionError("the report is too large for the server even after shrinking it",
+                          localized: String(localized: "The report is too large for the server even after shrinking it."))
     }
 
     private static func loadItems(_ dir: String) -> [Item] {

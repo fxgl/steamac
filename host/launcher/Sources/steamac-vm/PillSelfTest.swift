@@ -95,16 +95,27 @@ enum PillSelfTest {
         }
         let pill = wc.pill
         func pillCenter() -> NSPoint { wc.view.convert(NSPoint(x: pill.cardFrame.midX, y: pill.cardFrame.midY), to: nil) }
-        func status(_ s: String?) -> String { s.map { "\(title) — \($0)" } ?? title }
+        func status(_ s: String?) -> String { s.map { String(localized: "\(title) — \($0)") } ?? title }
         func expectTitle(_ s: String?) -> String? {
             wc.window.title == status(s) ? nil : "window title \"\(wc.window.title)\", expected \"\(status(s))\""
         }
         func overallPercent() -> Int { Int((progress.state.fraction * 100).rounded(.down)) }
+        let downloading = BootProgress.localizedGuestText("Downloading Steam update")
+        let checking = BootProgress.localizedGuestText("Checking for Steam updates")
+        let starting = BootProgress.localizedGuestText("Starting Steam")
+        let sampleCPU = "CPUVALUE"
+        let sampleSeconds = 987   // < 1000: no digit grouping in the localized template
+        func containsDetail(_ text: String, _ template: String) -> Bool {
+            let pattern = NSRegularExpression.escapedPattern(for: template)
+                .replacingOccurrences(of: sampleCPU, with: "[0-9]+\\.[0-9]")
+                .replacingOccurrences(of: "\(sampleSeconds)", with: "[0-9]+")
+            return text.range(of: pattern, options: .regularExpression) != nil
+        }
         func expectPill(_ t: String, detail: String, percent: Bool) -> String? {
             guard pill.shown, !wc.overlay.shown else { return "expected the pill (overlay \(wc.overlay.shown), pill \(pill.shown))" }
             let c = pill.content
             guard c.title == t else { return "pill title \"\(c.title)\", expected \"\(t)\"" }
-            guard detail.isEmpty || c.detail.contains(detail) else { return "pill detail \"\(c.detail)\" lacks \"\(detail)\"" }
+            guard detail.isEmpty || containsDetail(c.detail, detail) else { return "pill detail \"\(c.detail)\" lacks \"\(detail)\"" }
             if percent && c.percentText != "\(overallPercent())%" { return "pill percent \"\(c.percentText)\", expected \(overallPercent())%" }
             return nil
         }
@@ -126,19 +137,19 @@ enum PillSelfTest {
                 guest("stage session 100 Starting Steam session")
                 guest("stage steam-check -1 Checking for Steam updates")
             }, wait: 0.8) {
-                expectOverlay() ?? expectNoPill("overlay up") ?? expectTitle("Checking for Steam updates…")
+                expectOverlay() ?? expectNoPill("overlay up") ?? expectTitle(checking + "…")
             },
             Step(name: "02-click-during-check-collapses", action: { click(windowPoint(unit: 0.5, 0.4)) }, wait: 0.9) {
-                expectPill("Checking for Steam updates", detail: "", percent: false) ?? expectTitle("Checking for Steam updates…")
+                expectPill(checking, detail: "", percent: false) ?? expectTitle(checking + "…")
             },
             Step(name: "03-download-re-expands", action: {
                 guest("stage steam-download 0 Downloading Steam update")
                 guest("log 129 / 564 MB · 7.3 MB/s")
             }, wait: 0.8) {
-                expectOverlay() ?? expectTitle("Downloading Steam update \(overallPercent())%")
+                expectOverlay() ?? expectTitle(String(localized: "\(downloading) \(overallPercent())%"))
             },
             Step(name: "04a-click-during-download-keeps-overlay", action: { click(windowPoint(unit: 0.5, 0.4)) }, wait: 0.9) {
-                expectOverlay() ?? expectTitle("Downloading Steam update \(overallPercent())%")
+                expectOverlay() ?? expectTitle(String(localized: "\(downloading) \(overallPercent())%"))
             },
             Step(name: "04b-key-during-download-keeps-overlay", action: { key(kVK_ANSI_A) }, wait: 0.7) {
                 expectOverlay()
@@ -147,37 +158,37 @@ enum PillSelfTest {
                 guest("stage steam-download 67 Downloading Steam update")
                 guest("log 378 / 564 MB · 1.9 MB/s")
             }, wait: 0.7) {
-                expectOverlay() ?? expectTitle("Downloading Steam update \(overallPercent())%")
+                expectOverlay() ?? expectTitle(String(localized: "\(downloading) \(overallPercent())%"))
                     ?? (progress.state.detail == "378 / 564 MB · 1.9 MB/s" ? nil : "detail \(progress.state.detail)")
             },
             Step(name: "06a-menu-collapses-during-download", action: { wc.toggleOverlay() }, wait: 0.7) {
-                expectPill("Downloading Steam update", detail: "378 / 564 MB · 1.9 MB/s", percent: true)
+                expectPill(downloading, detail: "378 / 564 MB · 1.9 MB/s", percent: true)
             },
             Step(name: "06b-menu-collapse-respected", action: {
                 guest("stage steam-download 89 Downloading Steam update")
                 guest("log 501 / 564 MB · 3.8 MB/s")
             }, wait: 0.7) {
-                expectPill("Downloading Steam update", detail: "501 / 564 MB · 3.8 MB/s", percent: true)
-                    ?? expectTitle("Downloading Steam update \(overallPercent())%")
+                expectPill(downloading, detail: "501 / 564 MB · 3.8 MB/s", percent: true)
+                    ?? expectTitle(String(localized: "\(downloading) \(overallPercent())%"))
             },
             Step(name: "07-pill-click-expands", action: { click(pillCenter()) }, wait: 0.7) {
                 expectOverlay()
             },
             Step(name: "08-menu-collapses", action: { wc.toggleOverlay() }, wait: 0.7) {
-                expectPill("Downloading Steam update", detail: "501 / 564 MB", percent: true)
+                expectPill(downloading, detail: "501 / 564 MB", percent: true)
             },
             Step(name: "09a-starting-steam", action: {
                 guest("stage steam-install 100 Installing Steam update")
                 guest("stage steam-start -1 Starting Steam")
             }, wait: 0.7) {
-                expectPill("Starting Steam", detail: "", percent: false) ?? expectTitle("Starting Steam…")
+                expectPill(starting, detail: "", percent: false) ?? expectTitle(starting + "…")
                     ?? (pill.content.indeterminate ? nil : "pill should be indeterminate")
             },
             Step(name: "09b-menu-expands-at-start", action: { wc.toggleOverlay() }, wait: 0.7) {
                 expectOverlay()
             },
             Step(name: "09c-click-during-start-collapses", action: { click(windowPoint(unit: 0.5, 0.4)) }, wait: 0.9) {
-                expectPill("Starting Steam", detail: "", percent: false) ?? expectTitle("Starting Steam…")
+                expectPill(starting, detail: "", percent: false) ?? expectTitle(starting + "…")
             },
             Step(name: "10-ready-fades", action: { guest("ready") }, wait: 1.0) {
                 progress.state.phase == .running && pill.isIdle && !wc.overlay.shown
@@ -187,8 +198,9 @@ enum PillSelfTest {
                 expectNoPill("display off 2 s")
             },
             Step(name: "12-display-off-3.5s", action: {}, wait: 1.5) {
-                expectPill(waiting, detail: "display off", percent: false)
-                    ?? (pill.content.detail.contains("guest alive") && pill.content.detail.contains("VM CPU")
+                expectPill(waiting, detail: String(localized: "display off \(sampleSeconds) s"), percent: false)
+                    ?? (pill.content.detail.contains(String(localized: "guest alive"))
+                        && containsDetail(pill.content.detail, String(localized: "VM CPU \(sampleCPU) cores"))
                         ? nil : "detail lacks heartbeat / CPU: \(pill.content.detail)")
                     ?? expectTitle(nil)
             },
@@ -199,7 +211,7 @@ enum PillSelfTest {
                 expectNoPill("black 4 s")
             },
             Step(name: "15-black-5.5s", action: {}, wait: 1.5) {
-                expectPill(waiting, detail: "black picture", percent: false)
+                expectPill(waiting, detail: String(localized: "black picture \(sampleSeconds) s"), percent: false)
             },
             Step(name: "16-non-black-hides", action: { frames = .pattern }, wait: 0.8) {
                 expectNoPill("non-black frame")
@@ -208,7 +220,7 @@ enum PillSelfTest {
                 expectNoPill("game focused, black 6 s") ?? (wc.stallView.shown ? nil : "GPU-idle card should cover the game")
             },
             Step(name: "18-steam-black-5.5s", action: { guest("focus steam") }, wait: 5.5) {
-                expectPill(waiting, detail: "black picture", percent: false)
+                expectPill(waiting, detail: String(localized: "black picture \(sampleSeconds) s"), percent: false)
             },
             Step(name: "19-sleep-hides", action: { wc.guestSleeping(true); noPicture.vmPaused = true }, wait: 6.0) {
                 expectNoPill("SteamOS asleep, black 6 s")
@@ -217,16 +229,16 @@ enum PillSelfTest {
                 expectNoPill("awake again, black 2 s (clock restarted)")
             },
             Step(name: "21-resize-no-frame-3.5s", action: { frames = .none; configure = (W - 256, H - 160) }, wait: 3.5) {
-                expectPill(waiting, detail: "no frame", percent: false)
+                expectPill(waiting, detail: String(localized: "no frame \(sampleSeconds) s"), percent: false)
             },
             Step(name: "22-new-size-frame-hides", action: { frames = .pattern }, wait: 0.8) {
                 expectNoPill("frame at the new size")
             },
             Step(name: "23-shutdown-overlay", action: { configure = (W, H); guest("shutdown poweroff") }, wait: 0.8) {
-                expectOverlay() ?? expectTitle("Shutting down…")
+                expectOverlay() ?? expectTitle(String(localized: "Shutting down…"))
             },
             Step(name: "24-shutdown-click-collapses", action: { click(windowPoint(unit: 0.5, 0.4)) }, wait: 0.9) {
-                expectPill("Shutting down…", detail: "", percent: true) ?? expectTitle("Shutting down…")
+                expectPill(String(localized: "Shutting down…"), detail: "", percent: true) ?? expectTitle(String(localized: "Shutting down…"))
             },
         ]
 

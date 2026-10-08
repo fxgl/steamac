@@ -52,7 +52,7 @@ final class UpdateChecker {
     enum Outcome {
         case newer(Release)
         case upToDate(latest: Release?)
-        case failed(String)
+        case failed(String, localized: String)
     }
 
     private var defaults: UserDefaults { LauncherSettings.shared.defaults }
@@ -194,7 +194,7 @@ final class UpdateChecker {
                 self.show(.available(r, current: UpdateChecker.currentVersion), activate: false)
             case .upToDate(let latest):
                 log("update: up to date (\(UpdateChecker.currentVersion); latest release \(latest?.tag ?? "none"))")
-            case .failed(let message):
+            case .failed(let message, _):
                 log("update: check failed: \(message)")
             }
         }
@@ -224,15 +224,15 @@ final class UpdateChecker {
             case .upToDate(let latest):
                 log("update: up to date (\(UpdateChecker.currentVersion); latest release \(latest?.tag ?? "none"))")
                 self.show(.upToDate(current: UpdateChecker.currentVersion), activate: false)
-            case .failed(let message):
+            case .failed(let message, let localized):
                 log("update: check failed: \(message)")
-                self.show(.failed(message), activate: false)
+                self.show(.failed(localized), activate: false)
             }
         }
     }
 
     var menuTitle: String {
-        available.map { "Update Available: \($0.versionString)…" } ?? "Check for Updates…"
+        available.map { String(localized: "Update Available: \($0.versionString)…") } ?? String(localized: "Check for Updates…")
     }
 
     /// GET the release JSON (10 s, If-None-Match with the cached ETag); `done` on the main queue.
@@ -271,7 +271,8 @@ final class UpdateChecker {
                                 url: URL, defaults: UserDefaults) -> Outcome {
         if let error {
             log("update: error: \(error)")
-            return .failed(NetworkFailure.message(error, server: .updates))
+            return .failed(NetworkFailure.message(error, server: .updates),
+                           localized: NetworkFailure.localizedMessage(error, server: .updates))
         }
         var body = data
         var etag: String?
@@ -284,14 +285,18 @@ final class UpdateChecker {
                 body = cached
             case 403 where http.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0",
                  429:
-                return .failed("GitHub's request limit for this network is reached; try again later.")
+                return .failed("GitHub's request limit for this network is reached; try again later.",
+                               localized: String(localized: "GitHub's request limit for this network is reached; try again later."))
             default:
-                return .failed("The server answered HTTP \(http.statusCode).")
+                return .failed("The server answered HTTP \(http.statusCode).",
+                               localized: String(localized: "The server answered HTTP \(http.statusCode)."))
             }
         }
-        guard let body else { return .failed("Empty answer.") }
+        guard let body else { return .failed("Empty answer.", localized: String(localized: "Empty answer.")) }
         let release: Release?
-        do { release = try newest(inJSON: body) } catch { return .failed("Unreadable answer from the server.") }
+        do { release = try newest(inJSON: body) } catch {
+            return .failed("Unreadable answer from the server.", localized: String(localized: "Unreadable answer from the server."))
+        }
         if response is HTTPURLResponse, body != cached {
             defaults.set(body, forKey: Store.body)
             defaults.set(url.absoluteString, forKey: Store.url)
@@ -348,7 +353,8 @@ final class UpdateChecker {
             panel.dump(to: args.dropFirst().first ?? "update.png", with: vmWindow())
         case "state":
             let visible = panel?.window.isVisible == true
-            log("control: update: window \(visible ? "shown (\(panel!.model.state.name))" : "hidden"), menu \"\(menuTitle)\""
+            let title = available.map { "Update Available: \($0.versionString)…" } ?? "Check for Updates…"
+            log("control: update: window \(visible ? "shown (\(panel!.model.state.name))" : "hidden"), menu \"\(title)\""
                 + ", skipped \(defaults.string(forKey: Store.skipped) ?? "none")"
                 + (available.map { ", download \($0.downloadURL.absoluteString)" } ?? ""))
         default: log("control: update: unknown command")
@@ -400,7 +406,7 @@ final class UpdatePanel {
         window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: UpdatePanel.width, height: 200),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
         host = NSHostingView(rootView: UpdateView(model: model, actions: actions))
-        window.title = "Software Update"
+        window.title = String(localized: "Software Update")
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.isFloatingPanel = false
@@ -520,7 +526,7 @@ func releaseNotesText(_ markdown: String) -> AttributedString {
         let head = s.prefix(6000)
         s = String(head[..<(head.lastIndex(of: "\n") ?? head.endIndex)]) + "\n…"
     }
-    if s.isEmpty { s = "No release notes." }
+    if s.isEmpty { s = String(localized: "No release notes.") }
     let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
     return (try? AttributedString(markdown: s, options: options)) ?? AttributedString(s)
 }
@@ -554,7 +560,7 @@ struct UpdateView: View {
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                     if let subtitle = subtitle(r) {
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: subtitle).font(.caption).foregroundStyle(.secondary)
                     }
                     Text("Release notes").font(.subheadline.weight(.semibold))
                     ScrollView {
@@ -584,7 +590,7 @@ struct UpdateView: View {
                     }
                 case .failed(let message):
                     Text("Couldn't check for updates").font(.headline)
-                    Text(message)
+                    Text(verbatim: message)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
@@ -602,7 +608,7 @@ struct UpdateView: View {
     private func subtitle(_ r: UpdateChecker.Release) -> String? {
         var parts: [String] = []
         if !r.name.isEmpty && r.name != r.tag && r.name != r.versionString { parts.append(r.name) }
-        if let d = r.published { parts.append("Released " + d.formatted(date: .long, time: .omitted)) }
+        if let d = r.published { parts.append(String(localized: "Released \(d.formatted(date: .long, time: .omitted))")) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

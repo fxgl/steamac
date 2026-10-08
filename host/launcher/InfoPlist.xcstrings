@@ -1,0 +1,54 @@
+{
+  "sourceLanguage" : "en",
+  "version" : "1.0",
+  "strings" : {
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Microphone permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The SteamOS virtual machine records from the microphone while a game or Steam voice chat in it uses one."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Виртуальная машина SteamOS записывает звук с микрофона, когда он нужен игре или голосовому чату Steam внутри неё."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 虚拟机在其中的游戏或 Steam 语音聊天使用麦克风时进行录音。"
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Local network permission prompt",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discover Steam Link and Remote Play devices on your local network and connect them to Steam in the SteamOS virtual machine when LAN Remote Play is enabled."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Находить устройства Steam Link и Remote Play в локальной сети и подключать их к Steam в виртуальной машине SteamOS, когда включён Remote Play по локальной сети."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在启用局域网 Remote Play 时，发现本地网络上的 Steam Link 和 Remote Play 设备，并将其连接到 SteamOS 虚拟机中的 Steam。"
+          }
+        }
+      }
+    }
+  }
+}

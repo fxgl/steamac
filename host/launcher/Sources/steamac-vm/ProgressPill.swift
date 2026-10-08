@@ -307,7 +307,7 @@ final class NoPictureGuard {
     static let missingThreshold: TimeInterval = 3
     static let blackThreshold: TimeInterval = 5
     static let blackFraction = 0.995
-    static let title = "Waiting for SteamOS to draw…"
+    static let title = String(localized: "Waiting for SteamOS to draw…")
 
     private let probe: (UInt64) -> Scanout.Probe
     private var timer: DispatchSourceTimer?
@@ -407,9 +407,13 @@ final class NoPictureGuard {
         guard let since = shownSince else { return }
         var parts: [String] = []
         if let known = lastKnown(), !known.isEmpty { parts.append(known) }
-        parts.append("\(reason) \(Int(now - since)) s")
+        let seconds = Int(now - since)
+        parts.append(missing
+            ? (p.enabled ? String(localized: "no frame \(seconds) s") : String(localized: "display off \(seconds) s"))
+            : String(localized: "black picture \(seconds) s"))
         if let guest = guestText(now) { parts.append(guest) }
-        parts.append("VM CPU \(String(format: "%.1f", cpu())) cores")
+        let cores = String(format: "%.1f", cpu())
+        parts.append(String(localized: "VM CPU \(cores) cores"))
         let r = Report(title: NoPictureGuard.title, detail: parts.joined(separator: " · "))
         if r != report {
             report = r
@@ -430,11 +434,20 @@ final class NoPictureGuard {
     private func guestText(_ now: CFTimeInterval) -> String? {
         guard lastAlive > 0 else { return nil }
         let age = now - lastAlive
-        return age > StallMonitor.heartbeatTimeout ? "guest not responding for \(Int(age)) s" : "guest alive"
+        return age > StallMonitor.heartbeatTimeout
+            ? String(localized: "guest not responding for \(Int(age)) s")
+            : String(localized: "guest alive")
     }
 
     private func status(_ now: CFTimeInterval) -> String {
-        (guestText(now) ?? "no guest heartbeat") + ", CPU \(String(format: "%.1f", cpu())) cores"
+        let guest: String
+        if lastAlive > 0 {
+            let age = now - lastAlive
+            guest = age > StallMonitor.heartbeatTimeout ? "guest not responding for \(Int(age)) s" : "guest alive"
+        } else {
+            guest = "no guest heartbeat"
+        }
+        return guest + ", CPU \(String(format: "%.1f", cpu())) cores"
     }
 
     private func noteCPU(_ now: CFTimeInterval) {

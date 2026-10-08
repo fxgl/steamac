@@ -84,7 +84,7 @@ enum OverlaySelfTest {
             Step(name: "08-final-step", console: "\(ok)Reached target \u{1b}[0;1;39mFinal Step\u{1b}[0m.\r\n", guest: "", wait: 0.6) { p, _ in
                 near(p.state.fraction, 0.95) ? nil : "expected 95% at Final Step, got \(p.state)" },
             Step(name: "09-restarting", console: "", guest: "shutdown reboot\n", wait: 0.6) { p, ov in
-                p.state.phase == .shutdown(reboot: true) && ov.currentTitle == "Restarting…" && rebootIntents == 1
+                p.state.phase == .shutdown(reboot: true) && ov.currentTitle == String(localized: "Restarting…") && rebootIntents == 1
                     ? nil : "expected Restarting… + one reboot intent, got \(p.state) intents=\(rebootIntents)" },
             Step(name: "10-power-down", console: "[  123.456789] reboot: Restarting system\r\n", guest: "", wait: 0.6) { p, _ in
                 near(p.state.fraction, 1) ? nil : "expected 100%, got \(p.state)" },

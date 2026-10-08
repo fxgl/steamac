@@ -157,10 +157,20 @@ enum SettingsSelfTest {
         /// (settings-display-custom.png). The saved window size is restored afterwards.
         func displayPresets(then done: @escaping () -> Void) {
             let saved = (settings.windowSizePreset, settings.windowWidth, settings.windowHeight)
+            let customTitle = String(localized: "Custom…")
+            let fit = LauncherSettings.fitToScreenSize()
+            let fitTitle = String(localized: "Fit to screen (\(String(fit.0)) × \(String(fit.1)))")
+            let presetTitles = LauncherSettings.sizePresets.map { p in
+                String(localized: "\(String(p.width)) × \(String(p.height)) (\(p.label))")
+            }
+            let largerPresetTitles = LauncherSettings.sizePresets.map { p in
+                String(localized: "\(String(p.width)) × \(String(p.height)) (\(p.label)) — larger than this screen")
+            }
             sw.show(tab: .display)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 guard let popup = popups(in: sw.window.contentView)
-                    .first(where: { $0.title.contains(" × ") || $0.title.hasPrefix("Custom") }) else {
+                    .first(where: { presetTitles.contains($0.title) || largerPresetTitles.contains($0.title)
+                        || $0.title == fitTitle || $0.title == customTitle }) else {
                     failures.append("display-presets: no window size popup")
                     return done()
                 }
@@ -200,11 +210,11 @@ enum SettingsSelfTest {
                     nc.removeObserver(began)
                     let path = "\(dir)/settings-display-presets.txt"
                     try? (titles.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
-                    let presets = titles.filter { t in LauncherSettings.sizePresets.contains { t.hasPrefix("\($0.width) × \($0.height) (") } }
+                    let presets = titles.filter { presetTitles.contains($0) || largerPresetTitles.contains($0) }
                     log("selftest-settings: \(path): \(titles.count) items, \(presets.count) presets,"
-                        + " \(titles.filter { $0.contains("larger than this screen") }.count) larger than this screen")
-                    if presets.count != LauncherSettings.sizePresets.count || !titles.contains("Custom…")
-                        || !titles.contains(where: { $0.hasPrefix("Fit to screen (") }) {
+                        + " \(titles.filter { largerPresetTitles.contains($0) }.count) larger than this screen")
+                    if presets.count != LauncherSettings.sizePresets.count || !titles.contains(customTitle)
+                        || !titles.contains(fitTitle) {
                         failures.append("display-presets: unexpected items \(titles)")
                     }
                     capture("display-presets", tabShot.flatMap { withMenuItems($0, titles, selected: selected) })
@@ -252,7 +262,7 @@ enum SettingsSelfTest {
                         let host = NSHostingView(rootView: WhatIsSentView())
                         let w = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled],
                                          backing: .buffered, defer: false)
-                        w.title = "What is sent"
+                        w.title = String(localized: "What is sent")
                         w.contentView = host
                         w.isReleasedWhenClosed = false
                         w.center()
@@ -269,7 +279,7 @@ enum SettingsSelfTest {
             sw.show(tab: tab)
             // Let the tab switch animation and SwiftUI layout settle.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                capture(tab.title.lowercased(), sw.snapshot())
+                capture(tab.name, sw.snapshot())
                 next()
             }
         }

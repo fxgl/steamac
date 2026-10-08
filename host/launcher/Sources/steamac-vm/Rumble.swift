@@ -50,7 +50,7 @@ final class Rumble {
         guard let c = controller else { return }
         guard let haptics = c.haptics else {
             if !reportedNoHaptics {
-                log("gamepad: \(GamepadBridge.displayName(of: c)) has no haptics: rumble is not played")
+                log("gamepad: \(GamepadBridge.logDisplayName(of: c)) has no haptics: rumble is not played")
                 reportedNoHaptics = true
             }
             return
@@ -62,7 +62,7 @@ final class Rumble {
         motors = plan.compactMap { locality, sharpness in
             haptics.createEngine(withLocality: locality).map { Motor(engine: $0, sharpness: sharpness, name: locality.rawValue) }
         }
-        log("gamepad: rumble on \(GamepadBridge.displayName(of: c)) (\(plan.map(\.0.rawValue).joined(separator: ", ")))"
+        log("gamepad: rumble on \(GamepadBridge.logDisplayName(of: c)) (\(plan.map(\.0.rawValue).joined(separator: ", ")))"
             + (motors.count == plan.count ? "" : ": no haptic engine"))
     }
 }

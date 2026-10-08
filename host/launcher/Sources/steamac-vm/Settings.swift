@@ -99,26 +99,25 @@ final class LauncherSettings: ObservableObject {
 
         var title: String {
             switch self {
-            case .frame: return "Steam Frame client"
-            case .deck: return "Steam Deck client"
-            case .deckbeta: return "Steam Deck client (beta)"
+            case .frame: return String(localized: "Steam Frame client")
+            case .deck: return String(localized: "Steam Deck client")
+            case .deckbeta: return String(localized: "Steam Deck client (beta)")
             }
         }
 
         var detail: String {
             switch self {
             case .frame:
-                return "Valve's ARM64 client for Steam Frame (a beta for a headset not yet released). "
-                    + "Until an account is signed in with Remember me, the Steam Deck client shows the sign-in QR code."
+                return String(localized: "Valve's ARM64 client for Steam Frame (a beta for a headset not yet released). Until an account is signed in with Remember me, the Steam Deck client shows the sign-in QR code.")
             case .deck:
-                return "The public ARM64 Steam Deck client (steamdeck_stable). Standard sign-in with an on-screen QR code."
+                return String(localized: "The public ARM64 Steam Deck client (steamdeck_stable). Standard sign-in with an on-screen QR code.")
             case .deckbeta:
-                return "The Steam Deck client beta (steamdeck_publicbeta). Standard sign-in with an on-screen QR code."
+                return String(localized: "The Steam Deck client beta (steamdeck_publicbeta). Standard sign-in with an on-screen QR code.")
             }
         }
 
         /// Switching re-downloads the client (about 1 GB) on the next start.
-        static let switchNote = "Switching downloads the other client (about 1 GB) when Steam starts."
+        static let switchNote = String(localized: "Switching downloads the other client (about 1 GB) when Steam starts.")
     }
 
     /// Host Vulkan driver behind Venus: virglrenderer, in the VM process, opens its dylib
@@ -141,30 +140,29 @@ final class LauncherSettings: ObservableObject {
         /// Main features and the oldest macOS it runs on (picker items).
         var summary: String {
             switch self {
-            case .moltenvk: return "Metal 3 · macOS 15+"
-            case .kosmickrisp: return "Metal 4 · macOS 26+"
+            case .moltenvk: return String(localized: "Metal 3 · macOS 15+")
+            case .kosmickrisp: return String(localized: "Metal 4 · macOS 26+")
             }
         }
 
-        var title: String { name + " · " + summary }
+        var title: String { String(localized: "\(name) · \(summary)") }
 
         var detail: String {
             let text: String
             switch self {
             case .moltenvk:
-                text = "Vulkan on Metal 3 through MoltenVK with steamac's patches (macOS 15 or newer)."
+                text = String(localized: "Vulkan on Metal 3 through MoltenVK with steamac's patches (macOS 15 or newer).")
             case .kosmickrisp:
-                text = "Mesa's Vulkan driver on Metal 4 (macOS 26 or newer). Faster than MoltenVK: Stellar Blade Demo "
-                    + "runs at ~29 FPS instead of ~18 on an M1 Max."
+                text = String(localized: "Mesa's Vulkan driver on Metal 4 (macOS 26 or newer). Faster than MoltenVK: Stellar Blade Demo runs at ~29 FPS instead of ~18 on an M1 Max.")
             }
-            return self == Self.preferred ? text + " Default on this Mac." : text
+            return self == Self.preferred ? text + " " + String(localized: "Default on this Mac.") : text
         }
 
         /// The default: KosmicKrisp where this Mac and build have it, else MoltenVK (fixed for the process).
         static let preferred: VulkanDriver = kosmickrisp.unavailableReason == nil ? .kosmickrisp : .moltenvk
 
         /// Switching changes the Venus driver identity: Steam and games rebuild their shader caches.
-        static let switchNote = "Switching makes Steam and games rebuild their shader caches."
+        static let switchNote = String(localized: "Switching makes Steam and games rebuild their shader caches.")
 
         /// The dylib virglrenderer opens through @rpath (the app's Frameworks, work/out/host/lib).
         var library: String {
@@ -174,16 +172,34 @@ final class LauncherSettings: ObservableObject {
             }
         }
 
-        /// Why this Mac or this build cannot use the driver; nil if it can.
-        var unavailableReason: String? {
+        private enum Unavailability {
+            case oldOS, missingLibrary
+        }
+
+        private var unavailability: Unavailability? {
             guard self == .kosmickrisp else { return nil }
             let tahoe = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
-            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(tahoe) else { return "needs macOS 26 or newer (Metal 4)" }
-            guard let handle = dlopen("@rpath/" + library, RTLD_LAZY | RTLD_LOCAL) else {
-                return "not included in this build (\(library))"
-            }
+            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(tahoe) else { return .oldOS }
+            guard let handle = dlopen("@rpath/" + library, RTLD_LAZY | RTLD_LOCAL) else { return .missingLibrary }
             dlclose(handle)
             return nil
+        }
+
+        /// English diagnostic for logs and command-line errors.
+        var unavailableReason: String? {
+            switch unavailability {
+            case .oldOS: return "needs macOS 26 or newer (Metal 4)"
+            case .missingLibrary: return "not included in this build (\(library))"
+            case nil: return nil
+            }
+        }
+
+        var localizedUnavailableReason: String? {
+            switch unavailability {
+            case .oldOS: return String(localized: "needs macOS 26 or newer (Metal 4)")
+            case .missingLibrary: return String(localized: "not included in this build (\(library))")
+            case nil: return nil
+            }
         }
     }
 
@@ -194,9 +210,9 @@ final class LauncherSettings: ObservableObject {
     }
 
     static let sizePresets: [SizePreset] = [
-        .init(width: 1280, height: 800, label: "Steam Deck, 16:10"), .init(width: 1280, height: 720, label: "16:9"),
+        .init(width: 1280, height: 800, label: String(localized: "Steam Deck, 16:10")), .init(width: 1280, height: 720, label: "16:9"),
         .init(width: 1440, height: 900, label: "16:10"), .init(width: 1600, height: 900, label: "16:9"),
-        .init(width: 1680, height: 1050, label: "16:10"), .init(width: 1920, height: 1080, label: "Full HD, 16:9"),
+        .init(width: 1680, height: 1050, label: "16:10"), .init(width: 1920, height: 1080, label: String(localized: "Full HD, 16:9")),
         .init(width: 1920, height: 1200, label: "16:10"), .init(width: 2560, height: 1440, label: "QHD, 16:9"),
         .init(width: 2560, height: 1600, label: "16:10"), .init(width: 3440, height: 1440, label: "21:9"),
         .init(width: 3840, height: 2160, label: "4K, 16:9"),

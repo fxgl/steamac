@@ -43,6 +43,8 @@ esac
 # An already assembled app is not an escape hatch around guest provenance.
 # Check its own sealed resource bytes and receipts before touching dist/.
 python3 "$ROOT/scripts/guest-artifacts.py" check-bundle "$SRC/Contents/Resources"
+# Releases ship every UI string in every language (build.sh only warns).
+python3 "$HERE/l10n.py" check --strict
 
 # Valid identities only, as "<SHA-1> <name>".
 valid=$(security find-identity -v -p codesigning \

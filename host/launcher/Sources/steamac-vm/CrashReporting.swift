@@ -29,18 +29,14 @@ enum CrashReporting {
     static let noFlag = "--no-crash-reports"
 
     /// Settings / first-run explanation (one line) and the "What is sent" list.
-    static let summary = "Crash reports and rare errors go to the FX Steam Launcher developers (Sentry). No personal data."
+    static let summary = String(localized: "Crash reports and rare errors go to the FX Steam Launcher developers (Sentry). No personal data.")
     static let whatIsSent = [
-        "Crash reports of the launcher and the VM process: crash reason, stack traces, loaded libraries.",
-        "A few errors: guest GPU context lost, shader pipeline compile failures (with an excerpt of the failing "
-            + "Metal shader source), libkrun panics, failed disk creation or first-start setup, VM stopped "
-            + "unexpectedly or killed (with the Mac's memory use), SteamOS not responding.",
-        "The launcher's last ~200 log lines (launcher, MoltenVK, libkrun and virglrenderer messages; home "
-            + "folder paths shortened to ~) and the boot stages.",
-        "Versions and setup: app, macOS, libkrun/virglrenderer/MoltenVK builds, kernel, SteamOS build, Mac "
-            + "model, GPU, VM CPUs/RAM/display mode, game App IDs.",
-        "A random install ID (not linked to you) to count affected Macs.",
-        "Never: your name, user or computer name, IP address, Steam account, game titles, files, or the SteamOS console.",
+        String(localized: "Crash reports of the launcher and the VM process: crash reason, stack traces, loaded libraries."),
+        String(localized: "A few errors: guest GPU context lost, shader pipeline compile failures (with an excerpt of the failing Metal shader source), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."),
+        String(localized: "The launcher's last ~200 log lines (launcher, MoltenVK, libkrun and virglrenderer messages; home folder paths shortened to ~) and the boot stages."),
+        String(localized: "Versions and setup: app, macOS, libkrun/virglrenderer/MoltenVK builds, kernel, SteamOS build, Mac model, GPU, VM CPUs/RAM/display mode, game App IDs."),
+        String(localized: "A random install ID (not linked to you) to count affected Macs."),
+        String(localized: "Never: your name, user or computer name, IP address, Steam account, game titles, files, or the SteamOS console."),
     ]
 
     enum Role: String { case launcher, vm }
@@ -457,6 +453,15 @@ enum CrashReporting {
         guard status > 128 else { return "VM process exited with status \(status)" }
         let signal = status - 128
         return signal == SIGKILL ? killedSummary : "VM process crashed (\(signalName(signal)))"
+    }
+
+    /// UI counterpart; exitSummary stays English in reports and logs.
+    static func localizedExitSummary(status: Int32) -> String {
+        guard status > 128 else { return String(localized: "VM process exited with status \(status)") }
+        let signal = status - 128
+        return signal == SIGKILL
+            ? String(localized: "VM process killed (SIGKILL — memory pressure or force quit)")
+            : String(localized: "VM process crashed (\(signalName(signal)))")
     }
 
     /// Supervisor: the VM process ended. A multi-line message still collecting lines is reported

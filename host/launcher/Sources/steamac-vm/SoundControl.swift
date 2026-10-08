@@ -58,12 +58,23 @@ final class SoundControl {
     var canSetVolume: Bool { setVolume != nil }
     var canSetBuffer: Bool { setBuffer != nil }
 
+    private var missingAPIs: [String] {
+        [("krun_snd_set_output_device", canSelectDevice), ("krun_snd_set_volume", canSetVolume),
+         ("krun_snd_set_buffer_ms", canSetBuffer)].filter { !$0.1 }.map(\.0)
+    }
+
+    /// English diagnostic for the boot log.
+    var missingAPILogReason: String? {
+        let missing = missingAPIs
+        guard !missing.isEmpty else { return nil }
+        return "The installed libkrun has no \(missing.joined(separator: ", ")) (rebuild host/libkrun and reinstall the launcher)."
+    }
+
     /// Why live controls are unavailable in this libkrun (nil = all present).
     var missingAPIReason: String? {
-        if canSelectDevice && canSetVolume && canSetBuffer { return nil }
-        let missing = [("krun_snd_set_output_device", canSelectDevice), ("krun_snd_set_volume", canSetVolume),
-                       ("krun_snd_set_buffer_ms", canSetBuffer)].filter { !$0.1 }.map(\.0)
-        return "The installed libkrun has no \(missing.joined(separator: ", ")) (rebuild host/libkrun and reinstall the launcher)."
+        let missing = missingAPIs
+        guard !missing.isEmpty else { return nil }
+        return String(localized: "The installed libkrun has no \(missing.joined(separator: ", ")) (rebuild host/libkrun and reinstall the launcher).")
     }
     private var subscriptions: [AnyCancellable] = []
 
@@ -107,9 +118,9 @@ final class SoundControl {
         push(fade: false)
     }
 
-    func detach(reason: String) {
+    func detach(reason: LocalizedStringResource) {
         ctx = nil
-        noDeviceReason = reason
+        noDeviceReason = String(localized: reason)
     }
 
     func apply(outputUID: String) {

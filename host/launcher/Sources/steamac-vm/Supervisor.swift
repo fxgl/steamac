@@ -107,7 +107,7 @@ enum Supervisor {
             if let busy = o.disks.first(where: { !$0.readOnly && DiskLock.inUse($0.path) }) {
                 let error = DiskLock.InUse(path: busy.path)
                 log("error: \(error)")
-                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS is already running", "\(error)") }
+                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS is already running", error.localizedDescription) }
                 cleanup()
                 exit(1)
             }
@@ -115,7 +115,7 @@ enum Supervisor {
                 try DiskGrower.applyPending(runDir: dir, disks: o.disks)
             } catch {
                 log("grow-disk: \(error)")
-                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be grown", "\(error)") }
+                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be grown", error.localizedDescription) }
                 cleanup()
                 exit(1)
             }

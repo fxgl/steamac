@@ -162,10 +162,11 @@ enum GuestPassword {
         var q = query(disk)
         q[kSecValueData as String] = Data(pw.utf8)
         q[kSecAttrGeneric as String] = Data(State.pending.rawValue.utf8)
-        q[kSecAttrLabel as String] = "FX Steam Launcher: SteamOS user steamos (disk \(disk))"
+        q[kSecAttrLabel as String] = String(localized: "FX Steam Launcher: SteamOS user steamos (disk \(disk))")
         let status = SecItemAdd(q as CFDictionary, nil)
         guard status == errSecSuccess else {
-            throw OptionError("Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")")
+            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)"
+            throw OptionError("Keychain: \(detail)", localized: String(localized: "Keychain: \(detail)"))
         }
         log("config: generated a new SteamOS password for disk \(disk) (Keychain; shown in Settings > Advanced), applied on the next start")
         return pw

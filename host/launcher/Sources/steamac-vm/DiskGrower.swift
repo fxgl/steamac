@@ -11,18 +11,20 @@ enum DiskGrower {
     }
 
     static func request(path: String, homeGiB: Int) throws -> Request {
-        guard (8...4096).contains(homeGiB) else { throw OptionError("home size must be 8..4096 GiB") }
+        guard (8...4096).contains(homeGiB) else { throw OptionError("home size must be 8..4096 GiB", localized: String(localized: "home size must be 8..4096 GiB")) }
         let table = try GPT.read(path: path)
         guard let home = table.entries.last, home.name == "home", home.type == DiskLayout.typeHome,
               table.entries.dropLast().allSatisfy({ $0.lastLBA < home.firstLBA }) else {
-            throw OptionError("\(path): not a SteamOS disk with home as its last partition")
+            throw OptionError("\(path): not a SteamOS disk with home as its last partition", localized: String(localized: "\(path): not a SteamOS disk with home as its last partition"))
         }
         let target = UInt64(homeGiB) * (1 << 30)
         guard target > home.sectors * 512 else {
-            throw OptionError("the new home size must be larger than its current \(String(format: "%.1f", Double(home.sectors * 512) / Double(1 << 30))) GiB (disks cannot be shrunk)")
+            let currentGiB = String(format: "%.1f", Double(home.sectors * 512) / Double(1 << 30))
+            throw OptionError("the new home size must be larger than its current \(currentGiB) GiB (disks cannot be shrunk)",
+                              localized: String(localized: "the new home size must be larger than its current \(currentGiB) GiB (disks cannot be shrunk)"))
         }
         let bytes = home.firstLBA * 512 + target + DiskLayout.mib
-        guard bytes > table.sectors * 512 else { throw OptionError("this image already has room for that home size; start SteamOS to finish growing it") }
+        guard bytes > table.sectors * 512 else { throw OptionError("this image already has room for that home size; start SteamOS to finish growing it", localized: String(localized: "this image already has room for that home size; start SteamOS to finish growing it")) }
         _ = try DiskCreationFilesystem.preflight(directory: URL(fileURLWithPath: path).deletingLastPathComponent().path,
                                                 diskBytes: bytes, rootfsBytes: 0, existingBytes: table.sectors * 512)
         return Request(path: path, homeGiB: homeGiB, diskGUID: table.diskGUID)
@@ -32,7 +34,7 @@ enum DiskGrower {
         let fd = try DiskLock.lock(r.path, writable: true)
         defer { close(fd) }
         let checked = try request(path: r.path, homeGiB: r.homeGiB)
-        guard checked.diskGUID == r.diskGUID else { throw OptionError("the selected SteamOS disk has changed; choose its size again") }
+        guard checked.diskGUID == r.diskGUID else { throw OptionError("the selected SteamOS disk has changed; choose its size again", localized: String(localized: "the selected SteamOS disk has changed; choose its size again")) }
         var table = try GPT.read(path: r.path)
         let bytes = table.entries.last!.firstLBA * 512 + UInt64(r.homeGiB) * (1 << 30) + DiskLayout.mib
         guard ftruncate(fd, off_t(bytes)) == 0 else { throw OptionError("grow \(r.path): \(String(cString: strerror(errno)))") }
@@ -57,7 +59,7 @@ enum DiskGrower {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         let request = try JSONDecoder().decode(Request.self, from: Data(contentsOf: url))
         guard disks.contains(where: { !$0.readOnly && $0.path == request.path }) else {
-            throw OptionError("the disk selected for growth is no longer the next boot's writable disk")
+            throw OptionError("the disk selected for growth is no longer the next boot's writable disk", localized: String(localized: "the disk selected for growth is no longer the next boot's writable disk"))
         }
         try grow(request)
         try FileManager.default.removeItem(at: url)

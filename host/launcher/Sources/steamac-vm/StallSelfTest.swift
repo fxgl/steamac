@@ -81,14 +81,21 @@ enum StallSelfTest {
         let view = wc.stallView
         // The card's "Report…" link (only with the not-responding wording).
         view.onReport = { log("stall selftest: Report… link activated") }
-        let working = "Still working — loading or compiling shaders…"
+        let working = String(localized: "Still working — loading or compiling shaders…")
+        let sampleCPU = "CPUVALUE"
+        let sampleSeconds = 987   // < 1000: no digit grouping in the localized template
+        let workingDetail = String(localized: "VM CPU \(sampleCPU) cores · guest alive")
         func expectHidden(_ what: String) -> String? {
             !monitor.indicatorShown && !view.shown ? nil : "\(what): indicator should be hidden"
         }
         func expectShown(title: String, detail: String) -> String? {
             guard monitor.indicatorShown, view.shown else { return "indicator should be shown" }
             guard view.currentTitle == title else { return "title \"\(view.currentTitle)\", expected \"\(title)\"" }
-            return view.currentDetail.contains(detail) ? nil : "detail \"\(view.currentDetail)\" lacks \"\(detail)\""
+            let pattern = "^" + NSRegularExpression.escapedPattern(for: detail)
+                .replacingOccurrences(of: sampleCPU, with: "[0-9]+\\.[0-9]")
+                .replacingOccurrences(of: "\(sampleSeconds)", with: "[0-9]+") + "$"
+            return view.currentDetail.range(of: pattern, options: .regularExpression) != nil
+                ? nil : "detail \"\(view.currentDetail)\" does not match \"\(detail)\""
         }
         let steps: [Step] = [
             Step(name: "01-boot-overlay-gpu-idle", action: {}, wait: 3.0) {
@@ -106,7 +113,7 @@ enum StallSelfTest {
                                              : "expected game focus, got \(wc.guestFocus)"
             },
             Step(name: "05-game-idle-2.5s-shown", action: {}, wait: 1.0) {
-                expectShown(title: working, detail: "guest alive")
+                expectShown(title: working, detail: workingDetail)
                     ?? (view.reportLinkFrame.isEmpty ? nil : "Report… link shown while the guest is alive")
             },
             Step(name: "06-resized", action: { wc.window.setContentSize(NSSize(width: 1000, height: 700)) }, wait: 0.6) {
@@ -115,13 +122,13 @@ enum StallSelfTest {
                 guard abs(card.midX - b.midX) <= 1, card.minY > 0, card.maxY < b.height / 2 else {
                     return "card not centered in the lower half after resize: \(card) in \(b)"
                 }
-                return expectShown(title: working, detail: "VM CPU")
+                return expectShown(title: working, detail: workingDetail)
             },
             Step(name: "07-ring-resumes", action: { mode.store(2, ordering: .relaxed) }, wait: 0.6) {
                 view.isIdle ? expectHidden("Venus ring commands") : "indicator view not hidden + idle after the fade"
             },
             Step(name: "08-game-idle-again", action: { mode.store(0, ordering: .relaxed) }, wait: 2.5) {
-                expectShown(title: working, detail: "guest alive")
+                expectShown(title: working, detail: workingDetail)
             },
             Step(name: "09-focus-steam-hides", action: { guest("focus steam\n") }, wait: 0.5) {
                 view.isIdle ? expectHidden("focus back to Steam") : "indicator view not hidden + idle after focus steam"
@@ -132,7 +139,8 @@ enum StallSelfTest {
                 expectHidden("Steam UI, heartbeat lost < 5 s")
             },
             Step(name: "11-steam-ui-not-responding", action: {}, wait: 3.0) {
-                expectShown(title: "SteamOS is not responding…", detail: "waiting (")
+                expectShown(title: String(localized: "SteamOS is not responding…"),
+                            detail: String(localized: "waiting (\(sampleSeconds) s)"))
                     ?? (view.cardFrame.contains(view.reportLinkFrame) && !view.reportLinkFrame.isEmpty
                         ? nil : "Report… link missing on the not-responding card: \(view.reportLinkFrame) in \(view.cardFrame)")
             },
@@ -151,7 +159,7 @@ enum StallSelfTest {
                 view.isIdle ? expectHidden("setting off") : "indicator view not hidden + idle with the setting off"
             },
             Step(name: "14-setting-on", action: { monitor.enabled = true }, wait: 2.6) {
-                expectShown(title: working, detail: "guest alive")
+                expectShown(title: working, detail: workingDetail)
             },
             Step(name: "15-shutdown", action: { guest("shutdown poweroff\n") }, wait: 0.6) {
                 wc.overlay.shown && progress.state.phase == .shutdown(reboot: false)

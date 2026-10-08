@@ -62,6 +62,7 @@ final class SuspendController: NSObject, NSMenuDelegate {
     private var afterWake: [() -> Void] = []
     /// Longest the "Resuming…" chip waits for a guest frame.
     static let chipTimeout: TimeInterval = 2.5
+    private var chipLogText = "Resuming…"
     /// Without GPU work by then the guest is idle (a still Steam UI draws nothing): hide.
     static let chipIdleCheck: TimeInterval = 0.5
     /// After `awake`: logind sees the sleep job end (JobRemoved) before it handles a key again.
@@ -127,7 +128,7 @@ final class SuspendController: NSObject, NSMenuDelegate {
         }
         pausedAt = Date()
         log("\(what): VM paused in \(String(format: "%.1f", (CACurrentMediaTime() - t0) * 1000)) ms (\(origin)); "
-            + "\(SuspendController.memoryText() ?? "memory unknown")")
+            + "\(SuspendController.englishMemoryText() ?? "memory unknown")")
         wc.holdGuestSize = true
         endChip(nil)
         onPausedChange?(true)
@@ -180,7 +181,10 @@ final class SuspendController: NSObject, NSMenuDelegate {
             wc.guestSleeping(false)
         }
         endChip(nil)
-        wc.resumeChip.show(wakeToken != nil ? "Waking up…" : "Resuming…")
+        chipLogText = wakeToken != nil ? "Waking up…" : "Resuming…"
+        wc.resumeChip.show(wakeToken != nil
+            ? String(localized: "Waking up…", comment: "SteamOS is waking from guest sleep")
+            : String(localized: "Resuming…", comment: "The whole VM is resuming after an in-memory suspend, not a paused game"))
         chipShownAt = CACurrentMediaTime()
         presenter.onNextFrame = { [weak self] in self?.endChip("first guest frame") }
         // The guest is still frozen: these are the counters it left off with.
@@ -293,7 +297,7 @@ final class SuspendController: NSObject, NSMenuDelegate {
         guard let wc = window else { return }
         guard let why else { return wc.resumeChip.hide(animated: false) }
         wc.resumeChip.hide()
-        log("resume: \"\(wc.resumeChip.text)\" chip hidden after \(Int((CACurrentMediaTime() - chipShownAt) * 1000)) ms (\(why))")
+        log("resume: \"\(chipLogText)\" chip hidden after \(Int((CACurrentMediaTime() - chipShownAt) * 1000)) ms (\(why))")
     }
 
     // MARK: Quit while suspended
@@ -309,13 +313,12 @@ final class SuspendController: NSObject, NSMenuDelegate {
         NSApp.activate()
         if let shown = quitPrompt { return shown.window.makeKeyAndOrderFront(nil) }
         let alert = NSAlert()
-        alert.messageText = "SteamOS is suspended"
-        alert.informativeText = "Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. "
-            + "The suspended state (and a running game's unsaved progress) is not kept."
-        let shutdown = alert.addButton(withTitle: "Shut Down SteamOS")
+        alert.messageText = String(localized: "SteamOS is suspended", comment: "The whole VM is frozen in memory, not a paused game")
+        alert.informativeText = String(localized: "Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. The suspended state (and a running game's unsaved progress) is not kept.")
+        let shutdown = alert.addButton(withTitle: String(localized: "Shut Down SteamOS"))
         shutdown.target = self
         shutdown.action = #selector(quitPromptShutdown)
-        let cancel = alert.addButton(withTitle: "Cancel")
+        let cancel = alert.addButton(withTitle: String(localized: "Cancel"))
         cancel.target = self
         cancel.action = #selector(quitPromptCancel)
         alert.layout()
@@ -367,32 +370,37 @@ final class SuspendController: NSObject, NSMenuDelegate {
     private func showStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "SteamOS suspended")
+            let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: String(localized: "SteamOS suspended", comment: "The whole VM is frozen in memory, not a paused game"))
             image?.isTemplate = true
             button.image = image
-            button.toolTip = "SteamOS suspended — FX Steam Launcher"
+            button.toolTip = String(localized: "SteamOS suspended — FX Steam Launcher")
         }
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
-        let title = NSMenuItem(title: "SteamOS suspended", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: String(localized: "SteamOS suspended", comment: "The whole VM is frozen in memory, not a paused game"), action: nil, keyEquivalent: "")
+        title.identifier = NSUserInterfaceItemIdentifier("SteamOS suspended")
         title.isEnabled = false
         menu.addItem(title)
         let memory = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        memory.identifier = NSUserInterfaceItemIdentifier("")
         memory.isEnabled = false
         menu.addItem(memory)
         memoryItem = memory
         menu.addItem(.separator())
-        let resume = NSMenuItem(title: "Resume", action: #selector(menuResume), keyEquivalent: "")
+        let resume = NSMenuItem(title: String(localized: "Resume", comment: "Status menu: resume the whole VM after an in-memory suspend, not a paused game"), action: #selector(menuResume), keyEquivalent: "")
+        resume.identifier = NSUserInterfaceItemIdentifier("Resume")
         resume.target = self
         menu.addItem(resume)
-        let shutdown = NSMenuItem(title: "Shut Down SteamOS", action: #selector(menuShutdown), keyEquivalent: "")
+        let shutdown = NSMenuItem(title: String(localized: "Shut Down SteamOS"), action: #selector(menuShutdown), keyEquivalent: "")
+        shutdown.identifier = NSUserInterfaceItemIdentifier("Shut Down SteamOS")
         shutdown.target = self
         menu.addItem(shutdown)
         menu.addItem(.separator())
         let note = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        note.identifier = NSUserInterfaceItemIdentifier("Suspended state is kept while FX Steam Launcher is running.")
         note.attributedTitle = NSAttributedString(
-            string: "Suspended state is kept while FX Steam Launcher is running.",
+            string: String(localized: "Suspended state is kept while FX Steam Launcher is running."),
             attributes: [.font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
         note.isEnabled = false
         menu.addItem(note)
@@ -409,7 +417,8 @@ final class SuspendController: NSObject, NSMenuDelegate {
 
     private func updateMemoryItem() {
         let since = pausedAt.map { DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short) } ?? "?"
-        memoryItem?.title = "Since \(since) · \(SuspendController.memoryText() ?? "memory unknown")"
+        let memory = SuspendController.memoryText() ?? String(localized: "memory unknown")
+        memoryItem?.title = String(localized: "Since \(since) · \(memory)")
     }
 
     func menuWillOpen(_ menu: NSMenu) { updateMemoryItem() }
@@ -423,10 +432,12 @@ final class SuspendController: NSObject, NSMenuDelegate {
         updateMemoryItem()
         let titles = item.menu?.items.map { i -> String in
             if i.isSeparatorItem { return "—" }
-            let title = i.title.isEmpty ? i.attributedTitle?.string ?? "" : i.title
+            let title = i === memoryItem
+                ? "Since \(pausedAt.map { ISO8601DateFormatter().string(from: $0) } ?? "?") · \(SuspendController.englishMemoryText() ?? "memory unknown")"
+                : i.identifier?.rawValue ?? ""
             return title + (i.isEnabled ? "" : " (disabled)")
         } ?? []
-        log("control: menu-bar item: \(item.button?.toolTip ?? "") — menu: " + titles.joined(separator: " | "))
+        log("control: menu-bar item: SteamOS suspended — FX Steam Launcher — menu: " + titles.joined(separator: " | "))
         guard let button = item.button, let rep = button.bitmapImageRepForCachingDisplay(in: button.bounds) else { return }
         button.cacheDisplay(in: button.bounds, to: rep)
         if let png = rep.representation(using: .png, properties: [:]), (try? png.write(to: URL(fileURLWithPath: path))) != nil {
@@ -438,7 +449,12 @@ final class SuspendController: NSObject, NSMenuDelegate {
     /// far plus the host GPU state).
     static func memoryText() -> String? {
         guard let bytes = footprint() else { return nil }
-        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory) + " of memory in use"
+        let size = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+        return String(localized: "\(size) of memory in use")
+    }
+
+    private static func englishMemoryText() -> String? {
+        footprint().map { "\($0) bytes of memory in use" }
     }
 
     static func footprint() -> UInt64? {
@@ -555,7 +571,7 @@ final class ResumeChipView: NSView {
     private let dot = CALayer()
     private let label = CATextLayer()
     private(set) var shown = false
-    private(set) var text = "Resuming…"
+    private(set) var text = String(localized: "Resuming…", comment: "The whole VM is resuming after an in-memory suspend, not a paused game")
 
     override init(frame: NSRect) {
         super.init(frame: frame)

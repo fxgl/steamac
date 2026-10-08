@@ -19,7 +19,7 @@ do {
     (options, settingsOverrides) = try Options.resolve(CommandLine.arguments, settings: settings)
 } catch {
     FileHandle.standardError.write("steamac-vm: \(error)\n\n\(Options.usage)\n".data(using: .utf8)!)
-    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("FX Steam Launcher cannot start", "\(error)") }
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("FX Steam Launcher cannot start", error.localizedDescription) }
     exit(2)
 }
 
@@ -131,7 +131,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
             log("power key sent to guest; repeat the request to force quit")
         }
         progress?.hostRequestedShutdown()
-        window?.setStatus("shutting down… (close again to force quit)")
+        window?.setStatus(String(localized: "shutting down… (close again to force quit)"))
         startGraceTimer()
         if let suspender { suspender.whenAwake(pressPowerKey) } else { pressPowerKey() }
     }
@@ -157,7 +157,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
         suspender?.resume(origin: "restart")
         progress.hostRequestedRestart()   // onRebootIntent writes the supervisor's reboot marker
         settingsContext?.restartRequested = true
-        window?.setStatus("restarting… (close to force quit)")
+        window?.setStatus(String(localized: "restarting… (close to force quit)"))
         startGraceTimer()
         let pressPowerKey = {
             guard vm.requestShutdown() else {
@@ -245,11 +245,12 @@ extension Lifecycle: NSMenuItemValidation {
         if item.action == #selector(menuMetalHUD) { item.state = LauncherSettings.shared.metalHUD ? .on : .off }
         if item.action == #selector(menuCheckForUpdates) {
             item.title = UpdateChecker.shared.menuTitle
-            item.badge = UpdateChecker.shared.available != nil ? NSMenuItemBadge(string: "New") : nil
+            item.badge = UpdateChecker.shared.available != nil ? NSMenuItemBadge(string: String(localized: "New", comment: "Badge on a menu item when an update is available")) : nil
         }
         if item.action == #selector(menuSuspend) {
             let suspended = suspender?.suspended ?? false
-            item.title = suspended ? "Resume" : "Suspend"
+            item.title = suspended ? String(localized: "Resume", comment: "App menu: resume the suspended VM")
+                                   : String(localized: "Suspend", comment: "App menu: freeze the VM in memory")
             return suspender != nil && requestedAt == nil
         }
         return true
@@ -323,9 +324,13 @@ do {
     let sound = SoundControl()
     if vm.hasSound {
         sound.attach(ctx: vm.ctx, settings: settings)
-        if let missing = sound.missingAPIReason { log("sound: live controls unavailable: \(missing)") }
+        if let missing = sound.missingAPILogReason { log("sound: live controls unavailable: \(missing)") }
     } else {
-        sound.detach(reason: options.sound ? "This libkrun has no sound support (SND=1)." : "Sound was off when this VM started.")
+        if options.sound {
+            sound.detach(reason: "This libkrun has no sound support (SND=1).")
+        } else {
+            sound.detach(reason: "Sound was off when this VM started.")
+        }
     }
 
     for sig in [SIGINT, SIGTERM, SIGHUP] {

@@ -6,8 +6,10 @@ struct ProgressState: Equatable {
     enum Phase: Equatable { case boot, running, shutdown(reboot: Bool) }
     var phase: Phase = .boot
     var stageId = "vm"
-    var title = "Starting virtual machine…"
+    var title = String(localized: "Starting virtual machine…")
+    var logTitle = "Starting virtual machine…"
     var detail = ""
+    var logDetail = ""
     var fraction = 0.0
     var indeterminate = false
 }
@@ -35,6 +37,28 @@ final class BootProgress {
         "steam-install": (85, 10), "steam-start": (95, 5),
     ]
     static let guestStages: Set<String> = ["session", "steam-check", "steam-download", "steam-install", "steam-start"]
+
+    /// The guest agent's fixed stage texts (guest/progress-agent/src/main.rs) in the UI language;
+    /// any other text it sends is shown as sent.
+    static func localizedGuestText(_ text: String) -> String {
+        switch text {
+        case "Session started": return String(localized: "Session started")
+        case "Starting Steam client": return String(localized: "Starting Steam client")
+        case "Starting Steam": return String(localized: "Starting Steam")
+        case "Restarting Steam": return String(localized: "Restarting Steam")
+        case "Verifying Steam installation": return String(localized: "Verifying Steam installation")
+        case "Checking for Steam updates": return String(localized: "Checking for Steam updates")
+        case "Downloading Steam update": return String(localized: "Downloading Steam update")
+        case "Steam update downloaded": return String(localized: "Steam update downloaded")
+        case "Extracting Steam update": return String(localized: "Extracting Steam update")
+        case "Installing Steam update": return String(localized: "Installing Steam update")
+        case "Steam update installed": return String(localized: "Steam update installed")
+        case "Loading Steam UI": return String(localized: "Loading Steam UI")
+        case "Opening Steam": return String(localized: "Opening Steam")
+        case "Steam is ready": return String(localized: "Steam is ready")
+        default: return text
+        }
+    }
 
     private(set) var state = ProgressState()
     /// State changed (overlay redraw / log line).
@@ -66,7 +90,10 @@ final class BootProgress {
     private var rebootIntent = false
 
     init(restarting: Bool = false) {
-        if restarting { state.title = "Restarting SteamOS…" }
+        if restarting {
+            state.title = String(localized: "Restarting SteamOS…")
+            state.logTitle = "Restarting SteamOS…"
+        }
     }
 
     // MARK: inputs
@@ -77,7 +104,7 @@ final class BootProgress {
         if !sawConsole {
             sawConsole = true
             if state.phase == .boot && state.stageId == "vm" {
-                set(stage: "kernel", title: "Booting Linux kernel…", percent: 0)
+                set(stage: "kernel", title: "Booting Linux kernel…", localizedTitle: String(localized: "Booting Linux kernel…"), percent: 0)
             }
         }
         if case .shutdown = state.phase {
@@ -98,18 +125,19 @@ final class BootProgress {
         } else if let r = line.range(of: "steamac-config: ") {
             configLine(String(line[r.upperBound...]))
         } else if let r = line.range(of: "steamac-init: switching to rootfs-") {
-            let slot = line[r.upperBound...].prefix(1)
-            set(stage: "init", title: "Mounting SteamOS (slot \(slot))…", percent: 100)
+            let slot = String(line[r.upperBound...].prefix(1))
+            set(stage: "init", title: "Mounting SteamOS (slot \(slot))…",
+                localizedTitle: String(localized: "Mounting SteamOS (slot \(slot))…"), percent: 100)
         } else if line.contains("Welcome to SteamOS") {
             okLines = 0
-            set(stage: "systemd", title: "Starting SteamOS services…", percent: 0)
+            set(stage: "systemd", title: "Starting SteamOS services…", localizedTitle: String(localized: "Starting SteamOS services…"), percent: 0)
         } else if line.contains("Reached target Graphical Interface") {
-            set(stage: "graphical", title: "Starting Steam session…", percent: 0, indeterminate: true)
+            set(stage: "graphical", title: "Starting Steam session…", localizedTitle: String(localized: "Starting Steam session…"), percent: 0, indeterminate: true)
         } else if state.stageId == "systemd", let text = BootProgress.okText(line) {
             okLines += 1
             // ~120 [ OK ] lines on a SteamOS boot; approach 95% of the stage asymptotically.
             let p = 95 * (1 - exp(-Double(okLines) / 45))
-            set(stage: "systemd", title: state.title, percent: p, detail: text)
+            set(stage: "systemd", title: state.logTitle, localizedTitle: state.title, percent: p, detail: text)
         }
     }
 
@@ -122,9 +150,11 @@ final class BootProgress {
         case "stage":
             guard parts.count >= 3, BootProgress.guestStages.contains(parts[1]), let pct = Int(parts[2]),
                   state.phase == .boot else { return }
-            let text = parts.count > 3 ? parts[3] : state.title
-            set(stage: parts[1], title: text, percent: Double(max(0, min(100, pct))), indeterminate: pct < 0,
-                detail: parts[1] == state.stageId ? state.detail : "")
+            let text = parts.count > 3 ? parts[3] : state.logTitle
+            set(stage: parts[1], title: text, localizedTitle: parts.count > 3 ? BootProgress.localizedGuestText(text) : state.title,
+                percent: Double(max(0, min(100, pct))), indeterminate: pct < 0,
+                detail: parts[1] == state.stageId ? state.logDetail : "",
+                localizedDetail: parts[1] == state.stageId ? state.detail : "")
         case "provision":
             provisionLine(parts.dropFirst().joined(separator: " "))
         case "config":
@@ -133,16 +163,19 @@ final class BootProgress {
             guard line.count > 4 else { return }
             var s = state
             s.detail = String(line.dropFirst(4))
+            s.logDetail = s.detail
             publish(s)
         case "ready":
             guard state.phase == .boot else { return }
             var s = state
             s.phase = .running
             s.stageId = "ready"
-            s.title = "Steam is ready"
+            s.title = String(localized: "Steam is ready")
+            s.logTitle = "Steam is ready"
             s.fraction = 1
             s.indeterminate = false
             s.detail = ""
+            s.logDetail = ""
             publish(s)
             onReady?()
         case "shutdown":
@@ -184,7 +217,8 @@ final class BootProgress {
         if case .shutdown = state.phase {
             var s = state
             s.phase = .shutdown(reboot: false)
-            s.title = "Shutting down…"
+            s.title = String(localized: "Shutting down…")
+            s.logTitle = "Shutting down…"
             publish(s)
         } else {
             beginShutdown(reboot: false)
@@ -211,12 +245,13 @@ final class BootProgress {
         let words = rest.split(separator: " ", maxSplits: 1).map(String.init)
         guard let first = words.first else { return }
         if first == "done" {
-            if state.phase == .boot { set(stage: "provision", title: "SteamOS set up", percent: 100) }
+            if state.phase == .boot { set(stage: "provision", title: "SteamOS set up", localizedTitle: String(localized: "SteamOS set up"), percent: 100) }
             onProvision?(true, "")
         } else if first == "failed" {
             onProvision?(false, words.count > 1 ? words[1] : "")
         } else if let pct = Int(first), state.phase == .boot {
-            set(stage: "provision", title: "Setting up SteamOS (first start)…", percent: Double(max(0, min(100, pct))),
+            set(stage: "provision", title: "Setting up SteamOS (first start)…",
+                localizedTitle: String(localized: "Setting up SteamOS (first start)…"), percent: Double(max(0, min(100, pct))),
                 detail: words.count > 1 ? words[1] : "")
         }
     }
@@ -232,7 +267,8 @@ final class BootProgress {
             if reboot && !wasReboot {
                 var s = state
                 s.phase = .shutdown(reboot: true)
-                s.title = "Restarting…"
+                s.title = String(localized: "Restarting…")
+                s.logTitle = "Restarting…"
                 publish(s)
                 noteReboot()
             }
@@ -242,8 +278,10 @@ final class BootProgress {
         var s = state
         s.phase = .shutdown(reboot: reboot)
         s.stageId = "shutdown"
-        s.title = reboot ? "Restarting…" : "Shutting down…"
+        s.title = reboot ? String(localized: "Restarting…") : String(localized: "Shutting down…")
+        s.logTitle = reboot ? "Restarting…" : "Shutting down…"
         s.detail = ""
+        s.logDetail = ""
         s.fraction = 0
         s.indeterminate = false
         publish(s)
@@ -265,18 +303,23 @@ final class BootProgress {
         }
         if line.contains("Reached target Final Step") || line.contains("Reached target Late Shutdown Services") {
             s.fraction = max(s.fraction, 0.95)
-            s.detail = "Finishing…"
+            s.detail = String(localized: "Finishing…")
+            s.logDetail = "Finishing…"
         } else if line.hasPrefix("reboot: Power down") || line.hasPrefix("reboot: Restarting") {
             s.fraction = 1
-            s.detail = line.hasPrefix("reboot: Power down") ? "Powered off" : "Restarting"
+            s.detail = line.hasPrefix("reboot: Power down") ? String(localized: "Powered off") : String(localized: "Restarting")
+            s.logDetail = line.hasPrefix("reboot: Power down") ? "Powered off" : "Restarting"
         } else if let text = BootProgress.okText(line), text.hasPrefix("Stopped") || text.hasPrefix("Unmounted") {
             stopLines += 1
             s.fraction = max(s.fraction, 0.9 * (1 - exp(-Double(stopLines) / 40)))
             s.detail = text
+            s.logDetail = text
         } else if line.hasPrefix("Stopping ") || line.hasPrefix("Unmounting ") {
             s.detail = line
+            s.logDetail = line
         } else if line.contains("A stop job is running for") {
             s.detail = String(line[line.range(of: "A stop job")!.lowerBound...])
+            s.logDetail = s.detail
         } else {
             return
         }
@@ -285,14 +328,22 @@ final class BootProgress {
 
     // MARK: helpers
 
-    private func set(stage id: String, title: String, percent: Double, indeterminate: Bool = false, detail: String? = nil) {
+    private func set(stage id: String, title: String, localizedTitle: String? = nil, percent: Double,
+                     indeterminate: Bool = false, detail: String? = nil, localizedDetail: String? = nil) {
         guard let (start, weight) = BootProgress.segments[id] else { return }
         var s = state
         s.stageId = id
-        s.title = title
+        s.title = localizedTitle ?? title
+        s.logTitle = title
         s.indeterminate = indeterminate
         s.fraction = max(s.fraction, (start + weight * (indeterminate ? 0 : percent) / 100) / 100)
-        if let detail { s.detail = detail } else if id != state.stageId { s.detail = "" }
+        if let detail {
+            s.detail = localizedDetail ?? detail
+            s.logDetail = detail
+        } else if id != state.stageId {
+            s.detail = ""
+            s.logDetail = ""
+        }
         publish(s)
     }
 
@@ -303,8 +354,8 @@ final class BootProgress {
         // Stage/phase changes and 10% steps (guest titles can flip rapidly within a stage).
         if s.stageId != old.stageId || s.phase != old.phase
             || Int(s.fraction * 10) != Int(old.fraction * 10) {
-            log("progress: \(s.stageId) \(Int((s.fraction * 100).rounded()))%\(s.indeterminate ? " (…)" : "") \(s.title)"
-                + (s.detail.isEmpty ? "" : " · \(s.detail)"))
+            log("progress: \(s.stageId) \(Int((s.fraction * 100).rounded()))%\(s.indeterminate ? " (…)" : "") \(s.logTitle)"
+                + (s.logDetail.isEmpty ? "" : " · \(s.logDetail)"))
         }
         onChange?(s)
     }

@@ -58,7 +58,7 @@ final class ReportModel: ObservableObject {
         task = Task {
             guard let b = await ensureBundle() else { return }
             b.writeReport(email: address, description: text)
-            status = "Sending the report…"
+            status = String(localized: "Sending the report…")
             progress = 0
             do {
                 let id = try await FeedbackSender.send(b, email: address, description: text, test: test) { p in
@@ -70,9 +70,8 @@ final class ReportModel: ObservableObject {
                 log("report: sent, report ID \(id.prefix(8))")
             } catch {
                 guard !Task.isCancelled else { return }
-                let message = (error as? URLError)?.localizedDescription ?? "\(error)"
-                phase = .failed(message)
-                log("report: sending \(b.shortId) failed: \(message); kept in \(b.dir)")
+                phase = .failed(error.localizedDescription)
+                log("report: sending \(b.shortId) failed: \(error); kept in \(b.dir)")
             }
         }
     }
@@ -112,7 +111,7 @@ final class ReportModel: ObservableObject {
             bundle = b
             return b
         } catch {
-            phase = .failed("Cannot create the report folder: \(error)")
+            phase = .failed(String(localized: "Cannot create the report folder: \(error.localizedDescription)"))
             return nil
         }
     }
@@ -133,13 +132,13 @@ struct ReportView: View {
         .frame(width: 540, alignment: .leading)
     }
 
-    private func header(_ symbol: String, _ color: Color, _ title: String, _ detail: String?) -> some View {
+    private func header(_ symbol: String, _ color: Color, _ title: LocalizedStringResource, _ detail: String?) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol).font(.system(size: 28)).foregroundStyle(color)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.title3.weight(.semibold))
                 if let detail {
-                    Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -150,13 +149,12 @@ struct ReportView: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("exclamationmark.bubble.fill", .accentColor, "Report a Problem",
-                   "Describe what went wrong. Your description, your email and the items checked below go to the "
-                   + "FX Steam Launcher developers (sentry.fxgam.es).")
+                   String(localized: "Describe what went wrong. Your description, your email and the items checked below go to the FX Steam Launcher developers (sentry.fxgam.es)."))
             VStack(alignment: .leading, spacing: 4) {
                 Text("Email").font(.callout.weight(.medium))
                 TextField("you@example.com", text: $model.email).textFieldStyle(.roundedBorder)
-                Text(!model.email.isEmpty && !model.emailValid ? "Enter a valid email address."
-                     : "So the developers can reply. Remembered on this Mac.")
+                Text(verbatim: !model.email.isEmpty && !model.emailValid ? String(localized: "Enter a valid email address.")
+                     : String(localized: "So the developers can reply. Remembered on this Mac."))
                     .font(.caption).foregroundStyle(!model.email.isEmpty && !model.emailValid ? Color.red : Color.secondary)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -180,22 +178,19 @@ struct ReportView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 check($model.choices.launcherLogs, "Include launcher logs",
-                      "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; "
-                      + "home folder paths shortened to ~, your user and computer names removed).")
+                      String(localized: "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)."))
                 check($model.choices.guestLogs, "Include SteamOS logs (system journal, Steam/Proton logs)",
                       model.context.guest != nil
-                        ? "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. "
-                          + "Steam IDs, account names and email addresses are removed where recognisable."
-                        : "SteamOS is not running: only its console log of this session is included.")
+                        ? String(localized: "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Steam IDs, account names and email addresses are removed where recognisable.")
+                        : String(localized: "SteamOS is not running: only its console log of this session is included."))
                 check($model.choices.screenshot, "Include a screenshot of the VM window",
-                      model.hasWindow ? "Off by default: the picture may show your Steam account name, friends or other personal information."
-                                      : "No VM window is open.")
+                      model.hasWindow ? String(localized: "Off by default: the picture may show your Steam account name, friends or other personal information.")
+                                      : String(localized: "No VM window is open."))
                     .disabled(!model.hasWindow)
             }
             .disabled(working)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Always included: app, macOS and library versions, Mac model, GPU, disk sizes and the launcher settings "
-                     + "(never passwords or Keychain items).")
+                Text("Always included: app, macOS and library versions, Mac model, GPU, disk sizes and the launcher settings (never passwords or Keychain items).")
                 if CrashReporting.statusSummary != "on" {
                     Text("Crash reports are off. Sending this report does not turn them on: only this report is sent.")
                 }
@@ -208,7 +203,7 @@ struct ReportView: View {
                     } else {
                         ProgressView().controlSize(.small)
                     }
-                    Text(model.status).font(.callout).foregroundStyle(.secondary)
+                    Text(verbatim: model.status).font(.callout).foregroundStyle(.secondary)
                 }
             }
             HStack {
@@ -224,11 +219,11 @@ struct ReportView: View {
         }
     }
 
-    private func check(_ on: Binding<Bool>, _ title: String, _ detail: String) -> some View {
+    private func check(_ on: Binding<Bool>, _ title: LocalizedStringResource, _ detail: String) -> some View {
         Toggle(isOn: on) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .toggleStyle(.checkbox)
@@ -239,7 +234,7 @@ struct ReportView: View {
             header("checkmark.circle.fill", .green, "Report sent — thank you!", nil)
             HStack(spacing: 6) {
                 Text("Report ID:")
-                Text(id).font(.body.monospaced().weight(.semibold)).textSelection(.enabled)
+                Text(verbatim: id).font(.body.monospaced().weight(.semibold)).textSelection(.enabled)
             }
             Text("Mention this ID if you contact the developers about this problem.")
                 .font(.callout).foregroundStyle(.secondary)
@@ -296,7 +291,7 @@ final class ReportSheet {
         host.sizingOptions = [.preferredContentSize]
         let w = NSWindow(contentViewController: host)
         w.styleMask = [.titled]
-        w.title = "Report a Problem"
+        w.title = String(localized: "Report a Problem")
         let sheet = ReportSheet(window: w, model: model, parent: parent)
         model.onClose = { [weak sheet] sent in
             sheet?.dismiss()
@@ -347,7 +342,7 @@ enum CrashOffer {
         w.title = "FX Steam Launcher"
         w.isReleasedWhenClosed = false
         w.delegate = delegate
-        let view = OfferView(summary: summary, report: {
+        let view = OfferView(summary: CrashReporting.localizedExitSummary(status: status), report: {
             ReportSheet.present(on: w, context: context) { sent in if sent { w.close() } }
         }, close: { w.close() })
         let host = NSHostingView(rootView: view)

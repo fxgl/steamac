@@ -37,14 +37,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     enum Tab: Int, CaseIterable {
         case general, display, mouse, controller, sound, advanced
 
+        var name: String {
+            switch self {
+            case .general: return "general"
+            case .display: return "display"
+            case .mouse: return "mouse"
+            case .controller: return "controller"
+            case .sound: return "sound"
+            case .advanced: return "advanced"
+            }
+        }
+
         var title: String {
             switch self {
-            case .general: return "General"
-            case .display: return "Display"
-            case .mouse: return "Mouse"
-            case .controller: return "Controller"
-            case .sound: return "Sound"
-            case .advanced: return "Advanced"
+            case .general: return String(localized: "General")
+            case .display: return String(localized: "Display")
+            case .mouse: return String(localized: "Mouse")
+            case .controller: return String(localized: "Controller")
+            case .sound: return String(localized: "Sound")
+            case .advanced: return String(localized: "Advanced")
             }
         }
 
@@ -186,7 +197,7 @@ private struct Applies: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(now ? "applies now" : "applies on next start")
+            Text(verbatim: now ? String(localized: "applies now") : String(localized: "applies on next start"))
                 .font(.caption)
                 .foregroundStyle(now ? Color.secondary : Color.orange.opacity(0.9))
             if let key, let flag = settings.overrides[key] {
@@ -200,7 +211,7 @@ private struct Applies: View {
 
 /// A labelled row: title, optional explanation, the "applies" tag.
 private struct Label2: View {
-    let title: String
+    let title: LocalizedStringResource
     var detail: String? = nil
     let now: Bool
     var key: LauncherSettings.Key? = nil
@@ -208,7 +219,7 @@ private struct Label2: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-            if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            if let detail { Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             Applies(now: now, key: key)
         }
     }
@@ -223,10 +234,10 @@ private struct RestartBar: View {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange).font(.title2)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(context.restartRequested ? "Restarting the VM…" : "Some changes apply on the next start.")
+                    Text(verbatim: context.restartRequested ? String(localized: "Restarting the VM…") : String(localized: "Some changes apply on the next start."))
                         .font(.callout.weight(.medium))
-                    Text(context.restart == nil ? "No VM is running in this window."
-                         : "SteamOS shuts down cleanly and boots again with the new settings.")
+                    Text(verbatim: context.restart == nil ? String(localized: "No VM is running in this window.")
+                         : String(localized: "SteamOS shuts down cleanly and boots again with the new settings."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -259,11 +270,11 @@ private struct GeneralTab: View {
             Section {
                 Toggle(isOn: $settings.showOverlay) {
                     Label2(title: "Show boot and shutdown overlay",
-                           detail: "Full-window FX progress while SteamOS starts, restarts and shuts down. Off, or after a click: a small progress pill.", now: true)
+                           detail: String(localized: "Full-window FX progress while SteamOS starts, restarts and shuts down. Off, or after a click: a small progress pill."), now: true)
                 }
                 Toggle(isOn: $settings.showStallIndicator) {
                     Label2(title: "Show indicator when the GPU goes idle",
-                           detail: "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles).",
+                           detail: String(localized: "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)."),
                            now: true)
                 }
                 Toggle(isOn: $settings.openFullscreen) {
@@ -276,43 +287,37 @@ private struct GeneralTab: View {
                     Text("Suspend (keep running in the background)").tag(LauncherSettings.CloseAction.suspend)
                 } label: {
                     Label2(title: "When closing the window",
-                           detail: "Suspend freezes SteamOS and the running game at once and keeps them in memory; "
-                               + "click the Dock icon or Resume in the menu bar to continue where you left off. "
-                               + "Suspended state is kept while FX Steam Launcher is running: quitting the app "
-                               + "or restarting the Mac shuts SteamOS down.",
+                           detail: String(localized: "Suspend freezes SteamOS and the running game at once and keeps them in memory; click the Dock icon or Resume in the menu bar to continue where you left off. Suspended state is kept while FX Steam Launcher is running: quitting the app or restarting the Mac shuts SteamOS down."),
                            now: true)
                 }
             }
             Section {
                 Toggle(isOn: $settings.followMacTime) {
                     Label2(title: "Use the Mac's time zone and clock format",
-                           detail: "SteamOS gets the Mac's time zone and 12/24-hour format at every start, until you change each in SteamOS or Steam.",
+                           detail: String(localized: "SteamOS gets the Mac's time zone and 12/24-hour format at every start, until you change each in SteamOS or Steam."),
                            now: false, key: .followMacTime)
                 }
             }
             Section {
                 Toggle(isOn: $settings.shareClipboard) {
                     Label2(title: "Share clipboard with SteamOS",
-                           detail: "Text and images copied on the Mac can be pasted in SteamOS (Ctrl+V) and the other way round; "
-                               + "up to 1 MB of text and 16 MB images. Desktop Mode included.",
+                           detail: String(localized: "Text and images copied on the Mac can be pasted in SteamOS (Ctrl+V) and the other way round; up to 1 MB of text and 16 MB images. Desktop Mode included."),
                            now: true)
                 }
                 Toggle(isOn: $settings.shareConcealedClipboard) {
                     Label2(title: "Include concealed (password manager) items",
-                           detail: "Passwords that apps like 1Password, Bitwarden or KeePassXC mark as concealed or transient "
-                               + "stay on the Mac unless this is on.",
+                           detail: String(localized: "Passwords that apps like 1Password, Bitwarden or KeePassXC mark as concealed or transient stay on the Mac unless this is on."),
                            now: true)
                 }
                 .disabled(!settings.shareClipboard)
             }
             Section {
                 Toggle(isOn: $settings.muteInBackground) {
-                    Label2(title: "Mute sound", detail: "Short fade; the volume comes back when you switch back.", now: true)
+                    Label2(title: "Mute sound", detail: String(localized: "Short fade; the volume comes back when you switch back."), now: true)
                 }
                 Toggle(isOn: $settings.pauseInBackground) {
                     Label2(title: "Pause the game",
-                           detail: "Freezes the focused game (Steam, downloads and updates keep running). "
-                               + "Online games may disconnect while paused.",
+                           detail: String(localized: "Freezes the focused game (Steam, downloads and updates keep running). Online games may disconnect while paused."),
                            now: true)
                 }
             } header: {
@@ -322,16 +327,15 @@ private struct GeneralTab: View {
                 CrashReportsToggle(settings: settings, showsApplies: true)
                 Toggle(isOn: $settings.checkForUpdates) {
                     Label2(title: "Check for updates at startup",
-                           detail: "Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app "
-                               + "version is sent. "
-                               + (CrashReporting.buildKind == .development
-                                   ? "This development build never checks at startup; FX Steam Launcher > Check for Updates… does."
-                                   : "FX Steam Launcher > Check for Updates… checks at any time."),
+                           detail: String(localized: "Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app version is sent.")
+                               + " " + (CrashReporting.buildKind == .development
+                                   ? String(localized: "This development build never checks at startup; FX Steam Launcher > Check for Updates… does.")
+                                   : String(localized: "FX Steam Launcher > Check for Updates… checks at any time.")),
                            now: true)
                 }
                 Toggle(isOn: $settings.perfStats) {
                     Label2(title: "Log frame-pacing statistics",
-                           detail: "Every 5 s: guest flush and on-screen frame intervals, latency, dropped frames.",
+                           detail: String(localized: "Every 5 s: guest flush and on-screen frame intervals, latency, dropped frames."),
                            now: true, key: .perfStats)
                 }
             } footer: {
@@ -344,8 +348,7 @@ private struct GeneralTab: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Report a Problem")
-                        Text("Describe what went wrong and send it with the logs you choose to the developers "
-                             + "(works with crash reports off, too).")
+                        Text("Describe what went wrong and send it with the logs you choose to the developers (works with crash reports off, too).")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -378,8 +381,11 @@ private struct DisplayTab: View {
         })
     }
 
+    /// Pixel sizes are interpolated as text: an Int would be grouped like a quantity ("1 920").
     private func presetTitle(_ p: LauncherSettings.SizePreset) -> String {
-        "\(p.width) × \(p.height) (\(p.label))" + (p.width > fit.0 || p.height > fit.1 ? " — larger than this screen" : "")
+        p.width > fit.0 || p.height > fit.1
+            ? String(localized: "\(String(p.width)) × \(String(p.height)) (\(p.label)) — larger than this screen")
+            : String(localized: "\(String(p.width)) × \(String(p.height)) (\(p.label))")
     }
 
     var body: some View {
@@ -391,7 +397,7 @@ private struct DisplayTab: View {
                     Text("Fixed size (mm)").tag(LauncherSettings.DPISource.mm)
                 } label: {
                     Label2(title: "Physical size source",
-                           detail: "Sets the guest's UI scale. Auto = the window's real size on this Mac's screen.",
+                           detail: String(localized: "Sets the guest's UI scale. Auto = the window's real size on this Mac's screen."),
                            now: false, key: .dpiSource)
                 }
                 if settings.dpiSource == .dpi {
@@ -405,7 +411,7 @@ private struct DisplayTab: View {
                         Spacer()
                         TextField("W", value: intBinding($settings.fixedWidthMM, 10...5000), format: .number.grouping(.never))
                             .frame(width: 60).multilineTextAlignment(.trailing)
-                        Text("×")
+                        Text(verbatim: "×")
                         TextField("H", value: intBinding($settings.fixedHeightMM, 10...5000), format: .number.grouping(.never))
                             .frame(width: 60).multilineTextAlignment(.trailing)
                         Text("mm")
@@ -423,17 +429,17 @@ private struct DisplayTab: View {
             Section {
                 Toggle(isOn: $settings.followWindowSize) {
                     Label2(title: "Guest display follows the window size",
-                           detail: "Off: the guest keeps its resolution and the picture is scaled to the window.",
+                           detail: String(localized: "Off: the guest keeps its resolution and the picture is scaled to the window."),
                            now: true)
                 }
                 Picker(selection: preset) {
-                    ForEach(LauncherSettings.sizePresets) { Text(presetTitle($0)).tag($0.id) }
+                    ForEach(LauncherSettings.sizePresets) { Text(verbatim: presetTitle($0)).tag($0.id) }
                     Divider()
-                    Text(verbatim: "Fit to screen (\(fit.0) × \(fit.1))").tag(LauncherSettings.fitPreset)
-                    Text(verbatim: "Custom…").tag(LauncherSettings.customPreset)
+                    Text("Fit to screen (\(String(fit.0)) × \(String(fit.1)))").tag(LauncherSettings.fitPreset)
+                    Text("Custom…").tag(LauncherSettings.customPreset)
                 } label: {
                     Label2(title: "Default window size",
-                           detail: "Guest pixels = window points (twice per side with Retina resolution); at least 800 × 500.",
+                           detail: String(localized: "Guest pixels = window points (twice per side with Retina resolution); at least 800 × 500."),
                            now: false, key: .windowSizePreset)
                 }
                 if settings.windowSizePreset == LauncherSettings.customPreset {
@@ -442,7 +448,7 @@ private struct DisplayTab: View {
                         Spacer()
                         TextField("W", value: intBinding($settings.windowWidth, 800...4094), format: .number.grouping(.never))
                             .frame(width: 64).multilineTextAlignment(.trailing)
-                        Text("×")
+                        Text(verbatim: "×")
                         TextField("H", value: intBinding($settings.windowHeight, 500...4094), format: .number.grouping(.never))
                             .frame(width: 64).multilineTextAlignment(.trailing)
                         Text("pt")
@@ -451,28 +457,22 @@ private struct DisplayTab: View {
                 Toggle(isOn: $settings.retinaResolution) {
                     Label2(title: "Retina resolution",
                            detail: settings.retinaResolution
-                               ? "The guest gets the screen's full pixel density (2 × 2 pixels per point on Retina screens), "
-                                   + "with the UI scaled to the same size: sharp text, but games draw 4× the pixels. "
-                                   + "Recommended instead: leave this off and turn on MetalFX super resolution, which "
-                                   + "upscales the guest 2× to the Retina screen at a fraction of the cost."
-                               : "Off: one guest pixel per point, scaled up to Retina screens (MetalFX super resolution "
-                                   + "can sharpen it). On: the guest renders at the screen's full pixel density.",
+                               ? String(localized: "The guest gets the screen's full pixel density (2 × 2 pixels per point on Retina screens), with the UI scaled to the same size: sharp text, but games draw 4× the pixels. Recommended instead: leave this off and turn on MetalFX super resolution, which upscales the guest 2× to the Retina screen at a fraction of the cost.")
+                               : String(localized: "Off: one guest pixel per point, scaled up to Retina screens (MetalFX super resolution can sharpen it). On: the guest renders at the screen's full pixel density."),
                            now: false, key: .retinaResolution)
                 }
             }
             Section {
                 Toggle(isOn: $settings.metalHUD) {
                     Label2(title: "Metal Performance HUD",
-                           detail: "Apple's frame-rate overlay in the top-right corner of the window: FPS, frame "
-                               + "interval, GPU time, memory (Ctrl+Cmd+P, View menu).",
+                           detail: String(localized: "Apple's frame-rate overlay in the top-right corner of the window: FPS, frame interval, GPU time, memory (Ctrl+Cmd+P, View menu)."),
                            now: true)
                 }
                 Toggle(isOn: $settings.superResolution) {
                     Label2(title: "MetalFX super resolution",
-                           detail: !Renderer.superResolutionSupported ? "Not supported on this Mac's GPU."
-                               : "Apple's MetalFX upscaler sharpens the guest picture when the window has more pixels "
-                                   + "than the guest (2× on Retina screens, scaled or fullscreen windows) instead of plain scaling."
-                                   + (settings.retinaResolution ? " Little to upscale while Retina resolution is on." : ""),
+                           detail: !Renderer.superResolutionSupported ? String(localized: "Not supported on this Mac's GPU.")
+                               : String(localized: "Apple's MetalFX upscaler sharpens the guest picture when the window has more pixels than the guest (2× on Retina screens, scaled or fullscreen windows) instead of plain scaling.")
+                                   + (settings.retinaResolution ? " " + String(localized: "Little to upscale while Retina resolution is on.") : ""),
                            now: true)
                 }
                 .disabled(!Renderer.superResolutionSupported && !settings.superResolution)
@@ -496,7 +496,7 @@ private struct MouseTab: View {
             Section {
                 Toggle(isOn: $settings.autoCaptureGames) {
                     Label2(title: "Capture the mouse in games",
-                           detail: "While a game has focus, a click captures the pointer (relative motion for mouse-look).",
+                           detail: String(localized: "While a game has focus, a click captures the pointer (relative motion for mouse-look)."),
                            now: true, key: .autoCaptureGames)
                 }
                 LabeledContent("Release the mouse") { Text("Ctrl+Option  (Ctrl+Cmd+G toggles)").foregroundStyle(.secondary) }
@@ -512,12 +512,12 @@ private struct MouseTab: View {
                 ForEach(settings.games) { g in
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(g.name ?? "Unknown game")
+                            Text(verbatim: g.name ?? String(localized: "Unknown game"))
                             Text("App ID \(String(g.appid))").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Picker("", selection: choice(g)) {
-                            Text(settings.globalAutoCapture ? "Default (Auto)" : "Default (Off)").tag(0)
+                            Text(verbatim: settings.globalAutoCapture ? String(localized: "Default (Auto)") : String(localized: "Default (Off)")).tag(0)
                             Text("Auto").tag(1)
                             Text("Off").tag(2)
                         }
@@ -577,7 +577,7 @@ private struct ControllerTab: View {
             Section {
                 Toggle(isOn: $settings.virtualPad) {
                     Label2(title: "Virtual controller",
-                           detail: "SteamOS gets a gamepad while a controller is connected.",
+                           detail: String(localized: "SteamOS gets a gamepad while a controller is connected."),
                            now: true, key: .virtualPad)
                 }
                 Picker(selection: $settings.padType) {
@@ -587,24 +587,20 @@ private struct ControllerTab: View {
                     Text("DualShock 4").tag(LauncherSettings.PadType.dualShock4)
                 } label: {
                     Label2(title: "Appears in SteamOS as",
-                           detail: "Button glyphs and layout in Steam. Automatic: the same kind as the controller "
-                               + "that drives it (DualSense, DualShock 4, else Xbox 360). Buttons, sticks, triggers "
-                               + "and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through).",
+                           detail: String(localized: "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360). Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)."),
                            now: true, key: .padType)
                 }
                 .disabled(!settings.virtualPad)
                 Toggle(isOn: $settings.dualSensePassthrough) {
                     Label2(title: "Pass a DualSense through",
-                           detail: "When a DualSense appears as a DualSense, SteamOS gets the controller itself: "
-                               + "touchpad, motion sensors, lightbar, mute button and its light, rumble and adaptive "
-                               + "triggers, as on a Steam Deck. Swap and deadzone below do not apply to it.",
+                           detail: String(localized: "When a DualSense appears as a DualSense, SteamOS gets the controller itself: touchpad, motion sensors, lightbar, mute button and its light, rumble and adaptive triggers, as on a Steam Deck. Swap and deadzone below do not apply to it."),
                            now: true)
                 }
                 .disabled(!settings.virtualPad)
                 Picker(selection: $settings.controllerID) {
                     Text("First connected").tag("")
                     ForEach(monitor.controllers, id: \.self) { c in
-                        Text(GamepadBridge.displayName(of: c)).tag(GamepadBridge.identifier(of: c))
+                        Text(verbatim: GamepadBridge.displayName(of: c)).tag(GamepadBridge.identifier(of: c))
                     }
                     if !settings.controllerID.isEmpty,
                        !monitor.controllers.contains(where: { GamepadBridge.identifier(of: $0) == settings.controllerID }) {
@@ -615,13 +611,13 @@ private struct ControllerTab: View {
                     Label2(title: "Controller that drives it", now: true)
                 }
                 Toggle(isOn: $settings.swapABXY) {
-                    Label2(title: "Swap A/B and X/Y", detail: "For Nintendo-style button layouts.", now: true)
+                    Label2(title: "Swap A/B and X/Y", detail: String(localized: "For Nintendo-style button layouts."), now: true)
                 }
                 VStack(alignment: .leading) {
                     HStack {
                         Label2(title: "Stick deadzone", now: true)
                         Spacer()
-                        Text("\(settings.stickDeadzone) %").monospacedDigit().foregroundStyle(.secondary)
+                        Text(verbatim: "\(settings.stickDeadzone) %").monospacedDigit().foregroundStyle(.secondary)
                     }
                     Slider(value: Binding(get: { Double(settings.stickDeadzone) },
                                           set: { settings.stickDeadzone = Int($0.rounded()) }), in: 0...30, step: 1)
@@ -635,7 +631,7 @@ private struct ControllerTab: View {
                 ForEach(monitor.controllers, id: \.self) { c in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(GamepadBridge.displayName(of: c)).font(.headline)
+                            Text(verbatim: GamepadBridge.displayName(of: c)).font(.headline)
                             if c === feeding && context.vmHasPad {
                                 Text("drives the virtual pad").font(.caption)
                                     .padding(.horizontal, 6).padding(.vertical, 1)
@@ -643,7 +639,7 @@ private struct ControllerTab: View {
                             }
                             Spacer()
                             if let b = c.battery {
-                                Text("\(Int(b.batteryLevel * 100)) %").font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: "\(Int(b.batteryLevel * 100)) %").font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         if let pad = c.extendedGamepad { PadTestView(pad: pad) }
@@ -701,6 +697,7 @@ private struct PadTestView: View {
     }
 }
 
+/// Controller test labels are the controls' printed names/glyphs (LT, A, ▲, Menu): not translated.
 private struct StickView: View {
     let x: Float, y: Float, pressed: Bool, label: String
     var body: some View {
@@ -709,7 +706,7 @@ private struct StickView: View {
             Circle().fill(pressed ? Color.accentColor : Color.primary.opacity(0.75))
                 .frame(width: 12, height: 12)
                 .offset(x: CGFloat(x) * 20, y: CGFloat(-y) * 20)
-            Text(label).font(.system(size: 8)).foregroundStyle(.secondary).offset(y: 22)
+            Text(verbatim: label).font(.system(size: 8)).foregroundStyle(.secondary).offset(y: 22)
         }
         .frame(width: 52, height: 52)
     }
@@ -719,7 +716,7 @@ private struct TriggerView: View {
     let label: String, value: Float
     var body: some View {
         HStack(spacing: 4) {
-            Text(label).font(.caption2).frame(width: 18)
+            Text(verbatim: label).font(.caption2).frame(width: 18)
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.secondary.opacity(0.2))
                 Capsule().fill(Color.accentColor).frame(width: 46 * CGFloat(max(0, min(1, value))))
@@ -733,7 +730,7 @@ private struct Dot: View {
     let label: String, on: Bool
     init(_ label: String, _ on: Bool) { self.label = label; self.on = on }
     var body: some View {
-        Text(label)
+        Text(verbatim: label)
             .font(.system(size: 9, weight: .semibold))
             .frame(minWidth: 18, minHeight: 16)
             .padding(.horizontal, 2)
@@ -786,8 +783,8 @@ private struct SoundTab: View {
     /// Why the live controls cannot act on this VM (nil = they do).
     private var liveProblem: String? {
         if let r = probe.missingAPIReason { return r }
-        if context.sound == nil { return "No VM is running in this window." }
-        if !context.vmHasSound { return context.sound?.noDeviceReason ?? "This boot has no sound device." }
+        if context.sound == nil { return String(localized: "No VM is running in this window.") }
+        if !context.vmHasSound { return context.sound?.noDeviceReason ?? String(localized: "This boot has no sound device.") }
         return nil
     }
 
@@ -795,26 +792,30 @@ private struct SoundTab: View {
         Form {
             Section {
                 Toggle(isOn: $settings.soundEnabled) {
-                    Label2(title: "Sound", detail: "Guest audio device (virtio-snd → CoreAudio).",
+                    Label2(title: "Sound", detail: String(localized: "Guest audio device (virtio-snd → CoreAudio)."),
                            now: false, key: .soundEnabled)
                 }
             }
             Section {
                 Picker(selection: $settings.soundOutputUID) {
-                    Text("System default" + (monitor.defaultName.map { " (\($0))" } ?? "")).tag("")
-                    ForEach(monitor.devices) { Text($0.name).tag($0.uid) }
+                    if let name = monitor.defaultName {
+                        Text("System default (\(name))").tag("")
+                    } else {
+                        Text("System default").tag("")
+                    }
+                    ForEach(monitor.devices) { Text(verbatim: $0.name).tag($0.uid) }
                     if !settings.soundOutputUID.isEmpty, !monitor.devices.contains(where: { $0.uid == settings.soundOutputUID }) {
                         Text("\(settings.soundOutputUID) (not connected)").tag(settings.soundOutputUID)
                     }
                 } label: {
-                    Label2(title: "Output device", detail: "System default follows changes in macOS.", now: true)
+                    Label2(title: "Output device", detail: String(localized: "System default follows changes in macOS."), now: true)
                 }
                 .disabled(!probe.canSelectDevice)
                 VStack(alignment: .leading) {
                     HStack {
-                        Label2(title: "Volume", detail: "On top of the guest's own volume.", now: true)
+                        Label2(title: "Volume", detail: String(localized: "On top of the guest's own volume."), now: true)
                         Spacer()
-                        Text(settings.soundMute ? "muted" : "\(Int((settings.soundVolume * 100).rounded())) %")
+                        Text(verbatim: settings.soundMute ? String(localized: "muted") : "\(Int((settings.soundVolume * 100).rounded())) %")
                             .monospacedDigit().foregroundStyle(.secondary)
                     }
                     HStack {
@@ -831,13 +832,14 @@ private struct SoundTab: View {
                     Text("Normal (20 ms)").tag(LauncherSettings.Latency.normal)
                     Text("Safe (60 ms)").tag(LauncherSettings.Latency.safe)
                 } label: {
-                    Label2(title: "Buffer", detail: "Lower = less latency; Safe avoids crackling under load.", now: true)
+                    Label2(title: "Buffer", detail: String(localized: "Lower = less latency; Safe avoids crackling under load."), now: true)
                 }
                 .disabled(!probe.canSetBuffer)
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     if let p = liveProblem {
-                        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        Label { Text(verbatim: p) } icon: { Image(systemName: "exclamationmark.triangle") }
+                            .font(.caption).foregroundStyle(.orange)
                     }
                     Text("Microphone: the guest records from the macOS default input; macOS asks for permission the first time.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -869,10 +871,11 @@ private struct AdvancedTab: View {
     private var diskStatus: (String, Bool) {
         if !settings.diskImage.isEmpty {
             let ok = FileManager.default.isReadableFile(atPath: settings.diskImage)
-            return ((settings.diskImage as NSString).abbreviatingWithTildeInPath + (ok ? "" : " (not found)"), ok)
+            let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
+            return (ok ? path : String(localized: "\(path) (not found)"), ok)
         }
-        if let d = AppBundle.defaultDisk() { return ("Default: " + (d as NSString).abbreviatingWithTildeInPath, true) }
-        return ("Default: none found", false)
+        if let d = AppBundle.defaultDisk() { return (String(localized: "Default: \((d as NSString).abbreviatingWithTildeInPath)"), true) }
+        return (String(localized: "Default: none found"), false)
     }
 
     var body: some View {
@@ -883,7 +886,7 @@ private struct AdvancedTab: View {
                     Text("Automatic (\(AdvancedTab.autoCPUs) for this Mac)").tag(true)
                     Text("Custom").tag(false)
                 } label: {
-                    Label2(title: "Virtual CPUs", detail: "Automatic: one per performance core of this Mac (2 to 8).",
+                    Label2(title: "Virtual CPUs", detail: String(localized: "Automatic: one per performance core of this Mac (2 to 8)."),
                            now: false, key: .cpus)
                 }
                 if settings.cpus > 0 {
@@ -891,7 +894,7 @@ private struct AdvancedTab: View {
                         HStack {
                             Text("Custom vCPUs")
                             Spacer()
-                            Text("\(settings.cpus)").monospacedDigit()
+                            Text(verbatim: "\(settings.cpus)").monospacedDigit()
                         }
                     }
                     if let warning = VMSizing.cpuWarning(cpus: settings.cpus, host: AdvancedTab.host) {
@@ -903,12 +906,10 @@ private struct AdvancedTab: View {
                     Text("Automatic (\(AdvancedTab.autoGiB) GB for this Mac)").tag(true)
                     Text("Custom").tag(false)
                 } label: {
-                    Label2(title: "Memory", detail: "Automatic: half of this Mac's RAM (4 to 16 GB). The Mac's GPU memory "
-                           + "comes from the same RAM, so the rest stays with macOS and the games' graphics.",
+                    Label2(title: "Memory", detail: String(localized: "Automatic: half of this Mac's RAM (4 to 16 GB). The Mac's GPU memory comes from the same RAM, so the rest stays with macOS and the games' graphics."),
                            now: false, key: .memMiB)
                 }
-                Text("GPU budget: \(VMSizing.gpuBudgetMiB(memMiB: settings.memMiB > 0 ? settings.memMiB : AdvancedTab.autoGiB * 1024, host: AdvancedTab.host)) MiB. "
-                     + "macOS and driver reserve: \(VMSizing.hostReserveMiB(AdvancedTab.host)) MiB.")
+                Text("GPU budget: \(VMSizing.gpuBudgetMiB(memMiB: settings.memMiB > 0 ? settings.memMiB : AdvancedTab.autoGiB * 1024, host: AdvancedTab.host)) MiB. macOS and driver reserve: \(VMSizing.hostReserveMiB(AdvancedTab.host)) MiB.")
                     .font(.caption).foregroundStyle(.secondary)
                 if settings.memMiB > 0 {
                     Stepper(value: Binding(get: { settings.memMiB / 1024 },
@@ -930,8 +931,7 @@ private struct AdvancedTab: View {
                     settings.sshEnabled = on
                     if on { password.ensure() }
                 })) {
-                    Label2(title: "Enable SSH", detail: "Off: no port on the Mac and sshd masked in SteamOS. Turning it on "
-                           + "generates a password for the user steamos (kept on, but unused, when SSH is off).",
+                    Label2(title: "Enable SSH", detail: String(localized: "Off: no port on the Mac and sshd masked in SteamOS. Turning it on generates a password for the user steamos (kept on, but unused, when SSH is off)."),
                            now: false, key: .sshEnabled)
                 }
                 HStack {
@@ -946,23 +946,25 @@ private struct AdvancedTab: View {
                 if password.disk == nil {
                     LabeledContent("Login") { Text("no disk image").foregroundStyle(.secondary) }
                 } else if let state = password.state {
-                    LabeledContent("User") { Text(GuestPassword.user).textSelection(.enabled) }
+                    LabeledContent("User") { Text(verbatim: GuestPassword.user).textSelection(.enabled) }
                     LabeledContent("Password") {
                         HStack {
-                            Text(password.shown ?? "••••••••••••••••••••").font(.body.monospaced()).textSelection(.enabled)
-                            Button(password.shown == nil ? "Show" : "Hide") { password.toggleShown() }
+                            Text(verbatim: password.shown ?? "••••••••••••••••••••").font(.body.monospaced()).textSelection(.enabled)
+                            Button { password.toggleShown() } label: {
+                                Text(verbatim: password.shown == nil ? String(localized: "Show", comment: "Reveal the SSH password") : String(localized: "Hide", comment: "Conceal the SSH password"))
+                            }
                             Button("Copy") { password.copy(password: true, port: settings.sshPort) }
                         }
                     }
                     LabeledContent("Command") {
                         HStack {
-                            Text("ssh -p \(settings.sshPort) \(GuestPassword.user)@127.0.0.1").font(.callout.monospaced())
+                            Text(verbatim: "ssh -p \(settings.sshPort) \(GuestPassword.user)@127.0.0.1").font(.callout.monospaced())
                                 .textSelection(.enabled)
                             Button("Copy") { password.copy(password: false, port: settings.sshPort) }
                         }
                     }
                     HStack {
-                        Text(state == .applied ? "Password applied in SteamOS" : "Password will apply on next start")
+                        Text(verbatim: state == .applied ? String(localized: "Password applied in SteamOS") : String(localized: "Password will apply on next start"))
                             .font(.caption).foregroundStyle(state == .applied ? Color.secondary : Color.orange)
                         Spacer()
                         Button("Regenerate Password") { password.regenerate() }
@@ -975,26 +977,24 @@ private struct AdvancedTab: View {
                         Button("Generate Password") { password.ensure() }
                     }
                 }
-                if let error = password.error { Text(error).font(.caption).foregroundStyle(.red) }
+                if let error = password.error { Text(verbatim: error).font(.caption).foregroundStyle(.red) }
                 Toggle(isOn: $settings.network) {
-                    Label2(title: "Network", detail: "Off: no virtio-net / gvproxy (offline guest, also no SSH).",
+                    Label2(title: "Network", detail: String(localized: "Off: no virtio-net / gvproxy (offline guest, also no SSH)."),
                            now: false, key: .network)
                 }
                 Toggle(isOn: $settings.lanRemotePlay) {
                     Label2(title: "LAN Remote Play",
-                           detail: "Let Steam Link discover this VM on the same subnet. Opens UDP 27031–27036 and TCP 27036–27037 on the Mac. Allow Local Network access; quit Mac Steam if it uses these ports.",
+                           detail: String(localized: "Let Steam Link discover this VM on the same subnet. Opens UDP 27031–27036 and TCP 27036–27037 on the Mac. Allow Local Network access; quit Mac Steam if it uses these ports."),
                            now: false, key: .lanRemotePlay)
                 }
                 .disabled(!settings.network)
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label2(title: "Disk image", detail: "SteamOS raw GPT disk, used in place (never copied). "
-                           + "If Steam reports not enough space, Grow Disk… adds room for games without recreating it. "
-                           + "Free space on the Mac does not automatically increase SteamOS's capacity.",
+                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Free space on the Mac does not automatically increase SteamOS's capacity."),
                            now: false, key: .diskImage)
                     HStack {
-                        Text(diskStatus.0)
+                        Text(verbatim: diskStatus.0)
                             .font(.callout).foregroundStyle(diskStatus.1 ? Color.secondary : Color.red)
                             .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                         Spacer()
@@ -1008,7 +1008,7 @@ private struct AdvancedTab: View {
                     }
                 }
                 Picker(selection: $settings.steamClient) {
-                    ForEach(LauncherSettings.SteamClient.allCases) { Text(SteamClientPicker.itemTitle($0)).tag($0) }
+                    ForEach(LauncherSettings.SteamClient.allCases) { Text(verbatim: SteamClientPicker.itemTitle($0)).tag($0) }
                 } label: {
                     Label2(title: "Steam client",
                            detail: settings.steamClient.detail + " " + LauncherSettings.SteamClient.switchNote,
@@ -1016,14 +1016,14 @@ private struct AdvancedTab: View {
                 }
                 Picker(selection: $settings.vulkanDriver) {
                     ForEach(LauncherSettings.VulkanDriver.allCases) { d in
-                        Text(d.title).tag(d)
+                        Text(verbatim: d.title).tag(d)
                             .disabled(d.unavailableReason != nil && d != settings.vulkanDriver)
                     }
                 } label: {
                     Label2(title: "Vulkan driver",
                            detail: settings.vulkanDriver.detail + " " + LauncherSettings.VulkanDriver.switchNote
-                               + (settings.vulkanDriver.unavailableReason.map {
-                                   " Not available here: \($0); MoltenVK is used." } ?? ""),
+                               + (settings.vulkanDriver.localizedUnavailableReason.map {
+                                   " " + String(localized: "Not available here: \($0); MoltenVK is used.") } ?? ""),
                            now: false, key: .vulkanDriver)
                 }
             }
@@ -1047,24 +1047,23 @@ private struct AdvancedTab: View {
         guard let path = nextDisk else { return }
         do {
             let table = try GPT.read(path: path)
-            guard let home = table.entries.last, home.name == "home" else { throw OptionError("not a SteamOS disk") }
+            guard let home = table.entries.last, home.name == "home" else { throw OptionError("not a SteamOS disk", localized: String(localized: "not a SteamOS disk")) }
             let current = Double(home.sectors * 512) / Double(1 << 30)
             let alert = NSAlert()
-            alert.messageText = "Grow SteamOS Disk"
+            alert.messageText = String(localized: "Grow SteamOS Disk")
             let running = context.diskPath == path && context.restart != nil
-            alert.informativeText = String(format: "Games currently have %.1f GiB. Enter a larger home capacity in GiB (up to 4096). "
-                + "This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; "
-                + "exFAT takes the full added size immediately and needs that much free space. "
-                + (running ? "SteamOS will shut down normally, the image will be enlarged while it is stopped, then restart."
-                   : "SteamOS must be stopped. The partition and filesystem grow on its next boot."), current)
+            let capacity = String(format: "%.1f", current)
+            alert.informativeText = String(localized: "Games currently have \(capacity) GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space.")
+                + " " + (running ? String(localized: "SteamOS will shut down normally, the image will be enlarged while it is stopped, then restart.")
+                   : String(localized: "SteamOS must be stopped. The partition and filesystem grow on its next boot."))
             let field = NSTextField(string: String(min(4096, Int(ceil(current)) + 64)))
             field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
             alert.accessoryView = field
-            alert.addButton(withTitle: running ? "Grow and Restart" : "Grow Disk")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: running ? String(localized: "Grow and Restart") : String(localized: "Grow Disk"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             guard let size = Int(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                throw OptionError("enter a whole number of GiB")
+                throw OptionError("enter a whole number of GiB", localized: String(localized: "enter a whole number of GiB"))
             }
             let request = try DiskGrower.request(path: path, homeGiB: size)
             if running, let runDir = Supervisor.runDir {
@@ -1073,21 +1072,21 @@ private struct AdvancedTab: View {
             } else {
                 try DiskGrower.grow(request)
                 let done = NSAlert()
-                done.messageText = "SteamOS disk enlarged"
-                done.informativeText = "Start SteamOS to finish growing the home partition and filesystem."
+                done.messageText = String(localized: "SteamOS disk enlarged")
+                done.informativeText = String(localized: "Start SteamOS to finish growing the home partition and filesystem.")
                 done.runModal()
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "SteamOS disk could not be grown"
-            alert.informativeText = "\(error)"
+            alert.messageText = String(localized: "SteamOS disk could not be grown")
+            alert.informativeText = error.localizedDescription
             alert.runModal()
         }
     }
 
     private func chooseDisk() {
         let panel = NSOpenPanel()
-        panel.title = "Choose a SteamOS disk image"
+        panel.title = String(localized: "Choose a SteamOS disk image")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -1102,7 +1101,7 @@ private struct AdvancedTab: View {
 private struct SizeWarning: View {
     let text: String
     var body: some View {
-        Label(text, systemImage: "exclamationmark.triangle")
+        Label { Text(verbatim: text) } icon: { Image(systemName: "exclamationmark.triangle") }
             .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -1137,7 +1136,7 @@ private final class GuestPasswordModel: ObservableObject {
             if shown != nil { shown = pw }
             error = nil
         } catch {
-            self.error = "\(error)"
+            self.error = error.localizedDescription
         }
         refresh()
     }
@@ -1146,7 +1145,7 @@ private final class GuestPasswordModel: ObservableObject {
         if shown != nil { shown = nil; return }
         guard let disk else { return }
         shown = GuestPassword.password(disk: disk)
-        if shown == nil { error = "The password could not be read from the Keychain." }
+        if shown == nil { error = String(localized: "The password could not be read from the Keychain.") }
     }
 
     func copy(password: Bool, port: Int) {

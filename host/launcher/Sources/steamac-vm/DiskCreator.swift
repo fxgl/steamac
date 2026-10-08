@@ -29,6 +29,8 @@ final class DiskCreator {
     struct Status: Equatable {
         var title: String
         var detail = ""
+        var localizedTitle: String
+        var localizedDetail: String
         /// Overall 0...1.
         var fraction: Double
     }
@@ -100,9 +102,14 @@ final class DiskCreator {
 
     private func checkCancel() throws { if cancelled { throw Cancelled() } }
 
-    private func status(_ stage: String, _ title: String, _ detail: String = "", _ fraction: Double = 0) {
+    private func status(_ stage: String, _ title: LocalizedStringResource, _ detail: String = "", _ fraction: Double = 0,
+                        localizedDetail: String? = nil) {
         let (start, weight) = DiskCreator.segments[stage] ?? (0, 0)
-        onStatus?(Status(title: title, detail: detail, fraction: (start + weight * max(0, min(1, fraction))) / 100))
+        var englishTitle = title
+        englishTitle.locale = Locale(identifier: "en")
+        onStatus?(Status(title: String(localized: englishTitle), detail: detail,
+                         localizedTitle: String(localized: title), localizedDetail: localizedDetail ?? detail,
+                         fraction: (start + weight * max(0, min(1, fraction))) / 100))
     }
 
     // MARK: tools
@@ -128,7 +135,8 @@ final class DiskCreator {
             let error = errno
             close(fd)
             if error == EWOULDBLOCK {
-                throw DiskCreationFilesystem.Rejection("another SteamOS disk is being created with the download cache \(cacheRoot): wait for it to finish or cancel it")
+                throw DiskCreationFilesystem.Rejection("another SteamOS disk is being created with the download cache \(cacheRoot): wait for it to finish or cancel it",
+                    localized: String(localized: "another SteamOS disk is being created with the download cache \(cacheRoot): wait for it to finish or cancel it"))
             }
             throw OptionError("\(lockPath): \(String(cString: strerror(error)))")
         }
@@ -142,13 +150,14 @@ final class DiskCreator {
         guard let desync = DiskCreator.desyncPath else { throw OptionError("desync not found (bundle Contents/Resources/desync or work/out/host/bin/desync: host/launcher/fetch-desync.sh)") }
         guard let caPath = DiskCreator.caPath else { throw OptionError("Valve RAUC CA steamdeck-images.pem not found") }
         guard DiskCreator.branches.contains(r.branch) else { throw OptionError("unknown branch \(r.branch) (\(DiskCreator.branches.joined(separator: ", ")))") }
-        guard (8...4096).contains(r.homeGiB) else { throw OptionError("home size must be 8..4096 GiB") }
+        guard (8...4096).contains(r.homeGiB) else { throw OptionError("home size must be 8..4096 GiB", localized: String(localized: "home size must be 8..4096 GiB")) }
         let path = (r.path as NSString).standardizingPath
         let dir = (path as NSString).deletingLastPathComponent
         do {
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         } catch let e as CocoaError where e.code == .fileWriteNoPermission {
-            throw DiskCreationFilesystem.Rejection("no permission to create \(dir): choose a folder you can write to")
+            throw DiskCreationFilesystem.Rejection("no permission to create \(dir): choose a folder you can write to",
+                localized: String(localized: "no permission to create \(dir): choose a folder you can write to"))
         }
         try DiskCreationFilesystem.requireWritable(directory: dir)
         let gpt = DiskLayout.table(homeGiB: r.homeGiB)
@@ -164,7 +173,10 @@ final class DiskCreator {
         try fm.createDirectory(atPath: cacheRoot, withIntermediateDirectories: true)
         let lockFD = try DiskCreator.acquireCreationLock(cacheRoot: cacheRoot)
         defer { close(lockFD) }
-        guard !fm.fileExists(atPath: path) else { throw DiskCreationFilesystem.Rejection("\(path) already exists (never overwritten; delete it or choose another path)") }
+        guard !fm.fileExists(atPath: path) else {
+            throw DiskCreationFilesystem.Rejection("\(path) already exists (never overwritten; delete it or choose another path)",
+                localized: String(localized: "\(path) already exists (never overwritten; delete it or choose another path)"))
+        }
         let ca = try RaucBundle.loadCA(caPath)
 
         // 1. metadata
@@ -318,7 +330,13 @@ final class DiskCreator {
             let mb = Double(got) / 1e6
             let detail = total > 0 ? String(format: "%.1f / %.1f MB · %.1f MB/s", mb, Double(total) / 1e6, rate / 1e6)
                 : String(format: "%.1f MB · %.1f MB/s", mb, rate / 1e6)
-            self?.status("download", "Downloading the SteamOS bundle…", detail, total > 0 ? Double(got) / Double(total) : 0)
+            let received = String(format: "%.1f", mb), speed = String(format: "%.1f", rate / 1e6)
+            let expected = String(format: "%.1f", Double(total) / 1e6)
+            let localizedDetail = total > 0
+                ? String(localized: "\(received) / \(expected) MB · \(speed) MB/s")
+                : String(localized: "\(received) MB · \(speed) MB/s")
+            self?.status("download", "Downloading the SteamOS bundle…", detail, total > 0 ? Double(got) / Double(total) : 0,
+                         localizedDetail: localizedDetail)
         }
         let session = URLSession(configuration: .ephemeral, delegate: d, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
@@ -354,7 +372,7 @@ final class DiskCreator {
     }
 
     private func reconstruct(_ desync: String, _ caibx: String, _ out: String, stores: [String], cache: String, dataBytes: UInt64) throws {
-        status("reconstruct", "Downloading SteamOS…", "starting desync")
+        status("reconstruct", "Downloading SteamOS…", "starting desync", localizedDetail: "")
         // No --in-place: that preallocates all 10 GiB; a fresh extract keeps the null chunks as holes.
         var args = ["extract", "--concurrency", "16", "--error-retry", "10", "--cache", cache]
         for s in stores { args += ["--store", s] }
@@ -393,9 +411,16 @@ final class DiskCreator {
                     let elapsed = max(1, Date().timeIntervalSince(start))
                     let rate = Double(dataBytes) * pct / 100 / elapsed
                     let phase = piece.contains("Assembling") ? "" : "validating "
+                    let percent = String(format: "%.1f", pct)
+                    let received = String(format: "%.1f", Double(dataBytes) * pct / 100 / 1e9)
+                    let total = String(format: "%.1f", Double(dataBytes) / 1e9)
+                    let speed = String(format: "%.0f", rate / 1e6)
+                    let localizedDetail = piece.contains("Assembling")
+                        ? String(localized: "\(percent)% · \(received) of \(total) GB · \(speed) MB/s")
+                        : String(localized: "validating \(percent)% · \(received) of \(total) GB · \(speed) MB/s")
                     status("reconstruct", "Downloading SteamOS…",
                            String(format: "%@%.1f%% · %.1f of %.1f GB · %.0f MB/s", phase, pct, Double(dataBytes) * pct / 100 / 1e9,
-                                  Double(dataBytes) / 1e9, rate / 1e6), pct / 100)
+                                  Double(dataBytes) / 1e9, rate / 1e6), pct / 100, localizedDetail: localizedDetail)
                     if piece.contains("Assembling"), Int(pct) / 10 > lastLogged {
                         lastLogged = Int(pct) / 10
                         log(String(format: "create-disk: desync %.0f%% (%.0f MB/s)", pct, rate / 1e6))
@@ -456,9 +481,13 @@ final class DiskCreator {
         }
         func report() {
             let mbps = Double(written) / 1e6 / max(0.001, Date().timeIntervalSince(start))
+            let percent = String(format: "%.0f", Double(off) * 100 / Double(size))
+            let gigabytes = String(format: "%.1f", Double(written) / 1e9)
+            let speed = String(format: "%.0f", mbps)
             status("write", "Writing rootfs-A and rootfs-B…",
                    String(format: "%.0f%% · %.1f GB data · %.0f MB/s", Double(off) * 100 / Double(size), Double(written) / 1e9, mbps),
-                   Double(off) / Double(size))
+                   Double(off) / Double(size),
+                   localizedDetail: String(localized: "\(percent)% · \(gigabytes) GB data · \(speed) MB/s"))
         }
         while off < size {
             try checkCancel()
@@ -528,10 +557,16 @@ final class DiskCreator {
         log("create-disk: space: need ~\(gb(needDisk)) on \(disk) (free \(gb(freeDisk)))"
             + (sameVolume ? "" : ", ~\(gb(cacheNeed + margin)) for the chunk cache on \(cache) (free \(gb(freeCache)))"))
         guard freeDisk >= needDisk else {
-            throw DiskCreationFilesystem.Rejection("not enough free space: \(gb(needDisk)) needed on the volume of \(disk), \(gb(freeDisk)) free")
+            let needed = String(format: "%.1f", Double(needDisk) / 1e9)
+            let available = String(format: "%.1f", Double(freeDisk) / 1e9)
+            throw DiskCreationFilesystem.Rejection("not enough free space: \(gb(needDisk)) needed on the volume of \(disk), \(gb(freeDisk)) free",
+                localized: String(localized: "not enough free space: \(needed) GB needed on the volume of \(disk), \(available) GB free"))
         }
         guard sameVolume || freeCache >= cacheNeed + margin else {
-            throw DiskCreationFilesystem.Rejection("not enough free space for the download cache: \(gb(cacheNeed + margin)) needed in \(cache), \(gb(freeCache)) free")
+            let needed = String(format: "%.1f", Double(cacheNeed + margin) / 1e9)
+            let available = String(format: "%.1f", Double(freeCache) / 1e9)
+            throw DiskCreationFilesystem.Rejection("not enough free space for the download cache: \(gb(cacheNeed + margin)) needed in \(cache), \(gb(freeCache)) free",
+                localized: String(localized: "not enough free space for the download cache: \(needed) GB needed in \(cache), \(available) GB free"))
         }
     }
 }

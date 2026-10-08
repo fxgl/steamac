@@ -104,10 +104,10 @@ enum AppBundle {
     /// A launch error the user must see: an alert when launched from Finder / `open` (the log is not
     /// on screen; a shell launch has the message on stderr).
     @MainActor
-    static func alertIfLaunchedFromFinder(_ title: String, _ message: String) {
+    static func alertIfLaunchedFromFinder(_ title: LocalizedStringResource, _ message: String) {
         guard resources != nil && getppid() == 1 else { return }
         let alert = NSAlert()
-        alert.messageText = title
+        alert.messageText = String(localized: title)
         alert.informativeText = message
         NSApplication.shared.setActivationPolicy(.regular)
         NSApp.activate()
@@ -133,8 +133,8 @@ enum FirstRun {
                 chosen = CreateDiskWindowController.runModal(settings: settings)
             } else if choice == .alertSecondButtonReturn {
                 let panel = NSOpenPanel()
-                panel.title = "Choose a SteamOS disk image"
-                panel.message = "Raw GPT disk image (e.g. steamos.img). It stays where it is."
+                panel.title = String(localized: "Choose a SteamOS disk image")
+                panel.message = String(localized: "Raw GPT disk image (e.g. steamos.img). It stays where it is.")
                 panel.canChooseFiles = true
                 panel.canChooseDirectories = false
                 panel.allowsMultipleSelection = false
@@ -160,20 +160,21 @@ enum FirstRun {
     /// The first-run alert (also captured by --selftest-settings).
     static func makeAlert(settings: LauncherSettings) -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = "No SteamOS disk image"
+        alert.messageText = String(localized: "No SteamOS disk image")
         let looked = AppBundle.defaultDiskCandidates().map { "• " + ($0 as NSString).abbreviatingWithTildeInPath }
-        var info = "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n"
+        var info = String(localized: "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n")
         if !settings.diskImage.isEmpty {
-            info += "The image chosen in Settings is not readable:\n\((settings.diskImage as NSString).abbreviatingWithTildeInPath)\n\n"
+            let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
+            info += String(localized: "The image chosen in Settings is not readable:\n\(path)\n\n")
         }
-        info += "Looked in:\n\(looked.joined(separator: "\n"))\n\n"
-        info += "Create a new one: the official SteamOS image is downloaded from Valve and verified (about 4.5 GB; the disk "
-        info += "uses ~10 GB on your Mac at first). Or choose an existing image, which is used in place and never copied."
+        let paths = looked.joined(separator: "\n")
+        info += String(localized: "Looked in:\n\(paths)\n\n")
+        info += String(localized: "Create a new one: the official SteamOS image is downloaded from Valve and verified (about 4.5 GB; the disk uses ~10 GB on your Mac at first). Or choose an existing image, which is used in place and never copied.")
         alert.informativeText = info
         alert.accessoryView = SteamClientPicker.alertAccessoryView(settings: settings)
-        alert.addButton(withTitle: "Create New Disk…")
-        alert.addButton(withTitle: "Use Existing Disk…")
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: String(localized: "Create New Disk…"))
+        alert.addButton(withTitle: String(localized: "Use Existing Disk…"))
+        alert.addButton(withTitle: String(localized: "Quit"))
         return alert
     }
 }

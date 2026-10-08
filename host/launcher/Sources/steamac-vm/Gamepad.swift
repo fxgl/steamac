@@ -19,6 +19,14 @@ enum GuestPad: Equatable {
 
     var title: String {
         switch self {
+        case .xbox360: return String(localized: "Xbox 360 controller")
+        case .dualSense: return "DualSense"
+        case .dualShock4: return "DualShock 4"
+        }
+    }
+
+    var logTitle: String {
+        switch self {
         case .xbox360: return "Xbox 360 controller"
         case .dualSense: return "DualSense"
         case .dualShock4: return "DualShock 4"
@@ -231,7 +239,7 @@ final class GamepadBridge {
 
         var title: String {
             switch self {
-            case .pad(let p): return p.title
+            case .pad(let p): return p.logTitle
             case .hid(let d): return "\(d.identity.name) (passed through)"
             }
         }
@@ -262,6 +270,11 @@ final class GamepadBridge {
     }
 
     static func displayName(of c: GCController) -> String {
+        let vendor = c.vendorName ?? String(localized: "Controller", comment: "Unnamed game controller")
+        return vendor == c.productCategory ? vendor : "\(vendor) (\(c.productCategory))"
+    }
+
+    static func logDisplayName(of c: GCController) -> String {
         let vendor = c.vendorName ?? "Controller"
         return vendor == c.productCategory ? vendor : "\(vendor) (\(c.productCategory))"
     }
@@ -376,7 +389,7 @@ final class GamepadBridge {
         controller = next
         rumble.attach(next)
         if let c = next, let pad = c.extendedGamepad {
-            log("gamepad active: \(GamepadBridge.displayName(of: c))")
+            log("gamepad active: \(GamepadBridge.logDisplayName(of: c))")
             // Keep the Home/PS button for the guest (Steam button) instead of macOS.
             pad.buttonHome?.preferredSystemGestureState = .disabled
             pad.buttonOptions?.preferredSystemGestureState = .disabled
@@ -407,7 +420,7 @@ final class GamepadBridge {
         case .dualShock4: (pad, why) = (.dualShock4, typeOverride == nil ? "setting" : "--pad")
         case .auto:
             guard let c = controller else { return (.pad(.xbox360), "automatic, no controller") }
-            (pad, why) = (GuestPad.matching(c), "automatic, like \(GamepadBridge.displayName(of: c))")
+            (pad, why) = (GuestPad.matching(c), "automatic, like \(GamepadBridge.logDisplayName(of: c))")
         }
         // GameController does not say which HID device a controller is: with several DualSenses
         // connected, the first one found is passed through.
@@ -443,7 +456,7 @@ final class GamepadBridge {
                 return
             }
             guestPad = pad
-            log("gamepad: SteamOS sees a \(pad.title) (\(want.why))")
+            log("gamepad: SteamOS sees a \(pad.logTitle) (\(want.why))")
             // The new device is at rest; send the controller's current state.
             state = GamepadBridge.rest(pad)
             refresh()
@@ -572,7 +585,7 @@ final class GamepadBridge {
             injectTestSequence()
         case "state":
             log("control: pad \(current?.title ?? "none"), service \(serviceReady ? "ready" : "not ready")\(hidCapable ? " (hid)" : ""), "
-                + "controller \(controller.map(GamepadBridge.displayName(of:)) ?? "none"), rumble \(rumble.level.strong) \(rumble.level.weak), "
+                + "controller \(controller.map(GamepadBridge.logDisplayName(of:)) ?? "none"), rumble \(rumble.level.strong) \(rumble.level.weak), "
                 + "HID DualSenses \(hid.devices.count), hid inputs \(hidInputs)")
         default:
             log("control: pad on|off|test|state")
