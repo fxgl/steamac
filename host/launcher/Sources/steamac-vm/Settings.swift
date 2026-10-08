@@ -99,21 +99,21 @@ final class LauncherSettings: ObservableObject {
 
         var title: String {
             switch self {
-            case .frame: return "Steam Frame client"
-            case .deck: return "Steam Deck client"
-            case .deckbeta: return "Steam Deck client (beta)"
+            case .frame: return tr("Steam Frame client")
+            case .deck: return tr("Steam Deck client")
+            case .deckbeta: return tr("Steam Deck client (beta)")
             }
         }
 
         var detail: String {
             switch self {
             case .frame:
-                return "Valve's ARM64 client for Steam Frame (a beta for a headset not yet released). "
-                    + "Until an account is signed in with Remember me, the Steam Deck client shows the sign-in QR code."
+                return tr("Valve's ARM64 client for Steam Frame (a beta for a headset not yet released). "
+                    + "Until an account is signed in with Remember me, the Steam Deck client shows the sign-in QR code.")
             case .deck:
-                return "The public ARM64 Steam Deck client (steamdeck_stable). Standard sign-in with an on-screen QR code."
+                return tr("The public ARM64 Steam Deck client (steamdeck_stable). Standard sign-in with an on-screen QR code.")
             case .deckbeta:
-                return "The Steam Deck client beta (steamdeck_publicbeta). Standard sign-in with an on-screen QR code."
+                return tr("The Steam Deck client beta (steamdeck_publicbeta). Standard sign-in with an on-screen QR code.")
             }
         }
 
@@ -152,12 +152,12 @@ final class LauncherSettings: ObservableObject {
             let text: String
             switch self {
             case .moltenvk:
-                text = "Vulkan on Metal 3 through MoltenVK with steamac's patches (macOS 15 or newer)."
+                text = tr("Vulkan on Metal 3 through MoltenVK with steamac's patches (macOS 15 or newer).")
             case .kosmickrisp:
-                text = "Mesa's Vulkan driver on Metal 4 (macOS 26 or newer). Faster than MoltenVK: Stellar Blade Demo "
-                    + "runs at ~29 FPS instead of ~18 on an M1 Max."
+                text = tr("Mesa's Vulkan driver on Metal 4 (macOS 26 or newer). Faster than MoltenVK: Stellar Blade Demo "
+                    + "runs at ~29 FPS instead of ~18 on an M1 Max.")
             }
-            return self == Self.preferred ? text + " Default on this Mac." : text
+            return self == Self.preferred ? text + tr(" Default on this Mac.") : text
         }
 
         /// The default: KosmicKrisp where this Mac and build have it, else MoltenVK (fixed for the process).
@@ -178,9 +178,9 @@ final class LauncherSettings: ObservableObject {
         var unavailableReason: String? {
             guard self == .kosmickrisp else { return nil }
             let tahoe = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
-            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(tahoe) else { return "needs macOS 26 or newer (Metal 4)" }
+            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(tahoe) else { return tr("needs macOS 26 or newer (Metal 4)") }
             guard let handle = dlopen("@rpath/" + library, RTLD_LAZY | RTLD_LOCAL) else {
-                return "not included in this build (\(library))"
+                return tr("not included in this build (%@)", library)
             }
             dlclose(handle)
             return nil

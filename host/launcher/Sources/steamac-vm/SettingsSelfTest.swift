@@ -160,7 +160,7 @@ enum SettingsSelfTest {
             sw.show(tab: .display)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 guard let popup = popups(in: sw.window.contentView)
-                    .first(where: { $0.title.contains(" × ") || $0.title.hasPrefix("Custom") }) else {
+                    .first(where: { $0.title.contains(" × ") || $0.title == NSLocalizedString("Custom…", comment: "") }) else {
                     failures.append("display-presets: no window size popup")
                     return done()
                 }
@@ -203,8 +203,12 @@ enum SettingsSelfTest {
                     let presets = titles.filter { t in LauncherSettings.sizePresets.contains { t.hasPrefix("\($0.width) × \($0.height) (") } }
                     log("selftest-settings: \(path): \(titles.count) items, \(presets.count) presets,"
                         + " \(titles.filter { $0.contains("larger than this screen") }.count) larger than this screen")
-                    if presets.count != LauncherSettings.sizePresets.count || !titles.contains("Custom…")
-                        || !titles.contains(where: { $0.hasPrefix("Fit to screen (") }) {
+                    // Locale-robust: compare against the localized chrome, not English literals.
+                    // (Size-preset labels and the "larger than this screen" suffix stay in English;
+                    // only Fit-to-screen/Custom… are localized, so require their slots by count.)
+                    let customTitle = NSLocalizedString("Custom…", comment: "")
+                    if presets.count != LauncherSettings.sizePresets.count || !titles.contains(customTitle)
+                        || titles.count < presets.count + 2 {
                         failures.append("display-presets: unexpected items \(titles)")
                     }
                     capture("display-presets", tabShot.flatMap { withMenuItems($0, titles, selected: selected) })

@@ -1,6 +1,6 @@
 # steamac — официальный ARM64 SteamOS (образ Steam Frame) в ВМ на Apple Silicon
 
-[English](README.md) · **Русский**
+[English](README.md) · **Русский** · [简体中文](README.zh.md)
 
 На macOS 15 (Sequoia) настоящий SteamOS от Valve для Steam Frame запускается в лёгкой ВМ на
 Hypervisor.framework (libkrun) с GPU-ускорением через Venus.

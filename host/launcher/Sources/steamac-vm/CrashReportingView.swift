@@ -17,7 +17,7 @@ struct CrashReportsToggle: View {
         let toggle = Toggle(isOn: $settings.sendCrashReports) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Send crash reports and diagnostics")
-                Text(CrashReporting.summary)
+                Text(tr(CrashReporting.summary))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("What is sent") { showDetails.toggle() }
                     .buttonStyle(.link)
@@ -26,7 +26,7 @@ struct CrashReportsToggle: View {
                 if showsApplies {
                     Text("applies now").font(.caption).foregroundStyle(.secondary)
                     if let flag = settings.overrides[.sendCrashReports] {
-                        Text("overridden by command line (\(flag))").font(.caption).foregroundStyle(.red)
+                        Text(tr("overridden by command line (%@)", flag)).font(.caption).foregroundStyle(.red)
                     }
                 }
             }
@@ -43,12 +43,12 @@ struct WhatIsSentView: View {
             ForEach(CrashReporting.whatIsSent, id: \.self) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("•")
-                    Text(item).fixedSize(horizontal: false, vertical: true)
+                    Text(tr(item)).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.callout)
             }
-            Text("Reports go to the developers' own Sentry server (sentry.fxgam.es). Turn this off any time in "
-                 + "Settings > General, or for one run with --no-crash-reports / STEAMAC_SENTRY=0.")
+            Text(tr("Reports go to the developers' own Sentry server (sentry.fxgam.es). Turn this off any time in "
+                  + "Settings > General, or for one run with --no-crash-reports / STEAMAC_SENTRY=0."))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)

@@ -249,7 +249,7 @@ extension Lifecycle: NSMenuItemValidation {
         }
         if item.action == #selector(menuSuspend) {
             let suspended = suspender?.suspended ?? false
-            item.title = suspended ? "Resume" : "Suspend"
+            item.title = tr(suspended ? "Resume" : "Suspend")
             return suspender != nil && requestedAt == nil
         }
         return true

@@ -87,6 +87,13 @@ fi
 
 codesign --force --sign - --entitlements "$HERE/steamac-vm.entitlements" "$tmp"
 mv -f "$tmp" "$OUT/steamac-vm"
+# Localizations for the dev launcher (bare binary, no .app): Bundle.main of a
+# non-bundled executable resolves .lproj next to it, so copy them to work/out.
+for lproj in "$HERE"/Resources/*.lproj; do
+    [[ -d "$lproj" ]] || continue
+    rm -rf "$OUT/$(basename "$lproj")"
+    cp -R "$lproj" "$OUT/"
+done
 
 "$HERE/fetch-gvproxy.sh"
 "$HERE/fetch-desync.sh"

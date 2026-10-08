@@ -33,8 +33,10 @@ a { color: var(--steam2); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: var(--mono); font-size: .92em; background: rgba(255, 255, 255, .06); padding: .1em .35em; border-radius: 5px; }
 
-/* Language switch: both languages are in the markup, the inactive one is hidden. */
-[data-lang="en"] [lang="ru"], [data-lang="ru"] [lang="en"] { display: none !important; }
+/* Language switch: all languages are in the markup, the inactive ones are hidden. */
+[data-lang="en"] [lang="ru"], [data-lang="en"] [lang="zh"],
+[data-lang="ru"] [lang="en"], [data-lang="ru"] [lang="zh"],
+[data-lang="zh"] [lang="en"], [data-lang="zh"] [lang="ru"] { display: none !important; }
 
 /* ---------- Nav ---------- */
 .nav {
@@ -57,7 +59,7 @@ code { font-family: var(--mono); font-size: .92em; background: rgba(255, 255, 25
   font: 600 12px/1 var(--sans); letter-spacing: .06em; color: var(--muted);
   background: none; border: 0; padding: 7px 10px; cursor: pointer;
 }
-[data-lang="en"] [data-set-lang="en"], [data-lang="ru"] [data-set-lang="ru"] { color: #04121f; background: var(--steam2); }
+[data-lang="en"] [data-set-lang="en"], [data-lang="ru"] [data-set-lang="ru"], [data-lang="zh"] [data-set-lang="zh"] { color: #04121f; background: var(--steam2); }
 
 /* ---------- Buttons ---------- */
 .btn {

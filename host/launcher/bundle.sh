@@ -113,6 +113,12 @@ chmod 755 "$TMP/Contents/Resources/gvproxy" "$TMP/Contents/Resources/desync"
 cp "$ROOT/scripts/keys/steamdeck-images.pem" "$TMP/Contents/Resources/steamdeck-images.pem"
 mkdir -p "$TMP/Contents/Resources/licenses"
 cp -R "$OUT/licenses/." "$TMP/Contents/Resources/licenses/"
+# Localizations (e.g. zh-Hans.lproj/Localizable.strings + InfoPlist.strings): plain copy,
+# no Xcode build step needed.
+for lproj in "$HERE"/Resources/*.lproj; do
+    [[ -d "$lproj" ]] || continue
+    cp -R "$lproj" "$TMP/Contents/Resources/"
+done
 
 # App icon: AppIcon.icon (Icon Composer document) compiled by Xcode 26's actool into Assets.car
 # (layered Liquid Glass icon for macOS 26, pre-rendered squircle renditions for macOS 15) and an

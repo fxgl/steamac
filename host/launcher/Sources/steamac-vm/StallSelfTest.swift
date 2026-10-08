@@ -81,7 +81,12 @@ enum StallSelfTest {
         let view = wc.stallView
         // The card's "Report…" link (only with the not-responding wording).
         view.onReport = { log("stall selftest: Report… link activated") }
-        let working = "Still working — loading or compiling shaders…"
+        // Locale-robust: the card titles/details follow the system language.
+        let working = NSLocalizedString("Still working — loading or compiling shaders…", comment: "")
+        let notResponding = NSLocalizedString("SteamOS is not responding…", comment: "")
+        let aliveMark = NSLocalizedString("guest alive", comment: "")
+        let cpuMark = NSLocalizedString("VM CPU %@ cores", comment: "").components(separatedBy: "%@")[0]
+        let waitingMark = NSLocalizedString("waiting (%@ s)", comment: "").components(separatedBy: "%@")[0]
         func expectHidden(_ what: String) -> String? {
             !monitor.indicatorShown && !view.shown ? nil : "\(what): indicator should be hidden"
         }
@@ -106,7 +111,7 @@ enum StallSelfTest {
                                              : "expected game focus, got \(wc.guestFocus)"
             },
             Step(name: "05-game-idle-2.5s-shown", action: {}, wait: 1.0) {
-                expectShown(title: working, detail: "guest alive")
+                expectShown(title: working, detail: aliveMark)
                     ?? (view.reportLinkFrame.isEmpty ? nil : "Report… link shown while the guest is alive")
             },
             Step(name: "06-resized", action: { wc.window.setContentSize(NSSize(width: 1000, height: 700)) }, wait: 0.6) {
@@ -115,13 +120,13 @@ enum StallSelfTest {
                 guard abs(card.midX - b.midX) <= 1, card.minY > 0, card.maxY < b.height / 2 else {
                     return "card not centered in the lower half after resize: \(card) in \(b)"
                 }
-                return expectShown(title: working, detail: "VM CPU")
+                return expectShown(title: working, detail: cpuMark)
             },
             Step(name: "07-ring-resumes", action: { mode.store(2, ordering: .relaxed) }, wait: 0.6) {
                 view.isIdle ? expectHidden("Venus ring commands") : "indicator view not hidden + idle after the fade"
             },
             Step(name: "08-game-idle-again", action: { mode.store(0, ordering: .relaxed) }, wait: 2.5) {
-                expectShown(title: working, detail: "guest alive")
+                expectShown(title: working, detail: aliveMark)
             },
             Step(name: "09-focus-steam-hides", action: { guest("focus steam\n") }, wait: 0.5) {
                 view.isIdle ? expectHidden("focus back to Steam") : "indicator view not hidden + idle after focus steam"
@@ -132,7 +137,7 @@ enum StallSelfTest {
                 expectHidden("Steam UI, heartbeat lost < 5 s")
             },
             Step(name: "11-steam-ui-not-responding", action: {}, wait: 3.0) {
-                expectShown(title: "SteamOS is not responding…", detail: "waiting (")
+                expectShown(title: notResponding, detail: waitingMark)
                     ?? (view.cardFrame.contains(view.reportLinkFrame) && !view.reportLinkFrame.isEmpty
                         ? nil : "Report… link missing on the not-responding card: \(view.reportLinkFrame) in \(view.cardFrame)")
             },

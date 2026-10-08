@@ -19,7 +19,8 @@
   (function () {
     var saved = null;
     try { saved = localStorage.getItem("lang"); } catch (e) {}
-    var lang = saved || (/^ru\b/i.test(navigator.language || "") ? "ru" : "en");
+    var lang = saved || (/^zh\b/i.test(navigator.language || "") ? "zh"
+      : /^ru\b/i.test(navigator.language || "") ? "ru" : "en");
     document.documentElement.dataset.lang = lang;
     document.documentElement.lang = lang;
     document.documentElement.classList.add("js");
@@ -34,16 +35,17 @@
     <span class="brand-name">FX Steam Launcher</span>
   </a>
   <nav class="nav-links">
-    <a href="#scene"><span lang="en">Inside</span><span lang="ru">Внутри</span></a>
-    <a href="#proof"><span lang="en">Games</span><span lang="ru">Игры</span></a>
-    <a href="#graphics"><span lang="en">Graphics</span><span lang="ru">Графика</span></a>
-    <a href="#settings"><span lang="en">Settings</span><span lang="ru">Настройки</span></a>
-    <a href="#get"><span lang="en">Download</span><span lang="ru">Скачать</span></a>
+    <a href="#scene"><span lang="en">Inside</span><span lang="ru">Внутри</span><span lang="zh">内部</span></a>
+    <a href="#proof"><span lang="en">Games</span><span lang="ru">Игры</span><span lang="zh">游戏</span></a>
+    <a href="#graphics"><span lang="en">Graphics</span><span lang="ru">Графика</span><span lang="zh">图形</span></a>
+    <a href="#settings"><span lang="en">Settings</span><span lang="ru">Настройки</span><span lang="zh">设置</span></a>
+    <a href="#get"><span lang="en">Download</span><span lang="ru">Скачать</span><span lang="zh">下载</span></a>
     <a href="https://github.com/fxgl/steamac" class="gh">GitHub</a>
   </nav>
   <div class="lang-switch" role="group" aria-label="Language">
     <button type="button" data-set-lang="en">EN</button>
     <button type="button" data-set-lang="ru">RU</button>
+    <button type="button" data-set-lang="zh">中文</button>
   </div>
 </header>
 
@@ -59,18 +61,20 @@
       <h1>
         <span lang="en">SteamOS<br><em>On your Mac</em></span>
         <span lang="ru">SteamOS<br><em>На вашем Mac</em></span>
+        <span lang="zh">SteamOS<br><em>在你的 Mac 上</em></span>
       </h1>
       <p class="lede">
         <span lang="en">Valve's official ARM64 SteamOS — the Steam Frame build — running in a lightweight VM on Apple Silicon. GPU-accelerated Windows games, any controller, native sound.</span>
         <span lang="ru">Официальный ARM64 SteamOS от Valve — сборка для Steam Frame — в лёгкой ВМ на Apple Silicon. Windows-игры с ускорением графики, любой геймпад, родной звук.</span>
+        <span lang="zh">Valve 官方 ARM64 SteamOS（Steam Frame 构建）在 Apple Silicon 轻量虚拟机中运行。Windows 游戏 GPU 加速、任意手柄、原生声音。</span>
       </p>
       <div class="cta">
         <a class="btn btn-primary" data-dl href="https://github.com/fxgl/steamac/releases/latest">
-          <span lang="en">Download for Mac</span><span lang="ru">Скачать для Mac</span>
+          <span lang="en">Download for Mac</span><span lang="ru">Скачать для Mac</span><span lang="zh">下载 Mac 版</span>
           <small data-ver></small>
         </a>
         <a class="btn btn-ghost" href="https://github.com/fxgl/steamac">
-          <span lang="en">Source on GitHub</span><span lang="ru">Исходники на GitHub</span>
+          <span lang="en">Source on GitHub</span><span lang="ru">Исходники на GitHub</span><span lang="zh">GitHub 源码</span>
         </a>
       </div>
     </div>
@@ -207,138 +211,139 @@
     <!-- Feature panel: one article per layer, shown while that layer is pulled out. -->
     <aside class="panel" aria-live="polite">
       <article class="info" data-i="-1">
-        <p class="info-kicker"><span lang="en">Exploded view</span><span lang="ru">В разборе</span></p>
-        <h2><span lang="en">Six layers between Steam and the silicon</span><span lang="ru">Шесть слоёв между Steam и кремнием</span></h2>
-        <p><span lang="en">Keep scrolling: each board is one part of the stack, and how it works.</span><span lang="ru">Листайте дальше: каждая плата — одна часть стека и то, как она работает.</span></p>
+        <p class="info-kicker"><span lang="en">Exploded view</span><span lang="ru">В разборе</span><span lang="zh">拆解视图</span></p>
+        <h2><span lang="en">Six layers between Steam and the silicon</span><span lang="ru">Шесть слоёв между Steam и кремнием</span><span lang="zh">Steam 与芯片之间的六层结构</span></h2>
+        <p><span lang="en">Keep scrolling: each board is one part of the stack, and how it works.</span><span lang="ru">Листайте дальше: каждая плата — одна часть стека и то, как она работает.</span><span lang="zh">继续滚动：每块板子是技术栈的一部分，以及它的工作原理。</span></p>
       </article>
 
       <article class="info" data-i="0" style="--accent:#66c0f4">
-        <p class="info-kicker">01 · <span lang="en">Display</span><span lang="ru">Экран</span></p>
-        <h2><span lang="en">SteamOS in a Mac window</span><span lang="ru">SteamOS в окне macOS</span></h2>
-        <p class="info-lede"><span lang="en">The real SteamOS gamepad UI, drawn by gamescope inside the VM and presented by a native Metal window.</span><span lang="ru">Настоящий игровой интерфейс SteamOS: его рисует gamescope внутри ВМ, а показывает нативное окно на Metal.</span></p>
+        <p class="info-kicker">01 · <span lang="en">Display</span><span lang="ru">Экран</span><span lang="zh">显示</span></p>
+        <h2><span lang="en">SteamOS in a Mac window</span><span lang="ru">SteamOS в окне macOS</span><span lang="zh">macOS 窗口中的 SteamOS</span></h2>
+        <p class="info-lede"><span lang="en">The real SteamOS gamepad UI, drawn by gamescope inside the VM and presented by a native Metal window.</span><span lang="ru">Настоящий игровой интерфейс SteamOS: его рисует gamescope внутри ВМ, а показывает нативное окно на Metal.</span><span lang="zh">真正的 SteamOS 手柄界面：由虚拟机内的 gamescope 绘制，原生 Metal 窗口呈现。</span></p>
         <ul>
-          <li><span lang="en">Guest resolution follows the window at constant DPI — the EDID is computed from your screen's physical size, so text stays crisp in a window or full screen (Ctrl+Cmd+F).</span><span lang="ru">Разрешение гостя следует за размером окна при постоянном DPI — EDID считается из физического размера экрана, поэтому текст чёткий и в окне, и на весь экран (Ctrl+Cmd+F).</span></li>
-          <li><span lang="en">Resizing is live: the new size reaches SteamOS as a display change, no reboot. Or pick a preset — Steam Deck 1280×800 up to 4K and 21:9 — or Fit to screen.</span><span lang="ru">Ресайз — на лету: новый размер приходит в SteamOS как смена дисплея, без перезагрузки. Или выберите пресет — от Steam Deck 1280×800 до 4K и 21:9 — или Fit to screen.</span></li>
-          <li><span lang="en">The launcher overlay shows boot and shutdown progress reported by an agent inside SteamOS. Closing the window presses the power button: clean shutdown in 2–4 s.</span><span lang="ru">Оверлей лаунчера показывает прогресс загрузки и выключения — его сообщает агент внутри SteamOS. Закрыть окно = нажать кнопку питания: чистое выключение за 2–4 с.</span></li>
+          <li><span lang="en">Guest resolution follows the window at constant DPI — the EDID is computed from your screen's physical size, so text stays crisp in a window or full screen (Ctrl+Cmd+F).</span><span lang="ru">Разрешение гостя следует за размером окна при постоянном DPI — EDID считается из физического размера экрана, поэтому текст чёткий и в окне, и на весь экран (Ctrl+Cmd+F).</span><span lang="zh">客户机分辨率跟随窗口并保持 DPI 不变——EDID 根据屏幕物理尺寸计算，因此窗口和全屏（Ctrl+Cmd+F）下文字都清晰。</span></li>
+          <li><span lang="en">Resizing is live: the new size reaches SteamOS as a display change, no reboot. Or pick a preset — Steam Deck 1280×800 up to 4K and 21:9 — or Fit to screen.</span><span lang="ru">Ресайз — на лету: новый размер приходит в SteamOS как смена дисплея, без перезагрузки. Или выберите пресет — от Steam Deck 1280×800 до 4K и 21:9 — или Fit to screen.</span><span lang="zh">实时调整大小：新尺寸作为显示器变化直达 SteamOS，无需重启。也可选择预设——从 Steam Deck 1280×800 到 4K 和 21:9——或“适应屏幕”。</span></li>
+          <li><span lang="en">The launcher overlay shows boot and shutdown progress reported by an agent inside SteamOS. Closing the window presses the power button: clean shutdown in 2–4 s.</span><span lang="ru">Оверлей лаунчера показывает прогресс загрузки и выключения — его сообщает агент внутри SteamOS. Закрыть окно = нажать кнопку питания: чистое выключение за 2–4 с.</span><span lang="zh">启动器叠加层显示 SteamOS 内代理上报的开关机进度。关闭窗口相当于按电源键：2–4 秒干净关机。</span></li>
         </ul>
         <p class="tags"><span>gamescope</span><span>Metal</span><span>EDID</span><span>virtio-gpu</span></p>
       </article>
 
       <article class="info" data-i="1" style="--accent:#4ade80">
-        <p class="info-kicker">02 · <span lang="en">Controls</span><span lang="ru">Управление</span></p>
-        <h2><span lang="en">Any controller and a mouse that just works</span><span lang="ru">Любой геймпад и мышь, которая просто работает</span></h2>
-        <p class="info-lede"><span lang="en">Every gamepad macOS knows appears inside SteamOS as the same kind of controller — DualSense, DualShock 4 or Xbox — with rumble; keyboard and mouse go in through virtio-input.</span><span lang="ru">Любой геймпад, который видит macOS, появляется в SteamOS как контроллер того же типа — DualSense, DualShock 4 или Xbox — с вибрацией; клавиатура и мышь идут через virtio-input.</span></p>
+        <p class="info-kicker">02 · <span lang="en">Controls</span><span lang="ru">Управление</span><span lang="zh">操控</span></p>
+        <h2><span lang="en">Any controller and a mouse that just works</span><span lang="ru">Любой геймпад и мышь, которая просто работает</span><span lang="zh">任意手柄与开箱即用的鼠标</span></h2>
+        <p class="info-lede"><span lang="en">Every gamepad macOS knows appears inside SteamOS as the same kind of controller — DualSense, DualShock 4 or Xbox — with rumble; keyboard and mouse go in through virtio-input.</span><span lang="ru">Любой геймпад, который видит macOS, появляется в SteamOS как контроллер того же типа — DualSense, DualShock 4 или Xbox — с вибрацией; клавиатура и мышь идут через virtio-input.</span><span lang="zh">macOS 识别的每个手柄都会以同类型控制器出现在 SteamOS 中——DualSense、DualShock 4 或 Xbox——并带振动；键盘鼠标经 virtio-input 接入。</span></p>
         <ul>
-          <li><span lang="en">GameController.framework reads Xbox, DualSense, DualShock and MFi pads. Inside SteamOS the launcher's agent creates a matching pad with the real driver's identity, so Steam shows the right button glyphs; rumble from games plays back on your controller.</span><span lang="ru">GameController.framework читает Xbox, DualSense, DualShock и MFi. Внутри SteamOS агент лаунчера создаёт такой же геймпад с идентификатором настоящего драйвера, поэтому Steam показывает правильные кнопки; вибрация из игр передаётся на ваш контроллер.</span></li>
-          <li><span lang="en">Pick the controller, swap A/B and X/Y for Nintendo-style layouts, set a stick deadzone — while the game runs.</span><span lang="ru">Выбор контроллера, перестановка A/B и X/Y под раскладку Nintendo, мёртвая зона стиков — прямо во время игры.</span></li>
-          <li><span lang="en">gamescope ignores absolute pointers, so the SteamOS cursor is moved with unaccelerated relative motion and tracks the Mac cursor 1:1. In a game the first click captures the mouse for mouse-look, Ctrl+Option releases it — remembered per game.</span><span lang="ru">gamescope не принимает абсолютные координаты, поэтому курсор SteamOS ведётся относительными сдвигами без ускорения и точно следует за курсором Mac. В игре первый щелчок захватывает мышь для обзора, Ctrl+Option отпускает — выбор запоминается для каждой игры.</span></li>
+          <li><span lang="en">GameController.framework reads Xbox, DualSense, DualShock and MFi pads. Inside SteamOS the launcher's agent creates a matching pad with the real driver's identity, so Steam shows the right button glyphs; rumble from games plays back on your controller.</span><span lang="ru">GameController.framework читает Xbox, DualSense, DualShock и MFi. Внутри SteamOS агент лаунчера создаёт такой же геймпад с идентификатором настоящего драйвера, поэтому Steam показывает правильные кнопки; вибрация из игр передаётся на ваш контроллер.</span><span lang="zh">GameController 框架读取 Xbox、DualSense、DualShock 和 MFi 手柄。SteamOS 内启动器代理以真实驱动身份创建匹配的手柄，因此 Steam 显示正确的按键图标，游戏振动也会回传到你的手柄。</span></li>
+          <li><span lang="en">Pick the controller, swap A/B and X/Y for Nintendo-style layouts, set a stick deadzone — while the game runs.</span><span lang="ru">Выбор контроллера, перестановка A/B и X/Y под раскладку Nintendo, мёртвая зона стиков — прямо во время игры.</span><span lang="zh">选择手柄、为任天堂式布局互换 A/B 与 X/Y、设置摇杆死区——游戏运行时即可调整。</span></li>
+          <li><span lang="en">gamescope ignores absolute pointers, so the SteamOS cursor is moved with unaccelerated relative motion and tracks the Mac cursor 1:1. In a game the first click captures the mouse for mouse-look, Ctrl+Option releases it — remembered per game.</span><span lang="ru">gamescope не принимает абсолютные координаты, поэтому курсор SteamOS ведётся относительными сдвигами без ускорения и точно следует за курсором Mac. В игре первый щелчок захватывает мышь для обзора, Ctrl+Option отпускает — выбор запоминается для каждой игры.</span><span lang="zh">gamescope 忽略绝对坐标，因此 SteamOS 光标以无加速相对位移驱动，与 Mac 光标 1:1 跟随。游戏中首次点按捕获鼠标用于视角，Ctrl+Option 释放——按游戏分别记忆。</span></li>
         </ul>
         <p class="tags"><span>virtio-input</span><span>GameController</span><span>uinput</span><span>rumble</span></p>
       </article>
 
       <article class="info" data-i="2" style="--accent:#c084fc">
-        <p class="info-kicker">03 · <span lang="en">Sound</span><span lang="ru">Звук</span></p>
-        <h2><span lang="en">Native CoreAudio sound</span><span lang="ru">Родной звук через CoreAudio</span></h2>
-        <p class="info-lede"><span lang="en">A virtio-snd device with a CoreAudio backend written for steamac — no PipeWire on the Mac, no drivers to install.</span><span lang="ru">Устройство virtio-snd с бэкендом CoreAudio, написанным для steamac: без PipeWire на Mac и без драйверов.</span></p>
+        <p class="info-kicker">03 · <span lang="en">Sound</span><span lang="ru">Звук</span><span lang="zh">声音</span></p>
+        <h2><span lang="en">Native CoreAudio sound</span><span lang="ru">Родной звук через CoreAudio</span><span lang="zh">原生 CoreAudio 声音</span></h2>
+        <p class="info-lede"><span lang="en">A virtio-snd device with a CoreAudio backend written for steamac — no PipeWire on the Mac, no drivers to install.</span><span lang="ru">Устройство virtio-snd с бэкендом CoreAudio, написанным для steamac: без PipeWire на Mac и без драйверов.</span><span lang="zh">为 steamac 编写的 CoreAudio 后端 virtio-snd 设备——Mac 上无需 PipeWire，无需安装驱动。</span></p>
         <ul>
-          <li><span lang="en">The guest stream (8–48 kHz, mono or stereo, integer or float) is copied into a lock-free ring; CoreAudio's real-time callback only reads from it.</span><span lang="ru">Поток гостя (8–48 кГц, моно или стерео, целые или float) копируется в lock-free кольцевой буфер; real-time колбэк CoreAudio только читает из него.</span></li>
-          <li><span lang="en">Playback is paced by the output device's clock, so the guest never runs ahead of real time; the reported latency includes CoreAudio's own, keeping audio and video in sync.</span><span lang="ru">Воспроизведение идёт по часам устройства вывода — гость не убегает вперёд реального времени; в задержку включена задержка самого CoreAudio, звук не расходится с картинкой.</span></li>
-          <li><span lang="en">Output device, volume and buffer (10 / 20 / 60 ms) change on the fly; if a device disappears, sound falls back to the system default. The microphone opens only while SteamOS records.</span><span lang="ru">Устройство вывода, громкость и буфер (10 / 20 / 60 мс) меняются на лету; пропало устройство — звук уходит на системное. Микрофон открывается только пока SteamOS записывает.</span></li>
+          <li><span lang="en">The guest stream (8–48 kHz, mono or stereo, integer or float) is copied into a lock-free ring; CoreAudio's real-time callback only reads from it.</span><span lang="ru">Поток гостя (8–48 кГц, моно или стерео, целые или float) копируется в lock-free кольцевой буфер; real-time колбэк CoreAudio только читает из него.</span><span lang="zh">客户机音频流（8–48 kHz、单声道或立体声、整型或浮点）拷贝到无锁环形缓冲；CoreAudio 实时回调只从中读取。</span></li>
+          <li><span lang="en">Playback is paced by the output device's clock, so the guest never runs ahead of real time; the reported latency includes CoreAudio's own, keeping audio and video in sync.</span><span lang="ru">Воспроизведение идёт по часам устройства вывода — гость не убегает вперёд реального времени; в задержку включена задержка самого CoreAudio, звук не расходится с картинкой.</span><span lang="zh">按输出设备时钟播放，客户机不会跑到真实时间前面；上报延迟包含 CoreAudio 自身延迟，音画保持同步。</span></li>
+          <li><span lang="en">Output device, volume and buffer (10 / 20 / 60 ms) change on the fly; if a device disappears, sound falls back to the system default. The microphone opens only while SteamOS records.</span><span lang="ru">Устройство вывода, громкость и буфер (10 / 20 / 60 мс) меняются на лету; пропало устройство — звук уходит на системное. Микрофон открывается только пока SteamOS записывает.</span><span lang="zh">输出设备、音量和缓冲（10 / 20 / 60 毫秒）可实时切换；设备消失则回落到系统默认。仅 SteamOS 录音时才打开麦克风。</span></li>
         </ul>
         <p class="tags"><span>virtio-snd</span><span>CoreAudio</span><span>AUHAL</span></p>
       </article>
 
       <article class="info" data-i="3" style="--accent:#fb923c">
-        <p class="info-kicker">04 · <span lang="en">Graphics translation</span><span lang="ru">Трансляция графики</span></p>
+        <p class="info-kicker">04 · <span lang="en">Graphics translation</span><span lang="ru">Трансляция графики</span><span lang="zh">图形转译</span></p>
         <h2>DirectX → Vulkan → Metal</h2>
-        <p class="info-lede"><span lang="en">Windows games render through a chain of translations, GPU-accelerated end to end.</span><span lang="ru">Windows-игры рисуют через цепочку трансляций — с аппаратным ускорением на всём пути.</span></p>
+        <p class="info-lede"><span lang="en">Windows games render through a chain of translations, GPU-accelerated end to end.</span><span lang="ru">Windows-игры рисуют через цепочку трансляций — с аппаратным ускорением на всём пути.</span><span lang="zh">Windows 游戏经多层转译渲染，全程 GPU 加速。</span></p>
         <ul>
-          <li><span lang="en">DXVK in Proton turns DirectX 9/10/11 into Vulkan, vkd3d-proton does the same for DirectX 12. Mesa's Venus driver in the VM serializes the Vulkan calls to the host over virtio-gpu, sharing memory as 16K-aligned blobs.</span><span lang="ru">DXVK в Proton превращает DirectX 9/10/11 в Vulkan, vkd3d-proton — DirectX 12. Драйвер Venus из Mesa внутри ВМ сериализует вызовы Vulkan и передаёт их хосту через virtio-gpu; память общая — blob-ресурсы с выравниванием 16K.</span></li>
-          <li><span lang="en">On the Mac, virglrenderer replays them on a Vulkan driver that runs on Metal: KosmicKrisp (Mesa, Metal 4, macOS 26+) or MoltenVK (Metal 3, macOS 15+). SteamOS sees “Virtio-GPU Venus (Apple M4 Max)” with Vulkan 1.4.</span><span lang="ru">На Mac virglrenderer исполняет их на Vulkan-драйвере поверх Metal: KosmicKrisp (Mesa, Metal 4, macOS 26+) или MoltenVK (Metal 3, macOS 15+). SteamOS видит «Virtio-GPU Venus (Apple M4 Max)» с Vulkan 1.4.</span></li>
-          <li><span lang="en">Patched MoltenVK adds what DXVK and vkd3d-proton need: geometry shaders, transform feedback, depth clip, null descriptors, million-entry descriptor heaps, texel buffers at any offset. Metal caches compiled shaders — a new effect stutters once, then never again.</span><span lang="ru">Пропатченный MoltenVK даёт то, что нужно DXVK и vkd3d-proton: геометрические шейдеры, transform feedback, depth clip, null-дескрипторы, кучи дескрипторов на миллион записей, texel-буферы с любым смещением. Metal кеширует шейдеры — новый эффект подтормаживает один раз, потом никогда.</span></li>
+          <li><span lang="en">DXVK in Proton turns DirectX 9/10/11 into Vulkan, vkd3d-proton does the same for DirectX 12. Mesa's Venus driver in the VM serializes the Vulkan calls to the host over virtio-gpu, sharing memory as 16K-aligned blobs.</span><span lang="ru">DXVK в Proton превращает DirectX 9/10/11 в Vulkan, vkd3d-proton — DirectX 12. Драйвер Venus из Mesa внутри ВМ сериализует вызовы Vulkan и передаёт их хосту через virtio-gpu; память общая — blob-ресурсы с выравниванием 16K.</span><span lang="zh">Proton 中的 DXVK 把 DirectX 9/10/11 转成 Vulkan，vkd3d-proton 对 DirectX 12 同理。虚拟机内 Mesa 的 Venus 驱动经 virtio-gpu 把 Vulkan 调用序列化发往宿主，内存以 16K 对齐 blob 共享。</span></li>
+          <li><span lang="en">On the Mac, virglrenderer replays them on a Vulkan driver that runs on Metal: KosmicKrisp (Mesa, Metal 4, macOS 26+) or MoltenVK (Metal 3, macOS 15+). SteamOS sees “Virtio-GPU Venus (Apple M4 Max)” with Vulkan 1.4.</span><span lang="ru">На Mac virglrenderer исполняет их на Vulkan-драйвере поверх Metal: KosmicKrisp (Mesa, Metal 4, macOS 26+) или MoltenVK (Metal 3, macOS 15+). SteamOS видит «Virtio-GPU Venus (Apple M4 Max)» с Vulkan 1.4.</span><span lang="zh">在 Mac 上，virglrenderer 在基于 Metal 的 Vulkan 驱动上重放它们：KosmicKrisp（Mesa、Metal 4、macOS 26+）或 MoltenVK（Metal 3、macOS 15+）。SteamOS 看到的是带 Vulkan 1.4 的“Virtio-GPU Venus (Apple M4 Max)”.</span></li>
+          <li><span lang="en">Patched MoltenVK adds what DXVK and vkd3d-proton need: geometry shaders, transform feedback, depth clip, null descriptors, million-entry descriptor heaps, texel buffers at any offset. Metal caches compiled shaders — a new effect stutters once, then never again.</span><span lang="ru">Пропатченный MoltenVK даёт то, что нужно DXVK и vkd3d-proton: геометрические шейдеры, transform feedback, depth clip, null-дескрипторы, кучи дескрипторов на миллион записей, texel-буферы с любым смещением. Metal кеширует шейдеры — новый эффект подтормаживает один раз, потом никогда.</span><span lang="zh">打过补丁的 MoltenVK 补齐了 DXVK 与 vkd3d-proton 所需：几何着色器、transform feedback、depth clip、null 描述符、百万级描述符堆、任意偏移 texel 缓冲。Metal 缓存编译好的着色器——新特效只卡一次，之后不再卡。</span></li>
         </ul>
         <p class="tags"><span>DXVK</span><span>vkd3d-proton</span><span>Venus</span><span>virglrenderer</span><span>KosmicKrisp</span><span>MoltenVK</span></p>
       </article>
 
       <article class="info" data-i="4" style="--accent:#fb7185">
-        <p class="info-kicker">05 · <span lang="en">CPU translation</span><span lang="ru">Трансляция процессора</span></p>
-        <h2><span lang="en">x86 games on ARM</span><span lang="ru">x86-игры на ARM</span></h2>
-        <p class="info-lede"><span lang="en">Proton 11 for ARM64 runs the Windows game; FEX translates its x86 code to ARM64 on the fly.</span><span lang="ru">Proton 11 для ARM64 запускает Windows-игру, а FEX на лету транслирует её x86-код в ARM64.</span></p>
+        <p class="info-kicker">05 · <span lang="en">CPU translation</span><span lang="ru">Трансляция процессора</span><span lang="zh">CPU 转译</span></p>
+        <h2><span lang="en">x86 games on ARM</span><span lang="ru">x86-игры на ARM</span><span lang="zh">ARM 上的 x86 游戏</span></h2>
+        <p class="info-lede"><span lang="en">Proton 11 for ARM64 runs the Windows game; FEX translates its x86 code to ARM64 on the fly.</span><span lang="ru">Proton 11 для ARM64 запускает Windows-игру, а FEX на лету транслирует её x86-код в ARM64.</span><span lang="zh">ARM64 版 Proton 11 运行 Windows 游戏；FEX 将其 x86 代码即时转译为 ARM64。</span></p>
         <ul>
-          <li><span lang="en">Steam itself installs Proton 11 (ARM64) and FEX. The Steam client and the UI are native ARM64; only the game is emulated.</span><span lang="ru">Proton 11 (ARM64) и FEX ставит сам Steam. Клиент Steam и интерфейс — нативные ARM64; эмулируется только игра.</span></li>
-          <li><span lang="en">x86 code expects strong memory ordering (TSO). Apple silicon can do TSO in hardware: guest kernel patches expose it through PR_SET_MEM_MODEL, so FEX switches it on instead of emulating barriers.</span><span lang="ru">x86-код рассчитывает на строгий порядок памяти (TSO). Apple silicon умеет TSO аппаратно: патчи гостевого ядра открывают его через PR_SET_MEM_MODEL, и FEX включает его вместо эмуляции барьеров.</span></li>
-          <li><span lang="en">i386 and x86-64 builds of the Venus driver let emulated code reach the GPU too.</span><span lang="ru">Сборки Venus для i386 и x86-64 дают доступ к GPU и эмулируемому коду.</span></li>
+          <li><span lang="en">Steam itself installs Proton 11 (ARM64) and FEX. The Steam client and the UI are native ARM64; only the game is emulated.</span><span lang="ru">Proton 11 (ARM64) и FEX ставит сам Steam. Клиент Steam и интерфейс — нативные ARM64; эмулируется только игра.</span><span lang="zh">Proton 11（ARM64）与 FEX 由 Steam 自行安装。Steam 客户端与界面是原生 ARM64，只有游戏经过模拟。</span></li>
+          <li><span lang="en">x86 code expects strong memory ordering (TSO). Apple silicon can do TSO in hardware: guest kernel patches expose it through PR_SET_MEM_MODEL, so FEX switches it on instead of emulating barriers.</span><span lang="ru">x86-код рассчитывает на строгий порядок памяти (TSO). Apple silicon умеет TSO аппаратно: патчи гостевого ядра открывают его через PR_SET_MEM_MODEL, и FEX включает его вместо эмуляции барьеров.</span><span lang="zh">x86 代码依赖强内存序（TSO）。Apple 芯片可硬件实现 TSO：客户机内核补丁经 PR_SET_MEM_MODEL 暴露它，FEX 直接开启而非模拟屏障。</span></li>
+          <li><span lang="en">i386 and x86-64 builds of the Venus driver let emulated code reach the GPU too.</span><span lang="ru">Сборки Venus для i386 и x86-64 дают доступ к GPU и эмулируемому коду.</span><span lang="zh">Venus 驱动的 i386 与 x86-64 构建让被模拟的代码也能用上 GPU。</span></li>
         </ul>
         <p class="tags"><span>FEX</span><span>Proton 11 ARM64</span><span>Apple TSO</span></p>
       </article>
 
       <article class="info" data-i="5" style="--accent:#22d3ee">
-        <p class="info-kicker">06 · <span lang="en">Core</span><span lang="ru">Ядро</span></p>
-        <h2><span lang="en">Real SteamOS, tiny VM</span><span lang="ru">Настоящий SteamOS, маленькая ВМ</span></h2>
-        <p class="info-lede"><span lang="en">Valve's own ARM64 SteamOS image, booted by libkrun on Hypervisor.framework — no QEMU, no CPU emulation for the OS.</span><span lang="ru">Собственный ARM64-образ SteamOS от Valve, загруженный libkrun на Hypervisor.framework — без QEMU и без эмуляции процессора для системы.</span></p>
+        <p class="info-kicker">06 · <span lang="en">Core</span><span lang="ru">Ядро</span><span lang="zh">核心</span></p>
+        <h2><span lang="en">Real SteamOS, tiny VM</span><span lang="ru">Настоящий SteamOS, маленькая ВМ</span><span lang="zh">真正的 SteamOS，微型虚拟机</span></h2>
+        <p class="info-lede"><span lang="en">Valve's own ARM64 SteamOS image, booted by libkrun on Hypervisor.framework — no QEMU, no CPU emulation for the OS.</span><span lang="ru">Собственный ARM64-образ SteamOS от Valve, загруженный libkrun на Hypervisor.framework — без QEMU и без эмуляции процессора для системы.</span><span lang="zh">Valve 自家的 ARM64 SteamOS 映像，由 libkrun 在 Hypervisor.framework 上启动——无 QEMU，系统本身无需 CPU 模拟。</span></p>
         <ul>
-          <li><span lang="en">The image comes from Valve as a signed RAUC bundle; signature and sha256 are verified. The SteamOS root filesystem is never modified — VM bits live in the initramfs and a separate read-only layer.</span><span lang="ru">Образ скачивается с серверов Valve подписанным RAUC-бандлом; подпись и sha256 проверяются. Корневая ФС SteamOS не изменяется — всё для ВМ живёт в initramfs и отдельном read-only слое.</span></li>
-          <li><span lang="en">So official updates just work: RAUC installs into the other A/B slot and rolls back the standard way, with the initramfs acting as the bootloader.</span><span lang="ru">Поэтому официальные обновления просто работают: RAUC ставит их в другой слот A/B и откатывает штатно, а initramfs играет роль загрузчика.</span></li>
-          <li><span lang="en">vCPU and GPU threads run at user-interactive QoS; networking goes through gvproxy. SSH into SteamOS is one switch in Settings, off by default, with a generated password per disk.</span><span lang="ru">Потоки vCPU и GPU работают с QoS user-interactive; сеть — через gvproxy. SSH в SteamOS — один переключатель в настройках, по умолчанию выключен, пароль генерируется для каждого диска.</span></li>
-          <li><span lang="en">Closing the window can suspend instead of shutting down: the vCPUs and the guest's audio stop in place and the game waits in memory. Resume from the Dock or the menu bar and you are exactly where you left off. SteamOS's own Sleep pauses the VM the same way.</span><span lang="ru">Закрытие окна может не выключать, а приостанавливать: vCPU и звук гостя останавливаются на месте, игра ждёт в памяти. Продолжить — из Dock или строки меню, ровно с того же места. Сон SteamOS ставит ВМ на паузу так же.</span></li>
+          <li><span lang="en">The image comes from Valve as a signed RAUC bundle; signature and sha256 are verified. The SteamOS root filesystem is never modified — VM bits live in the initramfs and a separate read-only layer.</span><span lang="ru">Образ скачивается с серверов Valve подписанным RAUC-бандлом; подпись и sha256 проверяются. Корневая ФС SteamOS не изменяется — всё для ВМ живёт в initramfs и отдельном read-only слое.</span><span lang="zh">映像来自 Valve 的签名 RAUC 包；校验签名与 sha256。SteamOS 根文件系统从不动——虚拟机所需全部在 initramfs 与独立只读层中。</span></li>
+          <li><span lang="en">So official updates just work: RAUC installs into the other A/B slot and rolls back the standard way, with the initramfs acting as the bootloader.</span><span lang="ru">Поэтому официальные обновления просто работают: RAUC ставит их в другой слот A/B и откатывает штатно, а initramfs играет роль загрузчика.</span><span lang="zh">因此官方更新开箱即用：RAUC 安装到另一个 A/B 槽并按标准方式回滚，initramfs 充当引导器。</span></li>
+          <li><span lang="en">vCPU and GPU threads run at user-interactive QoS; networking goes through gvproxy. SSH into SteamOS is one switch in Settings, off by default, with a generated password per disk.</span><span lang="ru">Потоки vCPU и GPU работают с QoS user-interactive; сеть — через gvproxy. SSH в SteamOS — один переключатель в настройках, по умолчанию выключен, пароль генерируется для каждого диска.</span><span lang="zh">vCPU 与 GPU 线程以 user-interactive QoS 运行；网络经 gvproxy。SSH 进 SteamOS 是设置中的一个开关，默认关闭，每个磁盘生成独立密码。</span></li>
+          <li><span lang="en">Closing the window can suspend instead of shutting down: the vCPUs and the guest's audio stop in place and the game waits in memory. Resume from the Dock or the menu bar and you are exactly where you left off. SteamOS's own Sleep pauses the VM the same way.</span><span lang="ru">Закрытие окна может не выключать, а приостанавливать: vCPU и звук гостя останавливаются на месте, игра ждёт в памяти. Продолжить — из Dock или строки меню, ровно с того же места. Сон SteamOS ставит ВМ на паузу так же.</span><span lang="zh">关闭窗口可选择暂停而非关机：vCPU 与客户机音频原地停止，游戏在内存中等待。从程序坞或菜单栏继续，精确回到离开时的状态。SteamOS 自身的睡眠也以同样方式暂停虚拟机。</span></li>
         </ul>
         <p class="tags"><span>libkrun</span><span>Hypervisor.framework</span><span>RAUC A/B</span><span>gvproxy</span></p>
       </article>
     </aside>
 
     <nav class="rail" aria-label="Layers">
-      <button type="button" data-go="0" style="--accent:#66c0f4"><span lang="en">Display</span><span lang="ru">Экран</span></button>
-      <button type="button" data-go="1" style="--accent:#4ade80"><span lang="en">Controls</span><span lang="ru">Управление</span></button>
-      <button type="button" data-go="2" style="--accent:#c084fc"><span lang="en">Sound</span><span lang="ru">Звук</span></button>
-      <button type="button" data-go="3" style="--accent:#fb923c"><span lang="en">Graphics</span><span lang="ru">Графика</span></button>
-      <button type="button" data-go="4" style="--accent:#fb7185"><span lang="en">x86 → ARM</span><span lang="ru">x86 → ARM</span></button>
-      <button type="button" data-go="5" style="--accent:#22d3ee"><span lang="en">Core</span><span lang="ru">Ядро</span></button>
+      <button type="button" data-go="0" style="--accent:#66c0f4"><span lang="en">Display</span><span lang="ru">Экран</span><span lang="zh">显示</span></button>
+      <button type="button" data-go="1" style="--accent:#4ade80"><span lang="en">Controls</span><span lang="ru">Управление</span><span lang="zh">操控</span></button>
+      <button type="button" data-go="2" style="--accent:#c084fc"><span lang="en">Sound</span><span lang="ru">Звук</span><span lang="zh">声音</span></button>
+      <button type="button" data-go="3" style="--accent:#fb923c"><span lang="en">Graphics</span><span lang="ru">Графика</span><span lang="zh">图形</span></button>
+      <button type="button" data-go="4" style="--accent:#fb7185"><span lang="en">x86 → ARM</span><span lang="ru">x86 → ARM</span><span lang="zh">x86 → ARM</span></button>
+      <button type="button" data-go="5" style="--accent:#22d3ee"><span lang="en">Core</span><span lang="ru">Ядро</span><span lang="zh">核心</span></button>
     </nav>
 
-    <div class="scroll-hint" aria-hidden="true"><span lang="en">Scroll to take it apart</span><span lang="ru">Листайте, чтобы разобрать</span><i></i></div>
+    <div class="scroll-hint" aria-hidden="true"><span lang="en">Scroll to take it apart</span><span lang="ru">Листайте, чтобы разобрать</span><span lang="zh">滚动以拆解</span><i></i></div>
   </div>
 </section>
 
 <section class="section proof" id="proof">
   <div class="wrap">
-    <p class="kicker"><span lang="en">Recorded, not rendered</span><span lang="ru">Это запись, а не рендер</span></p>
-    <h2><span lang="en">Real games, real Steam</span><span lang="ru">Настоящие игры, настоящий Steam</span></h2>
+    <p class="kicker"><span lang="en">Recorded, not rendered</span><span lang="ru">Это запись, а не рендер</span><span lang="zh">实拍，非渲染</span></p>
+    <h2><span lang="en">Real games, real Steam</span><span lang="ru">Настоящие игры, настоящий Steam</span><span lang="zh">真正的游戏，真正的 Steam</span></h2>
     <p class="section-lede">
       <span lang="en">The screen above is a screen recording of the launcher window on an M4 Max: SteamOS boots, Steam opens and Galaxy Control launches, in real time. The only edits: the window frame is cropped, and the waits on a black screen and frame hitches are cut out.</span>
       <span lang="ru">Экран выше — запись окна лаунчера на M4 Max: загрузка SteamOS, открытие Steam и запуск Galaxy Control в реальном времени. Из правок только обрезана рамка окна и вырезаны ожидание на чёрном экране и подтормаживания кадров.</span>
+      <span lang="zh">上图是 M4 Max 上启动器窗口的录屏：SteamOS 启动、Steam 打开、Galaxy Control 启动，全程实时。仅做两处剪辑：裁掉窗口边框，剪掉黑屏等待与帧卡顿。</span>
     </p>
     <div class="shots">
-      <figure><img src="media/shot-boot.jpg" alt="FX Steam Launcher boot overlay: Starting Steam" loading="lazy" width="960" height="600"><figcaption><span lang="en">Boot: the launcher overlay follows SteamOS startup</span><span lang="ru">Загрузка: оверлей лаунчера следит за стартом SteamOS</span></figcaption></figure>
-      <figure><img src="media/shot-library.jpg" alt="Steam gamepad UI home screen in the VM" loading="lazy" width="960" height="540"><figcaption><span lang="en">Steam gamepad UI, native ARM64</span><span lang="ru">Интерфейс Steam, нативный ARM64</span></figcaption></figure>
-      <figure><img src="media/shot-game.jpg" alt="Steam game page of Diplomacy is Not an Option" loading="lazy" width="960" height="540"><figcaption><span lang="en">Game page, Steam Cloud in sync</span><span lang="ru">Страница игры, Steam Cloud синхронизирован</span></figcaption></figure>
-      <figure><img src="media/shot-play.jpg" alt="Diplomacy is Not an Option gameplay in the VM" loading="lazy" width="960" height="600"><figcaption><span lang="en">In game: Windows x86-64 via Proton 11 + FEX</span><span lang="ru">В игре: Windows x86-64 через Proton 11 + FEX</span></figcaption></figure>
-      <figure><img src="media/shot-stellar-blade.jpg" alt="Stellar Blade Demo gameplay in the VM: DirectX 12 through vkd3d-proton" loading="lazy" width="960" height="600"><figcaption><span lang="en">DirectX 12: Stellar Blade Demo via vkd3d-proton</span><span lang="ru">DirectX 12: Stellar Blade Demo через vkd3d-proton</span></figcaption></figure>
+      <figure><img src="media/shot-boot.jpg" alt="FX Steam Launcher boot overlay: Starting Steam" loading="lazy" width="960" height="600"><figcaption><span lang="en">Boot: the launcher overlay follows SteamOS startup</span><span lang="ru">Загрузка: оверлей лаунчера следит за стартом SteamOS</span><span lang="zh">启动：启动器叠加层跟随 SteamOS 启动</span></figcaption></figure>
+      <figure><img src="media/shot-library.jpg" alt="Steam gamepad UI home screen in the VM" loading="lazy" width="960" height="540"><figcaption><span lang="en">Steam gamepad UI, native ARM64</span><span lang="ru">Интерфейс Steam, нативный ARM64</span><span lang="zh">Steam 手柄界面，原生 ARM64</span></figcaption></figure>
+      <figure><img src="media/shot-game.jpg" alt="Steam game page of Diplomacy is Not an Option" loading="lazy" width="960" height="540"><figcaption><span lang="en">Game page, Steam Cloud in sync</span><span lang="ru">Страница игры, Steam Cloud синхронизирован</span><span lang="zh">游戏页面，Steam 云同步正常</span></figcaption></figure>
+      <figure><img src="media/shot-play.jpg" alt="Diplomacy is Not an Option gameplay in the VM" loading="lazy" width="960" height="600"><figcaption><span lang="en">In game: Windows x86-64 via Proton 11 + FEX</span><span lang="ru">В игре: Windows x86-64 через Proton 11 + FEX</span><span lang="zh">游戏中：经 Proton 11 + FEX 的 Windows x86-64</span></figcaption></figure>
+      <figure><img src="media/shot-stellar-blade.jpg" alt="Stellar Blade Demo gameplay in the VM: DirectX 12 through vkd3d-proton" loading="lazy" width="960" height="600"><figcaption><span lang="en">DirectX 12: Stellar Blade Demo via vkd3d-proton</span><span lang="ru">DirectX 12: Stellar Blade Demo через vkd3d-proton</span><span lang="zh">DirectX 12：经 vkd3d-proton 的 Stellar Blade 试玩版</span></figcaption></figure>
     </div>
     <div class="cards">
       <div class="card">
         <h3>Death's Door</h3>
-        <p><span lang="en">DirectX 11 · DXVK → Venus → MoltenVK. The first game that ran.</span><span lang="ru">DirectX 11 · DXVK → Venus → MoltenVK. Первая игра, которая запустилась.</span></p>
+        <p><span lang="en">DirectX 11 · DXVK → Venus → MoltenVK. The first game that ran.</span><span lang="ru">DirectX 11 · DXVK → Venus → MoltenVK. Первая игра, которая запустилась.</span><span lang="zh">DirectX 11 · DXVK → Venus → MoltenVK。第一个跑起来的游戏。</span></p>
       </div>
       <div class="card">
         <h3>Heroes of Might and Magic: Olden Era</h3>
-        <p><span lang="en">Unity · DirectX 11. Seven minutes of play without a single error.</span><span lang="ru">Unity · DirectX 11. Семь минут игры без единой ошибки.</span></p>
+        <p><span lang="en">Unity · DirectX 11. Seven minutes of play without a single error.</span><span lang="ru">Unity · DirectX 11. Семь минут игры без единой ошибки.</span><span lang="zh">Unity · DirectX 11。游玩七分钟零报错。</span></p>
       </div>
       <div class="card">
         <h3>Diplomacy is Not an Option</h3>
-        <p><span lang="en">Unity · Windows x86-64 via Proton 11 and FEX. In the screenshots above.</span><span lang="ru">Unity · Windows x86-64 через Proton 11 и FEX. На скриншотах выше.</span></p>
+        <p><span lang="en">Unity · Windows x86-64 via Proton 11 and FEX. In the screenshots above.</span><span lang="ru">Unity · Windows x86-64 через Proton 11 и FEX. На скриншотах выше.</span><span lang="zh">Unity · 经 Proton 11 与 FEX 的 Windows x86-64。见上方截图。</span></p>
       </div>
       <div class="card">
         <h3>Stellar Blade Demo</h3>
-        <p><span lang="en">Unreal Engine 4 · DirectX 12 · vkd3d-proton → Venus → MoltenVK or KosmicKrisp. 60 FPS at 1280×800 on an M4 Max with MoltenVK; on an M1 Max KosmicKrisp gives ~29 FPS where MoltenVK gives ~18. The first run compiles shaders for a few minutes.</span><span lang="ru">Unreal Engine 4 · DirectX 12 · vkd3d-proton → Venus → MoltenVK или KosmicKrisp. 60 FPS в 1280×800 на M4 Max с MoltenVK; на M1 Max KosmicKrisp даёт ~29 FPS там, где MoltenVK — ~18. При первом запуске несколько минут компилируются шейдеры.</span></p>
+        <p><span lang="en">Unreal Engine 4 · DirectX 12 · vkd3d-proton → Venus → MoltenVK or KosmicKrisp. 60 FPS at 1280×800 on an M4 Max with MoltenVK; on an M1 Max KosmicKrisp gives ~29 FPS where MoltenVK gives ~18. The first run compiles shaders for a few minutes.</span><span lang="ru">Unreal Engine 4 · DirectX 12 · vkd3d-proton → Venus → MoltenVK или KosmicKrisp. 60 FPS в 1280×800 на M4 Max с MoltenVK; на M1 Max KosmicKrisp даёт ~29 FPS там, где MoltenVK — ~18. При первом запуске несколько минут компилируются шейдеры.</span><span lang="zh">Unreal Engine 4 · DirectX 12 · vkd3d-proton → Venus → MoltenVK 或 KosmicKrisp。M4 Max + MoltenVK 在 1280×800 下 60 FPS；M1 Max 上 KosmicKrisp 约 29 FPS，MoltenVK 约 18。首次运行需几分钟编译着色器。</span></p>
       </div>
     </div>
 
     <div class="limits">
-      <h3><span lang="en">Honest limits</span><span lang="ru">Честные ограничения</span></h3>
+      <h3><span lang="en">Honest limits</span><span lang="ru">Честные ограничения</span><span lang="zh">坦诚的局限</span></h3>
       <ul>
-        <li><span lang="en"><b>DirectX 12</b> runs at feature level 12_0 on KosmicKrisp (macOS 26+) and 11_0 on MoltenVK, shader model 6.0 on both: games that require 12_1 or shader model 6.6 (Unreal Engine 5) don't start.</span><span lang="ru"><b>DirectX 12</b> работает на уровне 12_0 с KosmicKrisp (macOS 26+) и 11_0 с MoltenVK, shader model 6.0 на обоих: игры, которым нужен 12_1 или shader model 6.6 (Unreal Engine 5), не запустятся.</span></li>
-        <li><span lang="en"><b>Anti-cheat</b> that blocks virtual machines won't let you in.</span><span lang="ru"><b>Античиты</b>, блокирующие виртуальные машины, не пропустят.</span></li>
-        <li><span lang="en"><b>First-time effects</b> stutter while Metal compiles the pipeline (~50–100 ms); after that it's cached, even across VM restarts.</span><span lang="ru"><b>Новые эффекты</b> подтормаживают, пока Metal компилирует конвейер (~50–100 мс); дальше всё из кеша, даже после перезапуска ВМ.</span></li>
+        <li><span lang="en"><b>DirectX 12</b> runs at feature level 12_0 on KosmicKrisp (macOS 26+) and 11_0 on MoltenVK, shader model 6.0 on both: games that require 12_1 or shader model 6.6 (Unreal Engine 5) don't start.</span><span lang="ru"><b>DirectX 12</b> работает на уровне 12_0 с KosmicKrisp (macOS 26+) и 11_0 с MoltenVK, shader model 6.0 на обоих: игры, которым нужен 12_1 или shader model 6.6 (Unreal Engine 5), не запустятся.</span><span lang="zh"><b>DirectX 12</b> 在 KosmicKrisp（macOS 26+）上为功能级别 12_0，MoltenVK 上为 11_0，两者 shader model 均为 6.0：需要 12_1 或 shader model 6.6（Unreal Engine 5）的游戏无法启动。</span></li>
+        <li><span lang="en"><b>Anti-cheat</b> that blocks virtual machines won't let you in.</span><span lang="ru"><b>Античиты</b>, блокирующие виртуальные машины, не пропустят.</span><span lang="zh">屏蔽虚拟机的<b>反作弊</b>不会放行。</span></li>
+        <li><span lang="en"><b>First-time effects</b> stutter while Metal compiles the pipeline (~50–100 ms); after that it's cached, even across VM restarts.</span><span lang="ru"><b>Новые эффекты</b> подтормаживают, пока Metal компилирует конвейер (~50–100 мс); дальше всё из кеша, даже после перезапуска ВМ.</span><span lang="zh"><b>首次出现的特效</b>会在 Metal 编译管线时卡顿（约 50–100 毫秒），之后走缓存，重启虚拟机也一样。</span></li>
       </ul>
     </div>
   </div>
@@ -346,49 +351,50 @@
 
 <section class="section graphics" id="graphics">
   <div class="wrap">
-    <p class="kicker"><span lang="en">DirectX on Apple silicon</span><span lang="ru">DirectX на Apple silicon</span></p>
-    <h2><span lang="en">One DirectX path, two Vulkan drivers</span><span lang="ru">Один путь DirectX, два Vulkan-драйвера</span></h2>
+    <p class="kicker"><span lang="en">DirectX on Apple silicon</span><span lang="ru">DirectX на Apple silicon</span><span lang="zh">Apple 芯片上的 DirectX</span></p>
+    <h2><span lang="en">One DirectX path, two Vulkan drivers</span><span lang="ru">Один путь DirectX, два Vulkan-драйвера</span><span lang="zh">一条 DirectX 路径，两种 Vulkan 驱动</span></h2>
     <p class="section-lede">
       <span lang="en">Proton translates DirectX to Vulkan inside SteamOS; Venus carries the Vulkan calls out of the VM; on the Mac a Vulkan driver turns them into Metal. That last step is yours to pick in Settings → Advanced → Vulkan driver (or <code>--vulkan-driver</code>): KosmicKrisp by default where the Mac and the build have it, MoltenVK everywhere else.</span>
       <span lang="ru">Proton переводит DirectX в Vulkan внутри SteamOS; Venus выносит вызовы Vulkan из ВМ; на Mac Vulkan-драйвер превращает их в Metal. Последний шаг выбирается в Settings → Advanced → Vulkan driver (или <code>--vulkan-driver</code>): по умолчанию KosmicKrisp, если он есть у Mac и сборки, иначе MoltenVK.</span>
+      <span lang="zh">Proton 在 SteamOS 内把 DirectX 转成 Vulkan；Venus 把 Vulkan 调用送出虚拟机；在 Mac 上由 Vulkan 驱动转成 Metal。最后一步由你在“设置 → 高级 → Vulkan 驱动”（或 <code>--vulkan-driver</code>）中选择：Mac 与构建支持时默认 KosmicKrisp，其他情况 MoltenVK。</span>
     </p>
     <figure class="compare">
       <video controls autoplay muted loop playsinline preload="metadata" poster="media/stellar-blade-moltenvk-vs-kosmickrisp.jpg" aria-label="Stellar Blade Demo side by side: MoltenVK on the left, KosmicKrisp on the right">
         <source src="media/stellar-blade-moltenvk-vs-kosmickrisp.mp4" type="video/mp4">
       </video>
-      <figcaption><span lang="en">Stellar Blade Demo (DirectX 12) on an M1 Max, two recordings of the same run side by side, cropped, not scaled: MoltenVK on the left (~18 FPS), KosmicKrisp on the right (~29 FPS). Apple's Metal HUD shows the frame rate on each side.</span><span lang="ru">Stellar Blade Demo (DirectX 12) на M1 Max, две записи одного забега рядом, обрезаны без масштабирования: слева MoltenVK (~18 FPS), справа KosmicKrisp (~29 FPS). Metal HUD Apple показывает частоту кадров на каждой стороне.</span></figcaption>
+      <figcaption><span lang="en">Stellar Blade Demo (DirectX 12) on an M1 Max, two recordings of the same run side by side, cropped, not scaled: MoltenVK on the left (~18 FPS), KosmicKrisp on the right (~29 FPS). Apple's Metal HUD shows the frame rate on each side.</span><span lang="ru">Stellar Blade Demo (DirectX 12) на M1 Max, две записи одного забега рядом, обрезаны без масштабирования: слева MoltenVK (~18 FPS), справа KosmicKrisp (~29 FPS). Metal HUD Apple показывает частоту кадров на каждой стороне.</span><span lang="zh">M1 Max 上的 Stellar Blade 试玩版（DirectX 12），同一次运行的两段录像并排，仅裁剪不缩放：左 MoltenVK（约 18 FPS），右 KosmicKrisp（约 29 FPS）。Apple Metal HUD 显示各自帧率。</span></figcaption>
     </figure>
     <div class="cards">
       <div class="card">
         <h3>DirectX 9 / 10 / 11</h3>
-        <p><span lang="en">DXVK in Proton. Death's Door, Heroes of Might and Magic: Olden Era and Diplomacy is Not an Option run; Death's Door also on KosmicKrisp.</span><span lang="ru">DXVK в Proton. Работают Death's Door, Heroes of Might and Magic: Olden Era и Diplomacy is Not an Option; Death's Door — и на KosmicKrisp.</span></p>
+        <p><span lang="en">DXVK in Proton. Death's Door, Heroes of Might and Magic: Olden Era and Diplomacy is Not an Option run; Death's Door also on KosmicKrisp.</span><span lang="ru">DXVK в Proton. Работают Death's Door, Heroes of Might and Magic: Olden Era и Diplomacy is Not an Option; Death's Door — и на KosmicKrisp.</span><span lang="zh">Proton 中的 DXVK。Death's Door、《英雄无敌：上古纪元》与《Diplomacy is Not an Option》可运行；Death's Door 在 KosmicKrisp 上也可运行。</span></p>
       </div>
       <div class="card">
         <h3>DirectX 12</h3>
-        <p><span lang="en">vkd3d-proton. Feature level 12_0 on KosmicKrisp: real tiled resources (tier 2) on Metal 4 sparse resources. 11_0 on MoltenVK. Shader model 6.0 on both: neither exposes the denormal float controls that shader model 6.2 needs. Stellar Blade Demo and Resident Evil 2 run.</span><span lang="ru">vkd3d-proton. Уровень 12_0 на KosmicKrisp: настоящие tiled-ресурсы (tier 2) на sparse-ресурсах Metal 4. 11_0 на MoltenVK. Shader model 6.0 на обоих: ни один не даёт управления денормализованными числами, нужного shader model 6.2. Работают Stellar Blade Demo и Resident Evil 2.</span></p>
+        <p><span lang="en">vkd3d-proton. Feature level 12_0 on KosmicKrisp: real tiled resources (tier 2) on Metal 4 sparse resources. 11_0 on MoltenVK. Shader model 6.0 on both: neither exposes the denormal float controls that shader model 6.2 needs. Stellar Blade Demo and Resident Evil 2 run.</span><span lang="ru">vkd3d-proton. Уровень 12_0 на KosmicKrisp: настоящие tiled-ресурсы (tier 2) на sparse-ресурсах Metal 4. 11_0 на MoltenVK. Shader model 6.0 на обоих: ни один не даёт управления денормализованными числами, нужного shader model 6.2. Работают Stellar Blade Demo и Resident Evil 2.</span><span lang="zh">vkd3d-proton。KosmicKrisp 上功能级别 12_0：Metal 4 稀疏资源上的真正 tiled resources（tier 2）。MoltenVK 上 11_0。两者 shader model 均为 6.0：都不提供 shader model 6.2 所需的非规格化浮点控制。Stellar Blade 试玩版与《生化危机 2》可运行。</span></p>
       </div>
       <div class="card">
         <h3>KosmicKrisp · Metal 4 · macOS 26+</h3>
-        <p><span lang="en">Mesa's Vulkan driver on Metal 4, Mesa main plus open merge requests and steamac's patches. The default on macOS 26+ (in the release DMG since 1.7); ~29 FPS against ~18 in Stellar Blade Demo on an M1 Max.</span><span lang="ru">Vulkan-драйвер Mesa на Metal 4: Mesa main, открытые merge request'ы и патчи steamac. По умолчанию на macOS 26+ (в DMG релиза с 1.7); ~29 FPS против ~18 в Stellar Blade Demo на M1 Max.</span></p>
+        <p><span lang="en">Mesa's Vulkan driver on Metal 4, Mesa main plus open merge requests and steamac's patches. The default on macOS 26+ (in the release DMG since 1.7); ~29 FPS against ~18 in Stellar Blade Demo on an M1 Max.</span><span lang="ru">Vulkan-драйвер Mesa на Metal 4: Mesa main, открытые merge request'ы и патчи steamac. По умолчанию на macOS 26+ (в DMG релиза с 1.7); ~29 FPS против ~18 в Stellar Blade Demo на M1 Max.</span><span lang="zh">Mesa 在 Metal 4 上的 Vulkan 驱动：Mesa 主线加未合并 MR 与 steamac 补丁。macOS 26+ 默认（1.7 起随正式 DMG 发布）；M1 Max 上 Stellar Blade 试玩版约 29 FPS，而 MoltenVK 约 18。</span></p>
       </div>
       <div class="card">
         <h3>MoltenVK · Metal 3 · macOS 15+</h3>
-        <p><span lang="en">The UTM fork with steamac's patches: geometry shaders, transform feedback, depth clip, million-entry descriptor heaps. Works on every supported Mac; 60 FPS in Stellar Blade Demo at 1280×800 on an M4 Max.</span><span lang="ru">Форк UTM с патчами steamac: геометрические шейдеры, transform feedback, depth clip, кучи дескрипторов на миллион записей. Работает на любом поддерживаемом Mac; 60 FPS в Stellar Blade Demo в 1280×800 на M4 Max.</span></p>
+        <p><span lang="en">The UTM fork with steamac's patches: geometry shaders, transform feedback, depth clip, million-entry descriptor heaps. Works on every supported Mac; 60 FPS in Stellar Blade Demo at 1280×800 on an M4 Max.</span><span lang="ru">Форк UTM с патчами steamac: геометрические шейдеры, transform feedback, depth clip, кучи дескрипторов на миллион записей. Работает на любом поддерживаемом Mac; 60 FPS в Stellar Blade Demo в 1280×800 на M4 Max.</span><span lang="zh">带 steamac 补丁的 UTM 分支：几何着色器、transform feedback、depth clip、百万级描述符堆。所有受支持的 Mac 均可运行；M4 Max 在 1280×800 下 Stellar Blade 试玩版 60 FPS。</span></p>
       </div>
     </div>
-    <p class="graphics-note"><span lang="en">Switching drivers makes Steam and games rebuild their shader caches: the first run of a big DirectX 12 game compiles for a while (Stellar Blade Demo: ~28 minutes on an M1 Max with KosmicKrisp); later runs use the cache.</span><span lang="ru">После смены драйвера Steam и игры заново собирают кеши шейдеров: первый запуск большой DirectX 12-игры долго компилирует (Stellar Blade Demo: ~28 минут на M1 Max с KosmicKrisp); следующие запуски берут шейдеры из кеша.</span></p>
+    <p class="graphics-note"><span lang="en">Switching drivers makes Steam and games rebuild their shader caches: the first run of a big DirectX 12 game compiles for a while (Stellar Blade Demo: ~28 minutes on an M1 Max with KosmicKrisp); later runs use the cache.</span><span lang="ru">После смены драйвера Steam и игры заново собирают кеши шейдеров: первый запуск большой DirectX 12-игры долго компилирует (Stellar Blade Demo: ~28 минут на M1 Max с KosmicKrisp); следующие запуски берут шейдеры из кеша.</span><span lang="zh">切换驱动后 Steam 与游戏会重建着色器缓存：大型 DirectX 12 游戏首次运行需编译一段时间（Stellar Blade 试玩版在 M1 Max + KosmicKrisp 上约 28 分钟），之后走缓存。</span></p>
   </div>
 </section>
 
 <section class="section voices" id="voices">
   <div class="wrap">
-    <p class="kicker"><span lang="en">From players</span><span lang="ru">Отзывы</span></p>
+    <p class="kicker"><span lang="en">From players</span><span lang="ru">Отзывы</span><span lang="zh">玩家评价</span></p>
     <div class="quotes">
       <figure class="quote">
         <blockquote>
-          <p><span lang="en">With autopause feature I can drive my American Truck Simulator during Zoom meetings and not be afraid to look up something in Excel spreadsheet when needed!</span><span lang="ru">С автопаузой я могу водить грузовик в American Truck Simulator прямо во время созвонов в Zoom и не бояться заглянуть в таблицу Excel, когда нужно!</span></p>
+          <p><span lang="en">With autopause feature I can drive my American Truck Simulator during Zoom meetings and not be afraid to look up something in Excel spreadsheet when needed!</span><span lang="ru">С автопаузой я могу водить грузовик в American Truck Simulator прямо во время созвонов в Zoom и не бояться заглянуть в таблицу Excel, когда нужно!</span><span lang="zh">有了自动暂停，我开 Zoom 会时也能跑《美国卡车模拟》，需要查 Excel 表格时完全不慌！</span></p>
         </blockquote>
-        <figcaption><span lang="en">FX Steam Launcher user</span><span lang="ru">Пользователь FX Steam Launcher</span> · <a href="#settings">Settings → General → Pause the game</a></figcaption>
+        <figcaption><span lang="en">FX Steam Launcher user</span><span lang="ru">Пользователь FX Steam Launcher</span><span lang="zh">FX Steam Launcher 用户</span> · <a href="#settings">Settings → General → Pause the game</a></figcaption>
       </figure>
     </div>
   </div>
@@ -396,11 +402,12 @@
 
 <section class="section settings" id="settings">
   <div class="wrap">
-    <p class="kicker"><span lang="en">Settings · ⌘,</span><span lang="ru">Настройки · ⌘,</span></p>
-    <h2><span lang="en">Every knob, one window</span><span lang="ru">Все ручки — в одном окне</span></h2>
+    <p class="kicker"><span lang="en">Settings · ⌘,</span><span lang="ru">Настройки · ⌘,</span><span lang="zh">设置 · ⌘,</span></p>
+    <h2><span lang="en">Every knob, one window</span><span lang="ru">Все ручки — в одном окне</span><span lang="zh">所有开关，一个窗口</span></h2>
     <p class="section-lede">
       <span lang="en">Six tabs. Anything marked “applies now” changes the running SteamOS on the spot; the rest takes effect on the next start.</span>
       <span lang="ru">Шесть вкладок. Всё, что помечено «applies now», меняется в работающем SteamOS сразу; остальное — при следующем запуске.</span>
+      <span lang="zh">六个选项卡。标为“立即生效”的会即时作用于运行中的 SteamOS，其余在下次启动时生效。</span>
     </p>
 
     <div class="settings-grid">
@@ -409,31 +416,37 @@
           <b>General</b>
           <span lang="en">Close the window to shut down or suspend SteamOS in memory (Ctrl+Cmd+S); the Mac's time zone; a shared clipboard with SteamOS (text and images, password-manager items stay on the Mac); in the background, fade the sound out (default) or pause the game; boot overlay and a “still working” card; crash reports and the update check with an opt-out; Report a Problem.</span>
           <span lang="ru">Закрытие окна выключает SteamOS или приостанавливает её в памяти (Ctrl+Cmd+S); часовой пояс Mac; общий с SteamOS буфер обмена (текст и картинки, элементы менеджеров паролей остаются на Mac); в фоне — плавно выключить звук (по умолчанию) или поставить игру на паузу; оверлей загрузки и карточка «still working»; отчёты о сбоях и проверка обновлений с возможностью отключить; Report a Problem.</span>
+          <span lang="zh">关闭窗口以关机或将 SteamOS 暂停在内存中（Ctrl+Cmd+S）；Mac 时区；与 SteamOS 共享剪贴板（文本与图片，密码管理器内容保留在 Mac）；后台淡出声音（默认）或暂停游戏；启动叠加层与“仍在工作”卡片；可退出的崩溃报告与更新检查；报告问题。</span>
         </button></li>
         <li><button type="button" role="tab" data-tab="display" aria-selected="false">
           <b>Display</b>
           <span lang="en">Resolution presets from Steam Deck 1280×800 to 4K and 21:9, Fit to screen or Custom; physical size (screen, DPI or mm) sets SteamOS's UI scale; refresh rate; follow the window size; optional Retina resolution; MetalFX super resolution; Metal Performance HUD.</span>
           <span lang="ru">Пресеты разрешения от Steam Deck 1280×800 до 4K и 21:9, Fit to screen или Custom; физический размер (по экрану, в DPI или мм) задаёт масштаб интерфейса SteamOS; частота обновления; следовать размеру окна; Retina-разрешение по желанию; MetalFX super resolution; Metal Performance HUD.</span>
+          <span lang="zh">从 Steam Deck 1280×800 到 4K 与 21:9 的分辨率预设、适应屏幕或自定；物理尺寸（屏幕、DPI 或毫米）决定 SteamOS UI 缩放；刷新率；跟随窗口大小；可选 Retina 分辨率；MetalFX 超分辨率；Metal 性能 HUD。</span>
         </button></li>
         <li><button type="button" role="tab" data-tab="mouse" aria-selected="false">
           <b>Mouse</b>
           <span lang="en">Capture the mouse in games for mouse-look, release with Ctrl+Option. Games appear here as you play them; set capture per game so strategy games keep a free cursor.</span>
           <span lang="ru">Захват мыши в играх для обзора, отпустить — Ctrl+Option. Игры появляются в списке сами, когда вы в них играете; захват настраивается для каждой, чтобы в стратегиях курсор оставался свободным.</span>
+          <span lang="zh">游戏中捕获鼠标用于视角，Ctrl+Option 释放。玩过的游戏自动出现在此；按游戏分别设置捕获，让策略游戏保持自由光标。</span>
         </button></li>
         <li><button type="button" role="tab" data-tab="controller" aria-selected="false">
           <b>Controller</b>
           <span lang="en">The controller appears in SteamOS as the same kind — DualSense, DualShock 4 or Xbox — with rumble, or as one you choose; which controller drives it, A/B and X/Y swap, stick deadzone — plus a live input test.</span>
           <span lang="ru">Контроллер появляется в SteamOS того же типа — DualSense, DualShock 4 или Xbox — с вибрацией, или выбранного вами; какой контроллер им управляет, перестановка A/B и X/Y, мёртвая зона стиков — и живой тест ввода.</span>
+          <span lang="zh">手柄以同类型出现在 SteamOS 中——DualSense、DualShock 4 或 Xbox——带振动，也可自选类型；选择驱动手柄、A/B 与 X/Y 互换、摇杆死区——附实时输入测试。</span>
         </button></li>
         <li><button type="button" role="tab" data-tab="sound" aria-selected="false">
           <b>Sound</b>
           <span lang="en">virtio-snd → CoreAudio: output device or the macOS default, volume on top of the guest's own, mute, and a Low / Normal / Safe buffer (10 / 20 / 60 ms).</span>
           <span lang="ru">virtio-snd → CoreAudio: устройство вывода или системное по умолчанию, громкость поверх гостевой, выключение звука и буфер Low / Normal / Safe (10 / 20 / 60 мс).</span>
+          <span lang="zh">virtio-snd → CoreAudio：输出设备或 macOS 默认，叠加于客户机音量的音量、静音，以及低 / 普通 / 稳定三档缓冲（10 / 20 / 60 毫秒）。</span>
         </button></li>
         <li><button type="button" role="tab" data-tab="advanced" aria-selected="false">
           <b>Advanced</b>
           <span lang="en">vCPUs and memory sized for your Mac automatically, or custom with a warning when you over-commit; SSH into SteamOS with one switch (off by default, a generated password per disk); network; the Steam client (Steam Deck by default, Steam Deck beta or Steam Frame); the Vulkan driver (KosmicKrisp — Mesa on Metal 4, macOS 26+ — by default in builds that include it, otherwise MoltenVK — Metal 3, macOS 15+); the SteamOS disk — create a new one from Valve's servers or pick an existing image, never copied.</span>
           <span lang="ru">vCPU и память подбираются под ваш Mac автоматически или задаются вручную — с предупреждением, если это слишком много; SSH в SteamOS одним переключателем (по умолчанию выключен, пароль генерируется для каждого диска); сеть; клиент Steam (по умолчанию Steam Deck, Steam Deck beta или Steam Frame); драйвер Vulkan (KosmicKrisp — Mesa на Metal 4, macOS 26+ — по умолчанию в сборках, где он есть, иначе MoltenVK — Metal 3, macOS 15+); диск SteamOS — создать новый с серверов Valve или выбрать готовый образ, который никогда не копируется.</span>
+          <span lang="zh">vCPU 与内存按你的 Mac 自动配置，超配会警告；一个开关开启 SteamOS 的 SSH（默认关闭，每个磁盘生成独立密码）；网络；Steam 客户端（默认 Steam Deck，另有测试版或 Steam Frame）；Vulkan 驱动（包含 KosmicKrisp 的构建在 macOS 26+ 默认使用 Mesa on Metal 4 的 KosmicKrisp，否则为 Metal 3 的 MoltenVK，macOS 15+）；SteamOS 磁盘——从 Valve 服务器新建或选择已有映像，从不复制。</span>
         </button></li>
       </ol>
 
@@ -455,8 +468,8 @@
 
 <section class="section get" id="get">
   <div class="wrap">
-    <p class="kicker"><span lang="en">Get it</span><span lang="ru">Начать</span></p>
-    <h2><span lang="en">Put SteamOS on your Mac</span><span lang="ru">Поставьте SteamOS на свой Mac</span></h2>
+    <p class="kicker"><span lang="en">Get it</span><span lang="ru">Начать</span><span lang="zh">获取</span></p>
+    <h2><span lang="en">Put SteamOS on your Mac</span><span lang="ru">Поставьте SteamOS на свой Mac</span><span lang="zh">把 SteamOS 装进 Mac</span></h2>
 
     <div class="get-grid">
       <div class="get-card get-main">
@@ -464,54 +477,54 @@
           <img class="app-icon" src="media/icon.png" alt="FX Steam Launcher icon" width="96" height="96">
           <div>
             <a class="btn btn-primary btn-big" data-dl href="https://github.com/fxgl/steamac/releases/latest">
-              <span lang="en">Download FX Steam Launcher</span><span lang="ru">Скачать FX Steam Launcher</span>
+              <span lang="en">Download FX Steam Launcher</span><span lang="ru">Скачать FX Steam Launcher</span><span lang="zh">下载 FX Steam Launcher</span>
               <small data-ver></small>
             </a>
-            <a class="all-releases" href="https://github.com/fxgl/steamac/releases"><span lang="en">All releases</span><span lang="ru">Все релизы</span> →</a>
+            <a class="all-releases" href="https://github.com/fxgl/steamac/releases"><span lang="en">All releases</span><span lang="ru">Все релизы</span><span lang="zh">所有版本</span> →</a>
           </div>
         </div>
         <ol class="steps">
-          <li><span lang="en">Download the DMG, open it and drag FX Steam Launcher to Applications. It is signed and notarized by Apple.</span><span lang="ru">Скачайте DMG, откройте и перетащите FX Steam Launcher в «Программы». Приложение подписано и нотаризовано Apple.</span></li>
-          <li><span lang="en">Launch it and choose <b>Create New Disk…</b>: pick the SteamOS branch, the size of the games partition and the Steam client, and accept Valve's SteamOS license and the Steam Subscriber Agreement. The launcher downloads Valve's signed image (~4.5 GB), checks the signature and checksum and writes the disk. No Docker needed.</span><span lang="ru">Запустите и выберите <b>Create New Disk…</b>: укажите ветку SteamOS, размер раздела под игры и клиент Steam, примите лицензию SteamOS и Steam Subscriber Agreement от Valve. Лаунчер скачает подписанный образ Valve (~4,5 ГБ), проверит подпись и контрольную сумму и запишет диск. Docker не нужен.</span></li>
-          <li><span lang="en">Sign in to Steam and install games — Steam brings Proton 11 (ARM64) and FEX itself.</span><span lang="ru">Войдите в Steam и ставьте игры — Proton 11 (ARM64) и FEX Steam поставит сам.</span></li>
+          <li><span lang="en">Download the DMG, open it and drag FX Steam Launcher to Applications. It is signed and notarized by Apple.</span><span lang="ru">Скачайте DMG, откройте и перетащите FX Steam Launcher в «Программы». Приложение подписано и нотаризовано Apple.</span><span lang="zh">下载 DMG，打开后把 FX Steam Launcher 拖到“应用程序”。应用经 Apple 签名与公证。</span></li>
+          <li><span lang="en">Launch it and choose <b>Create New Disk…</b>: pick the SteamOS branch, the size of the games partition and the Steam client, and accept Valve's SteamOS license and the Steam Subscriber Agreement. The launcher downloads Valve's signed image (~4.5 GB), checks the signature and checksum and writes the disk. No Docker needed.</span><span lang="ru">Запустите и выберите <b>Create New Disk…</b>: укажите ветку SteamOS, размер раздела под игры и клиент Steam, примите лицензию SteamOS и Steam Subscriber Agreement от Valve. Лаунчер скачает подписанный образ Valve (~4,5 ГБ), проверит подпись и контрольную сумму и запишет диск. Docker не нужен.</span><span lang="zh">启动并选择 <b>Create New Disk…</b>：选择 SteamOS 分支、游戏分区大小与 Steam 客户端，接受 Valve 的 SteamOS 许可和 Steam 订户协议。启动器下载 Valve 签名映像（约 4.5 GB），校验签名与校验和并写入磁盘。无需 Docker。</span></li>
+          <li><span lang="en">Sign in to Steam and install games — Steam brings Proton 11 (ARM64) and FEX itself.</span><span lang="ru">Войдите в Steam и ставьте игры — Proton 11 (ARM64) и FEX Steam поставит сам.</span><span lang="zh">登录 Steam 并安装游戏——Proton 11（ARM64）与 FEX 由 Steam 自行带来。</span></li>
         </ol>
         <figure class="create-disk">
           <img src="media/create-disk.png" alt="Create SteamOS Disk window" width="560" height="768" loading="lazy">
-          <figcaption><span lang="en">Create New Disk: everything comes from Valve's servers, the disk is sparse</span><span lang="ru">Create New Disk: всё скачивается с серверов Valve, диск разреженный</span></figcaption>
+          <figcaption><span lang="en">Create New Disk: everything comes from Valve's servers, the disk is sparse</span><span lang="ru">Create New Disk: всё скачивается с серверов Valve, диск разреженный</span><span lang="zh">Create New Disk：全部来自 Valve 服务器，磁盘为稀疏文件</span></figcaption>
         </figure>
       </div>
 
       <div class="get-card">
-        <h3><span lang="en">New in 1.8 and 1.8.1</span><span lang="ru">Новое в 1.8 и 1.8.1</span></h3>
+        <h3><span lang="en">New in 1.8 and 1.8.1</span><span lang="ru">Новое в 1.8 и 1.8.1</span><span lang="zh">1.8 与 1.8.1 新特性</span></h3>
         <ul class="news">
-          <li><span lang="en">1.8.1: Counter-Strike 2 no longer crashes on MoltenVK; Dota 2 and CS2 no longer run out of GPU queries on KosmicKrisp; clearer messages for development-signed SteamOS builds</span><span lang="ru">1.8.1: Counter-Strike 2 больше не падает на MoltenVK; Dota 2 и CS2 больше не исчерпывают GPU-запросы на KosmicKrisp; понятные сообщения о сборках SteamOS с dev-подписью</span></li>
-          <li><span lang="en">1.8: DirectX 12 feature level 12_0 on KosmicKrisp (macOS 26+) with real tiled resources, so games that require 12_0 can start; download errors explain a VPN or proxy in the way; GPU memory is budgeted next to the VM's RAM, so a game can't push the Mac into swap</span><span lang="ru">1.8: DirectX 12 уровня 12_0 на KosmicKrisp (macOS 26+) с настоящими tiled-ресурсами — запускаются игры, которым нужен 12_0; ошибки скачивания объясняют, что мешает VPN или прокси; видеопамять учитывается вместе с памятью ВМ, и игра не загоняет Mac в своп</span></li>
-          <li><span lang="en">1.7.6: games no longer lose their GPU after a while (the app opened from Finder ran out of file descriptors); DualSense passthrough with touchpad, gyro, lightbar and adaptive triggers; MetalFX super resolution and Retina resolution</span><span lang="ru">1.7.6: игры больше не теряют GPU через какое-то время (приложению из Finder не хватало файловых дескрипторов); проброс DualSense с тачпадом, гироскопом, подсветкой и адаптивными курками; MetalFX super resolution и Retina-разрешение</span></li>
-          <li><span lang="en">1.7.5: an opt-in crash reporter for Linux x86 games running under FEX, attached to Report a Problem</span><span lang="ru">1.7.5: отчёт о падениях x86-игр для Linux под FEX (включается параметром запуска) прикладывается к Report a Problem</span></li>
-          <li><span lang="en">1.7.4: Steam Link and Remote Play find SteamOS on your local network (Settings → Advanced → LAN Remote Play); the 12/24-hour clock follows the Mac; Create Disk offers stable and rc only</span><span lang="ru">1.7.4: Steam Link и Remote Play находят SteamOS в локальной сети (Settings → Advanced → LAN Remote Play); формат часов 12/24 ч берётся с Mac; Create Disk предлагает только stable и rc</span></li>
-          <li><span lang="en">1.7.3: Report a Problem includes a crashed game's stack trace, FEX details and American Truck Simulator's log; KosmicKrisp reports Metal's error when the GPU device is lost</span><span lang="ru">1.7.3: Report a Problem прикладывает стек упавшей игры, данные FEX и лог American Truck Simulator; KosmicKrisp сообщает ошибку Metal при потере GPU-устройства</span></li>
-          <li><span lang="en">1.7.2: Settings → Advanced → Grow Disk… gives SteamOS more room for games without recreating the disk; two more MoltenVK shader fixes</span><span lang="ru">1.7.2: Settings → Advanced → Grow Disk… даёт SteamOS больше места под игры без пересоздания диска; ещё два исправления шейдеров в MoltenVK</span></li>
-          <li><span lang="en">1.7.1: controllers work again — 1.7 shipped an outdated SteamOS layer without the gamepad service</span><span lang="ru">1.7.1: контроллеры снова работают — в 1.7 попал устаревший слой SteamOS без службы геймпада</span></li>
-          <li><span lang="en">KosmicKrisp is in the release DMG and is the default Vulkan driver on macOS 26+: ~29 FPS against ~18 in Stellar Blade Demo on an M1 Max. MoltenVK stays the driver on macOS 15 and can be chosen in Settings → Advanced; switching makes Steam and games rebuild their shader caches</span><span lang="ru">KosmicKrisp теперь в DMG релиза и стал драйвером Vulkan по умолчанию на macOS 26+: ~29 FPS против ~18 в Stellar Blade Demo на M1 Max. На macOS 15 по-прежнему MoltenVK, его можно выбрать и в Settings → Advanced; после смены драйвера Steam и игры заново собирают кеши шейдеров</span></li>
-          <li><span lang="en">Game Mode: macOS turns it on when the launcher goes full screen</span><span lang="ru">Game Mode: macOS включает его, когда лаунчер развёрнут на весь экран</span></li>
-          <li><span lang="en">MoltenVK: geometry shaders with DXVK 2.7's helper functions compile (Sekiro and other DirectX 11 games lost those draws), and so do vkd3d-proton's vertex + geometry pipelines (Stellar Blade Demo)</span><span lang="ru">MoltenVK: геометрические шейдеры со вспомогательными функциями DXVK 2.7 компилируются (в Sekiro и других играх на DirectX 11 эта отрисовка пропадала), как и конвейеры vertex + geometry из vkd3d-proton (Stellar Blade Demo)</span></li>
-          <li><span lang="en">A new SteamOS disk can live on an exFAT drive; FAT32 and read-only volumes are refused before anything is downloaded</span><span lang="ru">Новый диск SteamOS можно создать на диске exFAT; тома FAT32 и тома только для чтения отклоняются до начала скачивания</span></li>
-          <li><span lang="en">From 1.6: DirectX 12 games through vkd3d-proton (Stellar Blade Demo at 60 FPS at 1280×800 on an M4 Max); the Steam Deck client by default; a damaged /home is repaired at boot</span><span lang="ru">Из 1.6: игры на DirectX 12 через vkd3d-proton (Stellar Blade Demo — 60 FPS в 1280×800 на M4 Max); клиент Steam Deck по умолчанию; повреждённый /home чинится при загрузке</span></li>
+          <li><span lang="en">1.8.1: Counter-Strike 2 no longer crashes on MoltenVK; Dota 2 and CS2 no longer run out of GPU queries on KosmicKrisp; clearer messages for development-signed SteamOS builds</span><span lang="ru">1.8.1: Counter-Strike 2 больше не падает на MoltenVK; Dota 2 и CS2 больше не исчерпывают GPU-запросы на KosmicKrisp; понятные сообщения о сборках SteamOS с dev-подписью</span><span lang="zh">1.8.1：《反恐精英 2》在 MoltenVK 上不再崩溃；《Dota 2》与 CS2 在 KosmicKrisp 上不再耗尽 GPU 查询；开发签名 SteamOS 构建的提示更清晰</span></li>
+          <li><span lang="en">1.8: DirectX 12 feature level 12_0 on KosmicKrisp (macOS 26+) with real tiled resources, so games that require 12_0 can start; download errors explain a VPN or proxy in the way; GPU memory is budgeted next to the VM's RAM, so a game can't push the Mac into swap</span><span lang="ru">1.8: DirectX 12 уровня 12_0 на KosmicKrisp (macOS 26+) с настоящими tiled-ресурсами — запускаются игры, которым нужен 12_0; ошибки скачивания объясняют, что мешает VPN или прокси; видеопамять учитывается вместе с памятью ВМ, и игра не загоняет Mac в своп</span><span lang="zh">1.8：KosmicKrisp（macOS 26+）上 DirectX 12 功能级别 12_0，带真正的 tiled resources，需要 12_0 的游戏可启动；下载错误会说明是否有 VPN 或代理挡路；GPU 内存与虚拟机内存一并预算，游戏无法把 Mac 推入交换</span></li>
+          <li><span lang="en">1.7.6: games no longer lose their GPU after a while (the app opened from Finder ran out of file descriptors); DualSense passthrough with touchpad, gyro, lightbar and adaptive triggers; MetalFX super resolution and Retina resolution</span><span lang="ru">1.7.6: игры больше не теряют GPU через какое-то время (приложению из Finder не хватало файловых дескрипторов); проброс DualSense с тачпадом, гироскопом, подсветкой и адаптивными курками; MetalFX super resolution и Retina-разрешение</span><span lang="zh">1.7.6：游戏不再过一段时间丢失 GPU（从访达打开的应用耗尽了文件描述符）；DualSense 直通（触摸板、陀螺仪、光条、自适应扳机）；MetalFX 超分辨率与 Retina 分辨率</span></li>
+          <li><span lang="en">1.7.5: an opt-in crash reporter for Linux x86 games running under FEX, attached to Report a Problem</span><span lang="ru">1.7.5: отчёт о падениях x86-игр для Linux под FEX (включается параметром запуска) прикладывается к Report a Problem</span><span lang="zh">1.7.5：为 FEX 下运行的 Linux x86 游戏提供可选崩溃报告，随“报告问题”附带</span></li>
+          <li><span lang="en">1.7.4: Steam Link and Remote Play find SteamOS on your local network (Settings → Advanced → LAN Remote Play); the 12/24-hour clock follows the Mac; Create Disk offers stable and rc only</span><span lang="ru">1.7.4: Steam Link и Remote Play находят SteamOS в локальной сети (Settings → Advanced → LAN Remote Play); формат часов 12/24 ч берётся с Mac; Create Disk предлагает только stable и rc</span><span lang="zh">1.7.4：Steam Link 与 Remote Play 可在局域网发现 SteamOS（设置 → 高级 → 局域网 Remote Play）；12/24 小时制跟随 Mac；Create Disk 仅提供 stable 与 rc</span></li>
+          <li><span lang="en">1.7.3: Report a Problem includes a crashed game's stack trace, FEX details and American Truck Simulator's log; KosmicKrisp reports Metal's error when the GPU device is lost</span><span lang="ru">1.7.3: Report a Problem прикладывает стек упавшей игры, данные FEX и лог American Truck Simulator; KosmicKrisp сообщает ошибку Metal при потере GPU-устройства</span><span lang="zh">1.7.3：“报告问题”包含崩溃游戏的堆栈、FEX 详情与《美国卡车模拟》日志；GPU 设备丢失时 KosmicKrisp 上报 Metal 错误</span></li>
+          <li><span lang="en">1.7.2: Settings → Advanced → Grow Disk… gives SteamOS more room for games without recreating the disk; two more MoltenVK shader fixes</span><span lang="ru">1.7.2: Settings → Advanced → Grow Disk… даёт SteamOS больше места под игры без пересоздания диска; ещё два исправления шейдеров в MoltenVK</span><span lang="zh">1.7.2：设置 → 高级 → 扩展磁盘…，无需重建磁盘即可为 SteamOS 扩容装游戏；另有两处 MoltenVK 着色器修复</span></li>
+          <li><span lang="en">1.7.1: controllers work again — 1.7 shipped an outdated SteamOS layer without the gamepad service</span><span lang="ru">1.7.1: контроллеры снова работают — в 1.7 попал устаревший слой SteamOS без службы геймпада</span><span lang="zh">1.7.1：手柄恢复工作——1.7 误带了缺少手柄服务的旧 SteamOS 层</span></li>
+          <li><span lang="en">KosmicKrisp is in the release DMG and is the default Vulkan driver on macOS 26+: ~29 FPS against ~18 in Stellar Blade Demo on an M1 Max. MoltenVK stays the driver on macOS 15 and can be chosen in Settings → Advanced; switching makes Steam and games rebuild their shader caches</span><span lang="ru">KosmicKrisp теперь в DMG релиза и стал драйвером Vulkan по умолчанию на macOS 26+: ~29 FPS против ~18 в Stellar Blade Demo на M1 Max. На macOS 15 по-прежнему MoltenVK, его можно выбрать и в Settings → Advanced; после смены драйвера Steam и игры заново собирают кеши шейдеров</span><span lang="zh">KosmicKrisp 已进正式 DMG 并成为 macOS 26+ 默认 Vulkan 驱动：M1 Max 上 Stellar Blade 试玩版约 29 FPS（MoltenVK 约 18）。macOS 15 仍用 MoltenVK，也可在设置 → 高级中选择；切换驱动后 Steam 与游戏将重建着色器缓存</span></li>
+          <li><span lang="en">Game Mode: macOS turns it on when the launcher goes full screen</span><span lang="ru">Game Mode: macOS включает его, когда лаунчер развёрнут на весь экран</span><span lang="zh">游戏模式：启动器全屏时 macOS 自动开启</span></li>
+          <li><span lang="en">MoltenVK: geometry shaders with DXVK 2.7's helper functions compile (Sekiro and other DirectX 11 games lost those draws), and so do vkd3d-proton's vertex + geometry pipelines (Stellar Blade Demo)</span><span lang="ru">MoltenVK: геометрические шейдеры со вспомогательными функциями DXVK 2.7 компилируются (в Sekiro и других играх на DirectX 11 эта отрисовка пропадала), как и конвейеры vertex + geometry из vkd3d-proton (Stellar Blade Demo)</span><span lang="zh">MoltenVK：带 DXVK 2.7 辅助函数的几何着色器可编译（《只狼》等 DirectX 11 游戏曾丢失这些绘制），vkd3d-proton 的 vertex + geometry 管线亦可（Stellar Blade 试玩版）</span></li>
+          <li><span lang="en">A new SteamOS disk can live on an exFAT drive; FAT32 and read-only volumes are refused before anything is downloaded</span><span lang="ru">Новый диск SteamOS можно создать на диске exFAT; тома FAT32 и тома только для чтения отклоняются до начала скачивания</span><span lang="zh">新 SteamOS 磁盘可放在 exFAT 盘上；FAT32 与只读卷在下载开始前即被拒绝</span></li>
+          <li><span lang="en">From 1.6: DirectX 12 games through vkd3d-proton (Stellar Blade Demo at 60 FPS at 1280×800 on an M4 Max); the Steam Deck client by default; a damaged /home is repaired at boot</span><span lang="ru">Из 1.6: игры на DirectX 12 через vkd3d-proton (Stellar Blade Demo — 60 FPS в 1280×800 на M4 Max); клиент Steam Deck по умолчанию; повреждённый /home чинится при загрузке</span><span lang="zh">1.6 起：经 vkd3d-proton 的 DirectX 12 游戏（M4 Max 在 1280×800 下 Stellar Blade 试玩版 60 FPS）；默认 Steam Deck 客户端；受损 /home 启动时自动修复</span></li>
         </ul>
-        <h3><span lang="en">Or build everything from source</span><span lang="ru">Или соберите всё из исходников</span></h3>
+        <h3><span lang="en">Or build everything from source</span><span lang="ru">Или соберите всё из исходников</span><span lang="zh">或从源码构建一切</span></h3>
 <pre><code><span class="c"># MoltenVK, virglrenderer, libkrun, launcher,</span>
 <span class="c"># guest kernel, Mesa and the SteamOS disk</span>
 git clone https://github.com/fxgl/steamac
 cd steamac
 ./build.sh
 ./run.sh</code></pre>
-        <h3><span lang="en">Requirements</span><span lang="ru">Требования</span></h3>
+        <h3><span lang="en">Requirements</span><span lang="ru">Требования</span><span lang="zh">要求</span></h3>
         <ul class="req">
-          <li><span lang="en">Mac with Apple silicon, macOS 15 or later</span><span lang="ru">Mac на Apple silicon, macOS 15 или новее</span></li>
-          <li><span lang="en">~20 GB free to create the disk (about 14 GB disk + 6 GB download cache); the disk is sparse and grows as you install games</span><span lang="ru">~20 ГБ свободного места на создание диска (около 14 ГБ диск + 6 ГБ кеш загрузки); диск разреженный и растёт по мере установки игр</span></li>
-          <li><span lang="en">To build from source: Xcode 26+, Homebrew, rustup, OrbStack</span><span lang="ru">Для сборки из исходников: Xcode 26+, Homebrew, rustup, OrbStack</span></li>
+          <li><span lang="en">Mac with Apple silicon, macOS 15 or later</span><span lang="ru">Mac на Apple silicon, macOS 15 или новее</span><span lang="zh">Apple 芯片 Mac，macOS 15 或更高版本</span></li>
+          <li><span lang="en">~20 GB free to create the disk (about 14 GB disk + 6 GB download cache); the disk is sparse and grows as you install games</span><span lang="ru">~20 ГБ свободного места на создание диска (около 14 ГБ диск + 6 ГБ кеш загрузки); диск разреженный и растёт по мере установки игр</span><span lang="zh">创建磁盘需约 20 GB 空闲（约 14 GB 磁盘 + 6 GB 下载缓存）；磁盘为稀疏文件，随安装游戏增长</span></li>
+          <li><span lang="en">To build from source: Xcode 26+, Homebrew, rustup, OrbStack</span><span lang="ru">Для сборки из исходников: Xcode 26+, Homebrew, rustup, OrbStack</span><span lang="zh">从源码构建需要：Xcode 26+、Homebrew、rustup、OrbStack</span></li>
         </ul>
-        <p class="privacy"><span lang="en">Crash reports and rare errors go to the developers' own Sentry server: no name, IP, Steam account, game titles or files. Turn them off at first run or in Settings → General.</span><span lang="ru">Отчёты о сбоях и редких ошибках уходят на собственный Sentry-сервер разработчиков: без имени, IP, аккаунта Steam, названий игр и файлов. Отключаются при первом запуске или в Settings → General.</span></p>
+        <p class="privacy"><span lang="en">Crash reports and rare errors go to the developers' own Sentry server: no name, IP, Steam account, game titles or files. Turn them off at first run or in Settings → General.</span><span lang="ru">Отчёты о сбоях и редких ошибках уходят на собственный Sentry-сервер разработчиков: без имени, IP, аккаунта Steam, названий игр и файлов. Отключаются при первом запуске или в Settings → General.</span><span lang="zh">崩溃报告与偶发错误发送到开发者自己的 Sentry 服务器：不含姓名、IP、Steam 账号、游戏标题或文件。可在首次运行或“设置 → 通用”中关闭。</span></p>
       </div>
     </div>
   </div>
@@ -521,10 +534,10 @@ cd steamac
 
 <footer class="footer">
   <div class="wrap">
-    <p><span lang="en">steamac is an independent project, not affiliated with or endorsed by Valve. Steam, SteamOS and Steam Frame are trademarks of Valve Corporation.</span><span lang="ru">steamac — независимый проект, не связанный с Valve. Steam, SteamOS и Steam Frame — товарные знаки Valve Corporation.</span></p>
-    <p><span lang="en">Built on</span><span lang="ru">Построено на</span> <a href="https://github.com/containers/libkrun">libkrun</a>, <a href="https://gitlab.freedesktop.org/virgl/virglrenderer">virglrenderer</a>, <a href="https://github.com/KhronosGroup/MoltenVK">MoltenVK</a> (<a href="https://github.com/utmapp/MoltenVK">UTM fork</a>), <a href="https://mesa3d.org">Mesa</a>, <a href="https://fex-emu.com">FEX</a>, <a href="https://github.com/doitsujin/dxvk">DXVK</a>, <a href="https://github.com/ValveSoftware/Proton">Proton</a>, <a href="https://github.com/containers/gvisor-tap-vsock">gvproxy</a>.</p>
-    <p class="muted"><a href="https://github.com/fxgl/steamac">github.com/fxgl/steamac</a> · <a href="https://github.com/fxgl/steamac/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/fxgl/steamac/blob/main/NOTICE"><span lang="en">kernel patches GPL-2.0, Mesa and virglrenderer patches MIT</span><span lang="ru">патчи ядра — GPL-2.0, патчи Mesa и virglrenderer — MIT</span></a></p>
-    <p class="muted"><span lang="en">Screenshots and video show software and artwork that belong to Valve Corporation and the respective game publishers.</span><span lang="ru">На скриншотах и в ролике — программы и графика, принадлежащие Valve Corporation и издателям игр.</span></p>
+    <p><span lang="en">steamac is an independent project, not affiliated with or endorsed by Valve. Steam, SteamOS and Steam Frame are trademarks of Valve Corporation.</span><span lang="ru">steamac — независимый проект, не связанный с Valve. Steam, SteamOS и Steam Frame — товарные знаки Valve Corporation.</span><span lang="zh">steamac 是独立项目，与 Valve 无关，也未经其背书。Steam、SteamOS 与 Steam Frame 是 Valve Corporation 的商标。</span></p>
+    <p><span lang="en">Built on</span><span lang="ru">Построено на</span><span lang="zh">基于</span> <a href="https://github.com/containers/libkrun">libkrun</a>, <a href="https://gitlab.freedesktop.org/virgl/virglrenderer">virglrenderer</a>, <a href="https://github.com/KhronosGroup/MoltenVK">MoltenVK</a> (<a href="https://github.com/utmapp/MoltenVK">UTM fork</a>), <a href="https://mesa3d.org">Mesa</a>, <a href="https://fex-emu.com">FEX</a>, <a href="https://github.com/doitsujin/dxvk">DXVK</a>, <a href="https://github.com/ValveSoftware/Proton">Proton</a>, <a href="https://github.com/containers/gvisor-tap-vsock">gvproxy</a>.</p>
+    <p class="muted"><a href="https://github.com/fxgl/steamac">github.com/fxgl/steamac</a> · <a href="https://github.com/fxgl/steamac/blob/main/LICENSE">Apache-2.0</a> · <a href="https://github.com/fxgl/steamac/blob/main/NOTICE"><span lang="en">kernel patches GPL-2.0, Mesa and virglrenderer patches MIT</span><span lang="ru">патчи ядра — GPL-2.0, патчи Mesa и virglrenderer — MIT</span><span lang="zh">内核补丁 GPL-2.0，Mesa 与 virglrenderer 补丁 MIT</span></a></p>
+    <p class="muted"><span lang="en">Screenshots and video show software and artwork that belong to Valve Corporation and the respective game publishers.</span><span lang="ru">На скриншотах и в ролике — программы и графика, принадлежащие Valve Corporation и издателям игр.</span><span lang="zh">截图与视频中的软件及美术资源属于 Valve Corporation 与各游戏发行商。</span></p>
   </div>
 </footer>
 

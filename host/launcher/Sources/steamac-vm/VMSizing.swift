@@ -69,16 +69,14 @@ enum VMSizing {
         let gpu = gpuBudgetMiB(memMiB: memMiB, host: host)
         let reserve = hostReserveMiB(host)
         guard memMiB + gpu + reserve > Int(host.memBytes >> 20) || gpu < 2048 else { return nil }
-        return "\(memMiB) MiB VM RAM + \(gpu) MiB GPU budget + \(reserve) MiB reserved for macOS "
-            + "on this \(host.memGiB) GB Mac. Too little GPU memory remains: lower VM memory or graphics settings "
-            + "to avoid swapping, out-of-memory errors or the VM being killed."
+        return tr("%@ MiB VM RAM + %@ MiB GPU budget + %@ MiB reserved for macOS on this %@ GB Mac. Too little GPU memory remains: lower VM memory or graphics settings to avoid swapping, out-of-memory errors or the VM being killed.", "\(memMiB)", "\(gpu)", "\(reserve)", "\(host.memGiB)")
     }
 
     /// Settings > Advanced: why a custom vCPU count is risky on this Mac, or nil.
     static func cpuWarning(cpus: Int, host: Host) -> String? {
         guard let p = host.perfCores, cpus > p else { return nil }
-        return "More than this Mac's \(p) performance cores. The extra vCPUs run on efficiency cores, "
-            + "which slows the guest down and leaves fewer cores for the Mac's GPU work."
+        return tr("More than this Mac's %@ performance cores. The extra vCPUs run on efficiency cores, "
+            + "which slows the guest down and leaves fewer cores for the Mac's GPU work.", "\(p)")
     }
 
     /// Boot log: the size and where it came from.

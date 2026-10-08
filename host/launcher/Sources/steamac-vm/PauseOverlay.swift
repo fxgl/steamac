@@ -139,11 +139,11 @@ final class PauseOverlayView: NSView {
         let title, detail: NSAttributedString
         switch style {
         case .gamePaused:
-            title = text("Game paused", size: 20, weight: .semibold, color: 0xc7d5e0)
-            detail = text("Click to resume", size: 12, weight: .regular, color: 0x8f98a0)
+            title = text(tr("Game paused"), size: 20, weight: .semibold, color: 0xc7d5e0)
+            detail = text(tr("Click to resume"), size: 12, weight: .regular, color: 0x8f98a0)
         case .sleeping:
-            title = text("SteamOS is sleeping", size: 20, weight: .semibold, color: 0xc7d5e0)
-            detail = text("Click or press a key or controller button to wake it", size: 12, weight: .regular, color: 0x8f98a0)
+            title = text(tr("SteamOS is sleeping"), size: 20, weight: .semibold, color: 0xc7d5e0)
+            detail = text(tr("Click or press a key or controller button to wake it"), size: 12, weight: .regular, color: 0x8f98a0)
         }
         let nameText = name.map { text($0, size: 13, weight: .regular, color: 0xc7d5e0) }
         let pad = 22 * s, iconH = 34 * s, gap = 12 * s

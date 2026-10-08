@@ -46,8 +46,8 @@ final class CreateDiskModel: ObservableObject {
         while !FileManager.default.fileExists(atPath: dir) && dir != "/" { dir = (dir as NSString).deletingLastPathComponent }
         guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: dir),
               let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value else { return "" }
-        return String(format: "%.0f GB free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache.",
-                      Double(free) / 1e9)
+        return tr("%@ free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache.",
+                  String(format: "%.0f GB", Double(free) / 1e9))
     }
 
     func start() {
@@ -99,8 +99,8 @@ private struct CreateDiskView: View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section {
-                    Text("Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature "
-                         + "and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM.")
+                    Text(tr("Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature "
+                         + "and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM."))
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Section {
@@ -122,8 +122,8 @@ private struct CreateDiskView: View {
                                 .lineLimit(1).truncationMode(.middle).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                             Button("Choose…") { choose() }
                         }
-                        Text(model.pathExists ? "A file with this name exists; it is never overwritten. Choose another name."
-                             : model.freeSpace)
+                        Text(tr(model.pathExists ? "A file with this name exists; it is never overwritten. Choose another name."
+                             : model.freeSpace))
                             .font(.caption).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                     }
                     HStack {
@@ -159,8 +159,8 @@ private struct CreateDiskView: View {
                 if model.running || model.status != nil || model.error != nil {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.error != nil ? "Failed" : model.interrupted ? "Stopped — Create continues where it left off"
-                                 : model.status?.title ?? "Starting…")
+                            Text(tr(model.error != nil ? "Failed" : model.interrupted ? "Stopped — Create continues where it left off"
+                                 : model.status?.title ?? "Starting…"))
                                 .font(.headline)
                             ProgressView(value: model.status?.fraction ?? 0)
                             Text(model.error ?? model.status?.detail ?? "")
@@ -189,7 +189,7 @@ private struct CreateDiskView: View {
 
     private func choose() {
         let panel = NSSavePanel()
-        panel.title = "Location of the new SteamOS disk"
+        panel.title = tr("Location of the new SteamOS disk")
         panel.nameFieldStringValue = (model.path as NSString).lastPathComponent
         panel.directoryURL = URL(fileURLWithPath: (model.path as NSString).deletingLastPathComponent)
         panel.canCreateDirectories = true
@@ -213,7 +213,7 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        window.title = "Create SteamOS Disk"
+        window.title = tr("Create SteamOS Disk")
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: CreateDiskView(model: model) { [weak self] in self?.window.performClose(nil) })
@@ -249,10 +249,10 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard model.running else { return true }
         let alert = NSAlert()
-        alert.messageText = "Stop creating the disk?"
-        alert.informativeText = "Downloaded data is kept; creating the disk again continues from there."
-        alert.addButton(withTitle: "Stop")
-        alert.addButton(withTitle: "Continue")
+        alert.messageText = tr("Stop creating the disk?")
+        alert.informativeText = tr("Downloaded data is kept; creating the disk again continues from there.")
+        alert.addButton(withTitle: tr("Stop"))
+        alert.addButton(withTitle: tr("Continue"))
         if alert.runModal() == .alertFirstButtonReturn { model.cancel() }
         return false
     }

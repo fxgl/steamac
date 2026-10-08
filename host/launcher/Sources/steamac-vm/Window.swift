@@ -277,15 +277,15 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// ("Downloading Steam update 70%", "Starting Steam…", "Shutting down…").
     private func updateTitle() {
         if guestAsleep {
-            setStatus("sleeping — click to wake")
+            setStatus(tr("sleeping — click to wake"))
         } else if pausedGame != nil {
-            setStatus("paused")
+            setStatus(tr("paused"))
         } else if let s = progress.flatMap({ WindowController.progressStatus($0.state) }) {
-            setStatus(captured ? "\(s) — mouse captured, Ctrl+Option releases" : s)
+            setStatus(captured ? "\(s) — " + tr("mouse captured — Ctrl+Option releases") : s)
         } else if captured {
-            setStatus("mouse captured — Ctrl+Option releases")
+            setStatus(tr("mouse captured — Ctrl+Option releases"))
         } else if inputs != nil && clickCaptures {
-            setStatus("click to capture the mouse")
+            setStatus(tr("click to capture the mouse"))
         } else {
             setStatus(nil)
         }
@@ -682,7 +682,7 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     /// "Name (appid)" when the guest told us the game's name.
     private func gameLabel(_ id: Int) -> String {
-        settings.gameName(id).map { "\($0) (\(id))" } ?? "game \(id)"
+        settings.gameName(id).map { "\($0) (\(id))" } ?? tr("game %@", "\(id)")
     }
 
     private var focusedGame: Int? {
@@ -714,8 +714,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         if captured && mouseMode == .auto && !clickCaptures { releasePointer() }
         updateTitle()
         if let id = focusedGame, mouseMode == .auto {
-            flashStatus(settings.autoCapture(for: id) ? "click to capture the mouse (Ctrl+Option releases)"
-                                                      : "auto-capture off for \(gameLabel(id)) (Ctrl+Cmd+G captures)")
+            flashStatus(settings.autoCapture(for: id) ? tr("click to capture the mouse (Ctrl+Option releases)")
+                                                      : tr("auto-capture off for %@ (Ctrl+Cmd+G captures)", gameLabel(id)))
         }
     }
 
@@ -736,7 +736,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         settings.setAutoCapture(on, for: id)
         if !on && captured { releasePointer() }
         updateTitle()
-        flashStatus(on ? "auto-capture on for \(gameLabel(id))" : "auto-capture off for \(gameLabel(id))")
+        flashStatus(on ? tr("auto-capture on for %@", gameLabel(id)) : tr("auto-capture off for %@", gameLabel(id)))
     }
 
     @objc func toggleGlobalAutoCapture(_ sender: Any?) {
@@ -746,7 +746,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             + (settings.autoCaptureOverride != nil ? "; --auto-capture still applies to this run" : ""))
         if captured && !clickCaptures { releasePointer() }
         updateTitle()
-        flashStatus("auto-capture in games \(settings.globalAutoCapture ? "on" : "off")")
+        flashStatus(tr(settings.globalAutoCapture ? "auto-capture in games on" : "auto-capture in games off"))
     }
 
     @objc func toggleCaptureNow(_ sender: Any?) { captured ? releasePointer() : grabPointer() }
@@ -755,11 +755,11 @@ final class WindowController: NSObject, NSWindowDelegate {
     func installMouseMenu() {
         guard let main = NSApp.mainMenu else { return }
         let item = NSMenuItem()
-        let menu = NSMenu(title: "Mouse")
+        let menu = NSMenu(title: tr("Mouse"))
         menu.autoenablesItems = true
-        for (title, action) in [("Capture Mouse in This Game", #selector(toggleGameAutoCapture(_:))),
-                                ("Auto-Capture Mouse in Games", #selector(toggleGlobalAutoCapture(_:))),
-                                ("Capture / Release Mouse Now (Ctrl+Cmd+G)", #selector(toggleCaptureNow(_:)))] {
+        for (title, action) in [(tr("Capture Mouse in This Game"), #selector(toggleGameAutoCapture(_:))),
+                                (tr("Auto-Capture Mouse in Games"), #selector(toggleGlobalAutoCapture(_:))),
+                                (tr("Capture / Release Mouse Now (Ctrl+Cmd+G)"), #selector(toggleCaptureNow(_:)))] {
             let i = NSMenuItem(title: title, action: action, keyEquivalent: "")
             i.target = self
             menu.addItem(i)
@@ -774,11 +774,11 @@ extension WindowController: NSMenuItemValidation {
         switch item.action {
         case #selector(toggleGameAutoCapture(_:)):
             if let id = focusedGame {
-                item.title = "Capture Mouse in This Game (\(gameLabel(id)))"
+                item.title = tr("Capture Mouse in This Game (%@)", gameLabel(id))
                 item.state = settings.autoCapture(for: id) ? .on : .off
                 return mouseMode == .auto
             }
-            item.title = "Capture Mouse in This Game"
+            item.title = tr("Capture Mouse in This Game")
             item.state = .off
             return false
         case #selector(toggleGlobalAutoCapture(_:)):
@@ -1027,18 +1027,18 @@ enum MainMenu {
         appMenu.addItem(.separator())
         // Lifecycle.applicationShouldTerminate decides (shut down; asks first while suspended).
         // While the VM window has the keyboard, Cmd+Q goes to the guest like every key.
-        appMenu.addItem(NSMenuItem(title: "Quit FX Steam Launcher", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: tr("Quit FX Steam Launcher"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         addEditAndWindowMenus(main)
         let viewItem = NSMenuItem()
         main.insertItem(viewItem, at: 2)
-        let viewMenu = NSMenu(title: "View")
+        let viewMenu = NSMenu(title: tr("View"))
         viewItem.submenu = viewMenu
         viewMenu.addItem(item("Toggle Full Screen (Ctrl+Cmd+F)", fullscreen, target))
         viewMenu.addItem(item("Grab Pointer (Ctrl+Cmd+G; Ctrl+Option releases)", grab, target))
         viewMenu.addItem(item("Show Boot Progress", overlay, target))
         // Ticked by the target's validateMenuItem (follows Settings > Display and Ctrl+Cmd+P).
         viewMenu.addItem(item("Show Metal Performance HUD (Ctrl+Cmd+P)", metalHUD, target))
-        let help = NSMenu(title: "Help")
+        let help = NSMenu(title: tr("Help"))
         help.addItem(item("Report a Problem…", report, target))
         let helpItem = NSMenuItem()
         helpItem.submenu = help
@@ -1055,26 +1055,26 @@ enum MainMenu {
         let appMenu = NSMenu()
         appItem.submenu = appMenu
         if let (action, target) = settings { appMenu.addItem(item("Settings…", action, target, key: ",")) }
-        appMenu.addItem(NSMenuItem(title: "Quit FX Steam Launcher", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: tr("Quit FX Steam Launcher"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         addEditAndWindowMenus(main)
         NSApp.mainMenu = main
     }
 
     /// Standard Edit (text fields in Settings) and Window (Cmd+W closes Settings) menus.
     private static func addEditAndWindowMenus(_ main: NSMenu) {
-        let edit = NSMenu(title: "Edit")
-        for (title, action, key) in [("Undo", Selector(("undo:")), "z"), ("Redo", Selector(("redo:")), "Z"),
-                                     ("Cut", #selector(NSText.cut(_:)), "x"), ("Copy", #selector(NSText.copy(_:)), "c"),
-                                     ("Paste", #selector(NSText.paste(_:)), "v"),
-                                     ("Select All", #selector(NSText.selectAll(_:)), "a")] {
+        let edit = NSMenu(title: tr("Edit"))
+        for (title, action, key) in [(tr("Undo"), Selector(("undo:")), "z"), (tr("Redo"), Selector(("redo:")), "Z"),
+                                     (tr("Cut"), #selector(NSText.cut(_:)), "x"), (tr("Copy"), #selector(NSText.copy(_:)), "c"),
+                                     (tr("Paste"), #selector(NSText.paste(_:)), "v"),
+                                     (tr("Select All"), #selector(NSText.selectAll(_:)), "a")] {
             edit.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
         }
         let editItem = NSMenuItem()
         editItem.submenu = edit
         main.addItem(editItem)
-        let window = NSMenu(title: "Window")
-        window.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-        window.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        let window = NSMenu(title: tr("Window"))
+        window.addItem(NSMenuItem(title: tr("Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        window.addItem(NSMenuItem(title: tr("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
         let windowItem = NSMenuItem()
         windowItem.submenu = window
         main.addItem(windowItem)
@@ -1082,7 +1082,7 @@ enum MainMenu {
     }
 
     private static func item(_ title: String, _ action: Selector, _ target: AnyObject, key: String = "") -> NSMenuItem {
-        let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let i = NSMenuItem(title: tr(title), action: action, keyEquivalent: key)
         i.target = target
         return i
     }

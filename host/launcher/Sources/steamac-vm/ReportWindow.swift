@@ -137,9 +137,9 @@ struct ReportView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol).font(.system(size: 28)).foregroundStyle(color)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.title3.weight(.semibold))
+                Text(tr(title)).font(.title3.weight(.semibold))
                 if let detail {
-                    Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(tr(detail)).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -155,8 +155,8 @@ struct ReportView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Email").font(.callout.weight(.medium))
                 TextField("you@example.com", text: $model.email).textFieldStyle(.roundedBorder)
-                Text(!model.email.isEmpty && !model.emailValid ? "Enter a valid email address."
-                     : "So the developers can reply. Remembered on this Mac.")
+                Text(tr(!model.email.isEmpty && !model.emailValid ? "Enter a valid email address."
+                     : "So the developers can reply. Remembered on this Mac."))
                     .font(.caption).foregroundStyle(!model.email.isEmpty && !model.emailValid ? Color.red : Color.secondary)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -194,8 +194,8 @@ struct ReportView: View {
             }
             .disabled(working)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Always included: app, macOS and library versions, Mac model, GPU, disk sizes and the launcher settings "
-                     + "(never passwords or Keychain items).")
+                Text(tr("Always included: app, macOS and library versions, Mac model, GPU, disk sizes and the launcher settings "
+                     + "(never passwords or Keychain items)."))
                 if CrashReporting.statusSummary != "on" {
                     Text("Crash reports are off. Sending this report does not turn them on: only this report is sent.")
                 }
@@ -227,8 +227,8 @@ struct ReportView: View {
     private func check(_ on: Binding<Bool>, _ title: String, _ detail: String) -> some View {
         Toggle(isOn: on) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(tr(title))
+                Text(tr(detail)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .toggleStyle(.checkbox)
@@ -254,7 +254,7 @@ struct ReportView: View {
         VStack(alignment: .leading, spacing: 14) {
             header("exclamationmark.triangle.fill", .orange, "The report could not be sent", message)
             if !model.savedPath.isEmpty {
-                Text("It was saved in \(model.savedPath). Try again later, or send that folder to the developers by email.")
+                Text(tr("It was saved in %@. Try again later, or send that folder to the developers by email.", model.savedPath))
                     .font(.callout).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             HStack {
@@ -296,7 +296,7 @@ final class ReportSheet {
         host.sizingOptions = [.preferredContentSize]
         let w = NSWindow(contentViewController: host)
         w.styleMask = [.titled]
-        w.title = "Report a Problem"
+        w.title = tr("Report a Problem")
         let sheet = ReportSheet(window: w, model: model, parent: parent)
         model.onClose = { [weak sheet] sent in
             sheet?.dismiss()
@@ -409,7 +409,7 @@ enum CrashOffer {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("FX Steam Launcher stopped unexpectedly").font(.headline)
-                    Text("The virtual machine ended without being asked to (\(summary)).")
+                    Text(tr("The virtual machine ended without being asked to (%@).", summary))
                         .font(.callout).fixedSize(horizontal: false, vertical: true)
                     Text("Report it with the logs of this session so the developers can look into it.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

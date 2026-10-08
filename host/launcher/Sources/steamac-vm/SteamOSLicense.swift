@@ -9,8 +9,10 @@ import Foundation
 enum SteamOSLicense {
     static let eulaURL = URL(string: "https://store.steampowered.com/steamos/download/?ver=steamframe")!
     static let ssaURL = URL(string: "https://store.steampowered.com/subscriber_agreement/")!
-    static let summary = "SteamOS and the Steam client are Valve's software. Valve licenses them for personal use "
-        + "only and forbids redistributing them; Steam itself is governed by the Steam Subscriber Agreement."
+    static var summary: String {
+        tr("SteamOS and the Steam client are Valve's software. Valve licenses them for personal use "
+            + "only and forbids redistributing them; Steam itself is governed by the Steam Subscriber Agreement.")
+    }
     private static let key = "steamosLicenseAccepted"
 
     /// When the current agreement was accepted, nil if not (or an older agreement was).

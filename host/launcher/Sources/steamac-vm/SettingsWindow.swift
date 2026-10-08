@@ -39,12 +39,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         var title: String {
             switch self {
-            case .general: return "General"
-            case .display: return "Display"
-            case .mouse: return "Mouse"
-            case .controller: return "Controller"
-            case .sound: return "Sound"
-            case .advanced: return "Advanced"
+            case .general: return tr("General")
+            case .display: return tr("Display")
+            case .mouse: return tr("Mouse")
+            case .controller: return tr("Controller")
+            case .sound: return tr("Sound")
+            case .advanced: return tr("Advanced")
             }
         }
 
@@ -186,11 +186,11 @@ private struct Applies: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(now ? "applies now" : "applies on next start")
+            Text(tr(now ? "applies now" : "applies on next start"))
                 .font(.caption)
                 .foregroundStyle(now ? Color.secondary : Color.orange.opacity(0.9))
             if let key, let flag = settings.overrides[key] {
-                Text("overridden by command line (\(flag))")
+                Text(tr("overridden by command line (%@)", flag))
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -207,8 +207,8 @@ private struct Label2: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            Text(tr(title))
+            if let detail { Text(tr(detail)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             Applies(now: now, key: key)
         }
     }
@@ -223,10 +223,10 @@ private struct RestartBar: View {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange).font(.title2)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(context.restartRequested ? "Restarting the VM…" : "Some changes apply on the next start.")
+                    Text(tr(context.restartRequested ? "Restarting the VM…" : "Some changes apply on the next start."))
                         .font(.callout.weight(.medium))
-                    Text(context.restart == nil ? "No VM is running in this window."
-                         : "SteamOS shuts down cleanly and boots again with the new settings.")
+                    Text(tr(context.restart == nil ? "No VM is running in this window."
+                         : "SteamOS shuts down cleanly and boots again with the new settings."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -336,7 +336,7 @@ private struct GeneralTab: View {
                 }
             } footer: {
                 if AppBundle.resources != nil {
-                    Text("Log: \((AppBundle.logPath as NSString).abbreviatingWithTildeInPath)")
+                    Text(tr("Log: %@", (AppBundle.logPath as NSString).abbreviatingWithTildeInPath))
                         .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
@@ -344,8 +344,8 @@ private struct GeneralTab: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Report a Problem")
-                        Text("Describe what went wrong and send it with the logs you choose to the developers "
-                             + "(works with crash reports off, too).")
+                        Text(tr("Describe what went wrong and send it with the logs you choose to the developers "
+                             + "(works with crash reports off, too)."))
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -396,7 +396,7 @@ private struct DisplayTab: View {
                 }
                 if settings.dpiSource == .dpi {
                     Stepper(value: intBinding($settings.fixedDPI, 50...600), in: 50...600, step: 5) {
-                        Text("DPI: \(settings.fixedDPI)")
+                        Text(tr("DPI: %@", "\(settings.fixedDPI)"))
                     }
                 }
                 if settings.dpiSource == .mm {
@@ -429,8 +429,8 @@ private struct DisplayTab: View {
                 Picker(selection: preset) {
                     ForEach(LauncherSettings.sizePresets) { Text(presetTitle($0)).tag($0.id) }
                     Divider()
-                    Text(verbatim: "Fit to screen (\(fit.0) × \(fit.1))").tag(LauncherSettings.fitPreset)
-                    Text(verbatim: "Custom…").tag(LauncherSettings.customPreset)
+                    Text(tr("Fit to screen (%@)", "\(fit.0) × \(fit.1)")).tag(LauncherSettings.fitPreset)
+                    Text(tr("Custom…")).tag(LauncherSettings.customPreset)
                 } label: {
                     Label2(title: "Default window size",
                            detail: "Guest pixels = window points (twice per side with Retina resolution); at least 800 × 500.",
@@ -512,14 +512,14 @@ private struct MouseTab: View {
                 ForEach(settings.games) { g in
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(g.name ?? "Unknown game")
+                            Text(tr(g.name ?? "Unknown game"))
                             Text("App ID \(String(g.appid))").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Picker("", selection: choice(g)) {
-                            Text(settings.globalAutoCapture ? "Default (Auto)" : "Default (Off)").tag(0)
-                            Text("Auto").tag(1)
-                            Text("Off").tag(2)
+                            Text(tr(settings.globalAutoCapture ? "Default (Auto)" : "Default (Off)")).tag(0)
+                            Text(tr("Auto")).tag(1)
+                            Text(tr("Off")).tag(2)
                         }
                         .labelsHidden()
                         .fixedSize()
@@ -608,7 +608,7 @@ private struct ControllerTab: View {
                     }
                     if !settings.controllerID.isEmpty,
                        !monitor.controllers.contains(where: { GamepadBridge.identifier(of: $0) == settings.controllerID }) {
-                        Text("\(settings.controllerID.replacingOccurrences(of: "|", with: " · ")) (not connected)")
+                        Text(settings.controllerID.replacingOccurrences(of: "|", with: " · ") + tr(" (not connected)"))
                             .tag(settings.controllerID)
                     }
                 } label: {
@@ -801,7 +801,7 @@ private struct SoundTab: View {
             }
             Section {
                 Picker(selection: $settings.soundOutputUID) {
-                    Text("System default" + (monitor.defaultName.map { " (\($0))" } ?? "")).tag("")
+                    Text(tr("System default") + (monitor.defaultName.map { " (\($0))" } ?? "")).tag("")
                     ForEach(monitor.devices) { Text($0.name).tag($0.uid) }
                     if !settings.soundOutputUID.isEmpty, !monitor.devices.contains(where: { $0.uid == settings.soundOutputUID }) {
                         Text("\(settings.soundOutputUID) (not connected)").tag(settings.soundOutputUID)
@@ -814,7 +814,7 @@ private struct SoundTab: View {
                     HStack {
                         Label2(title: "Volume", detail: "On top of the guest's own volume.", now: true)
                         Spacer()
-                        Text(settings.soundMute ? "muted" : "\(Int((settings.soundVolume * 100).rounded())) %")
+                        Text(settings.soundMute ? tr("muted") : "\(Int((settings.soundVolume * 100).rounded())) %")
                             .monospacedDigit().foregroundStyle(.secondary)
                     }
                     HStack {
@@ -837,7 +837,7 @@ private struct SoundTab: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     if let p = liveProblem {
-                        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        Label(tr(p), systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                     }
                     Text("Microphone: the guest records from the macOS default input; macOS asks for permission the first time.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -880,8 +880,8 @@ private struct AdvancedTab: View {
             Section {
                 Picker(selection: Binding(get: { settings.cpus == 0 },
                                           set: { settings.cpus = $0 ? 0 : min(AdvancedTab.maxCPUs, AdvancedTab.autoCPUs) })) {
-                    Text("Automatic (\(AdvancedTab.autoCPUs) for this Mac)").tag(true)
-                    Text("Custom").tag(false)
+                    Text(tr("Automatic (%@ for this Mac)", "\(AdvancedTab.autoCPUs)")).tag(true)
+                    Text(tr("Custom")).tag(false)
                 } label: {
                     Label2(title: "Virtual CPUs", detail: "Automatic: one per performance core of this Mac (2 to 8).",
                            now: false, key: .cpus)
@@ -900,8 +900,8 @@ private struct AdvancedTab: View {
                 }
                 Picker(selection: Binding(get: { settings.memMiB == 0 },
                                           set: { settings.memMiB = $0 ? 0 : min(AdvancedTab.maxGiB, AdvancedTab.autoGiB) * 1024 })) {
-                    Text("Automatic (\(AdvancedTab.autoGiB) GB for this Mac)").tag(true)
-                    Text("Custom").tag(false)
+                    Text(tr("Automatic (%@ for this Mac)", "\(AdvancedTab.autoGiB) GB")).tag(true)
+                    Text(tr("Custom")).tag(false)
                 } label: {
                     Label2(title: "Memory", detail: "Automatic: half of this Mac's RAM (4 to 16 GB). The Mac's GPU memory "
                            + "comes from the same RAM, so the rest stays with macOS and the games' graphics.",
@@ -962,7 +962,7 @@ private struct AdvancedTab: View {
                         }
                     }
                     HStack {
-                        Text(state == .applied ? "Password applied in SteamOS" : "Password will apply on next start")
+                        Text(tr(state == .applied ? "Password applied in SteamOS" : "Password will apply on next start"))
                             .font(.caption).foregroundStyle(state == .applied ? Color.secondary : Color.orange)
                         Spacer()
                         Button("Regenerate Password") { password.regenerate() }
@@ -1050,21 +1050,22 @@ private struct AdvancedTab: View {
             guard let home = table.entries.last, home.name == "home" else { throw OptionError("not a SteamOS disk") }
             let current = Double(home.sectors * 512) / Double(1 << 30)
             let alert = NSAlert()
-            alert.messageText = "Grow SteamOS Disk"
+            alert.messageText = tr("Grow SteamOS Disk")
             let running = context.diskPath == path && context.restart != nil
-            alert.informativeText = String(format: "Games currently have %.1f GiB. Enter a larger home capacity in GiB (up to 4096). "
+            let growFormat = "Games currently have %.1f GiB. Enter a larger home capacity in GiB (up to 4096). "
                 + "This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; "
                 + "exFAT takes the full added size immediately and needs that much free space. "
                 + (running ? "SteamOS will shut down normally, the image will be enlarged while it is stopped, then restart."
-                   : "SteamOS must be stopped. The partition and filesystem grow on its next boot."), current)
+                   : "SteamOS must be stopped. The partition and filesystem grow on its next boot.")
+            alert.informativeText = String(format: tr(growFormat), current)
             let field = NSTextField(string: String(min(4096, Int(ceil(current)) + 64)))
             field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
             alert.accessoryView = field
-            alert.addButton(withTitle: running ? "Grow and Restart" : "Grow Disk")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: tr(running ? "Grow and Restart" : "Grow Disk"))
+            alert.addButton(withTitle: tr("Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             guard let size = Int(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                throw OptionError("enter a whole number of GiB")
+                throw OptionError(tr("enter a whole number of GiB"))
             }
             let request = try DiskGrower.request(path: path, homeGiB: size)
             if running, let runDir = Supervisor.runDir {
@@ -1073,13 +1074,13 @@ private struct AdvancedTab: View {
             } else {
                 try DiskGrower.grow(request)
                 let done = NSAlert()
-                done.messageText = "SteamOS disk enlarged"
-                done.informativeText = "Start SteamOS to finish growing the home partition and filesystem."
+                done.messageText = tr("SteamOS disk enlarged")
+                done.informativeText = tr("Start SteamOS to finish growing the home partition and filesystem.")
                 done.runModal()
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "SteamOS disk could not be grown"
+            alert.messageText = tr("SteamOS disk could not be grown")
             alert.informativeText = "\(error)"
             alert.runModal()
         }
@@ -1087,7 +1088,7 @@ private struct AdvancedTab: View {
 
     private func chooseDisk() {
         let panel = NSOpenPanel()
-        panel.title = "Choose a SteamOS disk image"
+        panel.title = tr("Choose a SteamOS disk image")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -1102,7 +1103,7 @@ private struct AdvancedTab: View {
 private struct SizeWarning: View {
     let text: String
     var body: some View {
-        Label(text, systemImage: "exclamationmark.triangle")
+        Label(tr(text), systemImage: "exclamationmark.triangle")
             .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -1146,7 +1147,7 @@ private final class GuestPasswordModel: ObservableObject {
         if shown != nil { shown = nil; return }
         guard let disk else { return }
         shown = GuestPassword.password(disk: disk)
-        if shown == nil { error = "The password could not be read from the Keychain." }
+        if shown == nil { error = tr("The password could not be read from the Keychain.") }
     }
 
     func copy(password: Bool, port: Int) {

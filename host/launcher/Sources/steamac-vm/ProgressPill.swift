@@ -307,7 +307,7 @@ final class NoPictureGuard {
     static let missingThreshold: TimeInterval = 3
     static let blackThreshold: TimeInterval = 5
     static let blackFraction = 0.995
-    static let title = "Waiting for SteamOS to draw…"
+    static let title = NSLocalizedString("Waiting for SteamOS to draw…", comment: "")
 
     private let probe: (UInt64) -> Scanout.Probe
     private var timer: DispatchSourceTimer?

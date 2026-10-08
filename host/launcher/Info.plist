@@ -20,6 +20,13 @@
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>GCSupportsControllerUserInteraction</key>

@@ -189,11 +189,11 @@ final class StallMonitor {
 
     private func text(now: CFTimeInterval, idle: CFTimeInterval) -> (String, String) {
         if notResponding() {
-            return ("SteamOS is not responding…", "waiting (\(Int(idle)) s)")
+            return (tr("SteamOS is not responding…"), tr("waiting (%@ s)", "\(Int(idle))"))
         }
-        let title = "Still working — loading or compiling shaders…"
-        var detail = "VM CPU \(String(format: "%.1f", currentCPU())) cores"
-        if lastAlive > 0 { detail += " · guest alive" }
+        let title = tr("Still working — loading or compiling shaders…")
+        var detail = tr("VM CPU %@ cores", String(format: "%.1f", currentCPU()))
+        if lastAlive > 0 { detail += " · " + tr("guest alive") }
         return (title, detail)
     }
 
@@ -417,7 +417,7 @@ final class StallIndicatorView: NSView {
     }
 
     private var linkString: NSAttributedString {
-        NSAttributedString(string: "Report…", attributes: [
+        NSAttributedString(string: tr("Report…"), attributes: [
             .font: NSFont.systemFont(ofSize: 13 * scaleFactor, weight: .semibold),
             .foregroundColor: OverlayView.color(0x66c0f4),
             .underlineStyle: NSUnderlineStyle.single.rawValue])

@@ -309,13 +309,13 @@ final class SuspendController: NSObject, NSMenuDelegate {
         NSApp.activate()
         if let shown = quitPrompt { return shown.window.makeKeyAndOrderFront(nil) }
         let alert = NSAlert()
-        alert.messageText = "SteamOS is suspended"
-        alert.informativeText = "Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. "
-            + "The suspended state (and a running game's unsaved progress) is not kept."
-        let shutdown = alert.addButton(withTitle: "Shut Down SteamOS")
+        alert.messageText = tr("SteamOS is suspended")
+        alert.informativeText = tr("Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. "
+            + "The suspended state (and a running game's unsaved progress) is not kept.")
+        let shutdown = alert.addButton(withTitle: tr("Shut Down SteamOS"))
         shutdown.target = self
         shutdown.action = #selector(quitPromptShutdown)
-        let cancel = alert.addButton(withTitle: "Cancel")
+        let cancel = alert.addButton(withTitle: tr("Cancel"))
         cancel.target = self
         cancel.action = #selector(quitPromptCancel)
         alert.layout()
@@ -367,15 +367,15 @@ final class SuspendController: NSObject, NSMenuDelegate {
     private func showStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "SteamOS suspended")
+            let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: tr("SteamOS suspended"))
             image?.isTemplate = true
             button.image = image
-            button.toolTip = "SteamOS suspended — FX Steam Launcher"
+            button.toolTip = tr("SteamOS suspended — FX Steam Launcher")
         }
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
-        let title = NSMenuItem(title: "SteamOS suspended", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: tr("SteamOS suspended"), action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
         let memory = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -383,16 +383,16 @@ final class SuspendController: NSObject, NSMenuDelegate {
         menu.addItem(memory)
         memoryItem = memory
         menu.addItem(.separator())
-        let resume = NSMenuItem(title: "Resume", action: #selector(menuResume), keyEquivalent: "")
+        let resume = NSMenuItem(title: tr("Resume"), action: #selector(menuResume), keyEquivalent: "")
         resume.target = self
         menu.addItem(resume)
-        let shutdown = NSMenuItem(title: "Shut Down SteamOS", action: #selector(menuShutdown), keyEquivalent: "")
+        let shutdown = NSMenuItem(title: tr("Shut Down SteamOS"), action: #selector(menuShutdown), keyEquivalent: "")
         shutdown.target = self
         menu.addItem(shutdown)
         menu.addItem(.separator())
         let note = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         note.attributedTitle = NSAttributedString(
-            string: "Suspended state is kept while FX Steam Launcher is running.",
+            string: tr("Suspended state is kept while FX Steam Launcher is running."),
             attributes: [.font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
         note.isEnabled = false
         menu.addItem(note)
@@ -409,7 +409,7 @@ final class SuspendController: NSObject, NSMenuDelegate {
 
     private func updateMemoryItem() {
         let since = pausedAt.map { DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short) } ?? "?"
-        memoryItem?.title = "Since \(since) · \(SuspendController.memoryText() ?? "memory unknown")"
+        memoryItem?.title = tr("Since %@ · %@", since, SuspendController.memoryText() ?? tr("memory unknown"))
     }
 
     func menuWillOpen(_ menu: NSMenu) { updateMemoryItem() }
@@ -438,7 +438,7 @@ final class SuspendController: NSObject, NSMenuDelegate {
     /// far plus the host GPU state).
     static func memoryText() -> String? {
         guard let bytes = footprint() else { return nil }
-        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory) + " of memory in use"
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory) + tr(" of memory in use")
     }
 
     static func footprint() -> UInt64? {

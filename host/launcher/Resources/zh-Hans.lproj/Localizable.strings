@@ -1,0 +1,371 @@
+/* FX Steam Launcher — Simplified Chinese (zh-Hans) UI strings.
+   Table: Localizable (default). Keys are the English source strings.
+   Logs, CLI --help, guest-protocol and boot-progress titles stay in English. */
+
+/* Settings tabs */
+"General" = "通用";
+"Display" = "显示";
+"Mouse" = "鼠标";
+"Controller" = "控制器";
+"Sound" = "声音";
+"Advanced" = "高级";
+
+/* applies captions */
+"applies now" = "立即生效";
+"applies on next start" = "下次启动时生效";
+"overridden by command line (%@)" = "已被命令行覆盖（%@）";
+
+/* Restart bar */
+"Restarting the VM…" = "正在重启虚拟机…";
+"Some changes apply on the next start." = "部分更改将在下次启动时生效。";
+"No VM is running in this window." = "此窗口中没有正在运行的虚拟机。";
+"SteamOS shuts down cleanly and boots again with the new settings." = "SteamOS 将干净关机，并使用新设置重新启动。";
+"Restart VM to apply" = "重启虚拟机以应用";
+
+/* General tab */
+"Show boot and shutdown overlay" = "显示启动和关机进度界面";
+"Full-window FX progress while SteamOS starts, restarts and shuts down. Off, or after a click: a small progress pill." = "SteamOS 启动、重启和关机时显示全屏 FX 进度。关闭后（或点按后）只显示小进度条。";
+"Show indicator when the GPU goes idle" = "GPU 空闲时显示提示";
+"\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." = "SteamOS 2 秒无 GPU 活动时（正在加载、编译着色器）在画面上显示“仍在工作”卡片。";
+"Open in full screen" = "以全屏方式打开";
+"Shut down SteamOS" = "关闭 SteamOS";
+"Suspend (keep running in the background)" = "暂停（在后台保持运行）";
+"When closing the window" = "关闭窗口时";
+"Suspend freezes SteamOS and the running game at once and keeps them in memory; click the Dock icon or Resume in the menu bar to continue where you left off. Suspended state is kept while FX Steam Launcher is running: quitting the app or restarting the Mac shuts SteamOS down." = "暂停会同时冻结 SteamOS 和正在运行的游戏并保留在内存中；点按程序坞图标或菜单栏中的“继续”即可回到原处。暂停状态仅在 FX Steam Launcher 运行期间保留：退出应用或重启 Mac 会关闭 SteamOS。";
+"Use the Mac's time zone and clock format" = "使用 Mac 的时区和时钟格式";
+"SteamOS gets the Mac's time zone and 12/24-hour format at every start, until you change each in SteamOS or Steam." = "每次启动时 SteamOS 采用 Mac 的时区和 12/24 小时制，直到你在 SteamOS 或 Steam 中单独修改。";
+"Share clipboard with SteamOS" = "与 SteamOS 共享剪贴板";
+"Text and images copied on the Mac can be pasted in SteamOS (Ctrl+V) and the other way round; up to 1 MB of text and 16 MB images. Desktop Mode included." = "在 Mac 上复制的文本和图片可以粘贴到 SteamOS（Ctrl+V），反之亦然；文本上限 1 MB，图片上限 16 MB。含桌面模式。";
+"Include concealed (password manager) items" = "包含隐藏（密码管理器）内容";
+"Passwords that apps like 1Password, Bitwarden or KeePassXC mark as concealed or transient stay on the Mac unless this is on." = "1Password、Bitwarden、KeePassXC 等标记为隐藏或临时性的密码，默认保留在 Mac 上，打开此项才会共享。";
+"When FX Steam Launcher is in the background" = "当 FX Steam Launcher 在后台时";
+"Mute sound" = "静音";
+"Short fade; the volume comes back when you switch back." = "短暂淡出；切回窗口时恢复音量。";
+"Pause the game" = "暂停游戏";
+"Freezes the focused game (Steam, downloads and updates keep running). Online games may disconnect while paused." = "冻结当前焦点的游戏（Steam、下载和更新继续运行）。在线游戏在暂停期间可能断线。";
+"Send crash reports and diagnostics" = "发送崩溃报告和诊断信息";
+"What is sent" = "发送内容";
+"Check for updates at startup" = "启动时检查更新";
+"Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app version is sent. " = "最多每 6 小时向 GitHub（api.github.com）查询一次最新版本，只发送应用版本号。";
+"This development build never checks at startup; FX Steam Launcher > Check for Updates… does." = "此开发版启动时从不检查；可用“FX Steam Launcher > 检查更新…”手动检查。";
+"FX Steam Launcher > Check for Updates… checks at any time." = "随时可用“FX Steam Launcher > 检查更新…”手动检查。";
+"Log frame-pacing statistics" = "记录帧 pacing 统计";
+"Every 5 s: guest flush and on-screen frame intervals, latency, dropped frames." = "每 5 秒：客户机刷新与上屏帧间隔、延迟、丢帧。";
+"Log: %@" = "日志：%@";
+"Report a Problem" = "报告问题";
+"Report a Problem…" = "报告问题…";
+"Describe what went wrong and send it with the logs you choose to the developers (works with crash reports off, too)." = "描述故障经过，并附上你选择的日志发送给开发者（关闭崩溃报告也能用）。";
+
+/* Display tab */
+"Physical size source" = "物理尺寸来源";
+"Sets the guest's UI scale. Auto = the window's real size on this Mac's screen." = "设置客户机 UI 缩放。自动 = 按此 Mac 屏幕上的窗口真实尺寸。";
+"Auto (from the screen)" = "自动（取自屏幕）";
+"Fixed DPI" = "固定 DPI";
+"Fixed size (mm)" = "固定尺寸（毫米）";
+"Size at the default window size" = "默认窗口尺寸下的尺寸";
+"Refresh rate" = "刷新率";
+"Guest display follows the window size" = "客户机显示跟随窗口大小";
+"Off: the guest keeps its resolution and the picture is scaled to the window." = "关闭：客户机保持分辨率，画面缩放到窗口。";
+"Default window size" = "默认窗口大小";
+"Guest pixels = window points (twice per side with Retina resolution); at least 800 × 500." = "客户机像素 = 窗口点数（Retina 分辨率下每边 ×2）；至少 800×500。";
+"Fit to screen (%@)" = "适应屏幕（%@）";
+"Custom…" = "自定…";
+"Custom size" = "自定尺寸";
+"Retina resolution" = "Retina 分辨率";
+"The guest gets the screen's full pixel density (2 × 2 pixels per point on Retina screens), with the UI scaled to the same size: sharp text, but games draw 4× the pixels. Recommended instead: leave this off and turn on MetalFX super resolution, which upscales the guest 2× to the Retina screen at a fraction of the cost." = "客户机获得屏幕完整像素密度（Retina 屏每点 2×2 像素），UI 放大到同样尺寸：文字锐利，但游戏要画 4 倍像素。更推荐：关闭此项并开启 MetalFX 超分辨率，以小得多的代价把画面 2 倍放大到 Retina 屏。";
+"Off: one guest pixel per point, scaled up to Retina screens (MetalFX super resolution can sharpen it). On: the guest renders at the screen's full pixel density." = "关闭：每点一个客户机像素，放大到 Retina 屏（可用 MetalFX 超分辨率锐化）。开启：客户机按屏幕完整像素密度渲染。";
+"Metal Performance HUD" = "Metal 性能 HUD";
+"Apple's frame-rate overlay in the top-right corner of the window: FPS, frame interval, GPU time, memory (Ctrl+Cmd+P, View menu)." = "窗口右上角的 Apple 帧率叠加层：FPS、帧间隔、GPU 时间、内存（Ctrl+Cmd+P，“显示”菜单）。";
+"MetalFX super resolution" = "MetalFX 超分辨率";
+"Not supported on this Mac's GPU." = "此 Mac 的 GPU 不支持。";
+"Apple's MetalFX upscaler sharpens the guest picture when the window has more pixels than the guest (2× on Retina screens, scaled or fullscreen windows) instead of plain scaling." = "当窗口像素多于客户机时（Retina 屏 2 倍、缩放或全屏窗口），用 Apple MetalFX 放大锐化客户机画面，而非普通缩放。";
+" Little to upscale while Retina resolution is on." = "开启 Retina 分辨率后可放大的余地很小。";
+
+/* Mouse tab */
+"Capture the mouse in games" = "在游戏中捕获鼠标";
+"While a game has focus, a click captures the pointer (relative motion for mouse-look)." = "游戏获得焦点时，点按即捕获指针（相对移动用于视角）。";
+"Release the mouse" = "释放鼠标";
+"Ctrl+Option  (Ctrl+Cmd+G toggles)" = "Ctrl+Option（Ctrl+Cmd+G 切换）";
+"Steam UI and desktop" = "Steam 界面和桌面";
+"pointer follows the Mac cursor 1:1 (fixed)" = "指针与 Mac 光标 1:1 跟随（固定）";
+"Games appear here after you play them in SteamOS." = "在 SteamOS 中玩过的游戏会显示在这里。";
+"Per game" = "按游戏";
+"Default (Auto)" = "默认（自动）";
+"Default (Off)" = "默认（关闭）";
+"Auto" = "自动";
+"Off" = "关闭";
+"Forget this game" = "忘记此游戏";
+"Unknown game" = "未知游戏";
+
+/* Controller tab */
+"Virtual controller" = "虚拟控制器";
+"SteamOS gets a gamepad while a controller is connected." = "连接控制器期间 SteamOS 获得一个手柄。";
+"Appears in SteamOS as" = "在 SteamOS 中显示为";
+"Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360). Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)." = "Steam 中的按键图标和布局。自动：与驱动它的控制器同类（DualSense、DualShock 4，其他为 Xbox 360）。含按键、摇杆、扳机和振动（除非直通 DualSense，否则无触摸板、陀螺仪和光条）。";
+"Automatic" = "自动";
+"Xbox 360 controller" = "Xbox 360 控制器";
+"DualSense" = "DualSense";
+"DualShock 4" = "DualShock 4";
+"Pass a DualSense through" = "直通 DualSense";
+"When a DualSense appears as a DualSense, SteamOS gets the controller itself: touchpad, motion sensors, lightbar, mute button and its light, rumble and adaptive triggers, as on a Steam Deck. Swap and deadzone below do not apply to it." = "当 DualSense 以 DualSense 形态出现时，SteamOS 直接获得控制器本身：触摸板、体感、光条、静音键及指示灯、振动和自适应扳机，与 Steam Deck 一致。下面的按键互换和死区对它无效。";
+"Controller that drives it" = "驱动它的控制器";
+"First connected" = "首个已连接";
+"Swap A/B and X/Y" = "互换 A/B 与 X/Y";
+"For Nintendo-style button layouts." = "适用于任天堂式按键布局。";
+"Stick deadzone" = "摇杆死区";
+"Connected controllers — live input test" = "已连接的控制器 — 实时输入测试";
+"No controller connected. Pair one in System Settings › Bluetooth or plug it in via USB." = "未连接控制器。请在“系统设置 › 蓝牙”中配对，或用 USB 连接。";
+"drives the virtual pad" = "驱动虚拟手柄";
+
+/* Sound tab */
+"Guest audio device (virtio-snd → CoreAudio)." = "客户机音频设备（virtio-snd → CoreAudio）。";
+"Output device" = "输出设备";
+"System default" = "系统默认";
+"System default follows changes in macOS." = "系统默认跟随 macOS 的变化。";
+"Volume" = "音量";
+"On top of the guest's own volume." = "叠加在客户机自身音量之上。";
+"muted" = "已静音";
+"Mute" = "静音";
+"Buffer" = "缓冲区";
+"Lower = less latency; Safe avoids crackling under load." = "越小延迟越低；Safe 可在高负载下避免爆音。";
+"Low (10 ms)" = "低（10 毫秒）";
+"Normal (20 ms)" = "普通（20 毫秒）";
+"Safe (60 ms)" = "稳定（60 毫秒）";
+"Microphone: the guest records from the macOS default input; macOS asks for permission the first time." = "麦克风：客户机从 macOS 默认输入录音；首次使用时 macOS 会请求权限。";
+
+/* Advanced tab */
+"Virtual CPUs" = "虚拟 CPU";
+"Automatic: one per performance core of this Mac (2 to 8)." = "自动：按此 Mac 性能核每核一个（2 到 8 个）。";
+"Automatic (%@ for this Mac)" = "自动（此 Mac 为 %@）";
+"Custom" = "自定";
+"Custom vCPUs" = "自定 vCPU";
+"Memory" = "内存";
+"Automatic: half of this Mac's RAM (4 to 16 GB). The Mac's GPU memory comes from the same RAM, so the rest stays with macOS and the games' graphics." = "自动：此 Mac 内存的一半（4 到 16 GB）。Mac 的 GPU 内存来自同一块 RAM，其余留给 macOS 和游戏图形。";
+"Custom memory" = "自定内存";
+"Enable SSH" = "启用 SSH";
+"Off: no port on the Mac and sshd masked in SteamOS. Turning it on generates a password for the user steamos (kept on, but unused, when SSH is off)." = "关闭：Mac 上不开放端口，SteamOS 中屏蔽 sshd。开启会为 steamos 用户生成密码（关闭时保留但不使用）。";
+"SSH port" = "SSH 端口";
+"User" = "用户";
+"Password" = "密码";
+"Show" = "显示";
+"Hide" = "隐藏";
+"Command" = "命令";
+"Password applied in SteamOS" = "密码已在 SteamOS 中生效";
+"Password will apply on next start" = "密码将在下次启动时生效";
+"Regenerate Password" = "重新生成密码";
+"Generate Password" = "生成密码";
+"No generated password for this disk (disks built with Docker use steamos)." = "此磁盘没有生成的密码（用 Docker 构建的磁盘使用 steamos）。";
+"no disk image" = "无磁盘映像";
+"Login" = "登录";
+" (not connected)" = "（未连接）";
+"Network" = "网络";
+"Off: no virtio-net / gvproxy (offline guest, also no SSH)." = "关闭：无 virtio-net / gvproxy（客户机离线，也无 SSH）。";
+"LAN Remote Play" = "局域网 Remote Play";
+"Let Steam Link discover this VM on the same subnet. Opens UDP 27031–27036 and TCP 27036–27037 on the Mac. Allow Local Network access; quit Mac Steam if it uses these ports." = "让 Steam Link 在同一子网发现此虚拟机。在 Mac 上开放 UDP 27031–27036 和 TCP 27036–27037。请允许本地网络访问；若 Mac 版 Steam 占用这些端口请先退出。";
+"Disk image" = "磁盘映像";
+"SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Free space on the Mac does not automatically increase SteamOS's capacity." = "SteamOS 裸 GPT 磁盘，就地使用（从不复制）。若 Steam 提示空间不足，“扩展磁盘…”可在不重建的情况下为游戏扩容。Mac 上的空闲空间不会自动变成 SteamOS 的容量。";
+"Create New Disk…" = "新建磁盘…";
+"Grow Disk…" = "扩展磁盘…";
+"Use Existing Disk…" = "使用已有磁盘…";
+"Use Default" = "使用默认";
+"Steam client" = "Steam 客户端";
+"Switching downloads the other client (about 1 GB) when Steam starts." = "切换后 Steam 启动时会下载另一个客户端（约 1 GB）。";
+"Vulkan driver" = "Vulkan 驱动";
+"Switching makes Steam and games rebuild their shader caches." = "切换后 Steam 和游戏将重建着色器缓存。";
+" Not available here: %@; MoltenVK is used." = " 此处不可用：%@；将使用 MoltenVK。";
+"Reset All Settings…" = "还原所有设置…";
+"Reset all FX Steam Launcher settings to their defaults?" = "将所有 FX Steam Launcher 设置还原为默认值？";
+"Reset" = "还原";
+"Per-game mouse settings and the chosen disk image are forgotten too." = "按游戏的鼠标设置和所选磁盘映像也会被清除。";
+"Grow SteamOS Disk" = "扩展 SteamOS 磁盘";
+"Grow and Restart" = "扩展并重启";
+"Grow Disk" = "扩展磁盘";
+"Cancel" = "取消";
+"SteamOS disk enlarged" = "SteamOS 磁盘已扩展";
+"Start SteamOS to finish growing the home partition and filesystem." = "启动 SteamOS 以完成 home 分区和文件系统的扩容。";
+"SteamOS disk could not be grown" = "无法扩展 SteamOS 磁盘";
+
+/* Steam client names/details */
+"Steam Frame client" = "Steam Frame 客户端";
+"Steam Deck client" = "Steam Deck 客户端";
+"Steam Deck client (beta)" = "Steam Deck 客户端（测试版）";
+" (default)" = "（默认）";
+"Valve's ARM64 client for Steam Frame (a beta for a headset not yet released). Until an account is signed in with Remember me, the Steam Deck client shows the sign-in QR code." = "Valve 为 Steam Frame 准备的 ARM64 客户端（尚未发售的头显的测试版）。在勾选“记住我”登录之前，将使用 Steam Deck 客户端显示登录二维码。";
+"The public ARM64 Steam Deck client (steamdeck_stable). Standard sign-in with an on-screen QR code." = "公开的 ARM64 Steam Deck 客户端（steamdeck_stable）。用屏幕二维码常规登录。";
+"The Steam Deck client beta (steamdeck_publicbeta). Standard sign-in with an on-screen QR code." = "Steam Deck 客户端测试版（steamdeck_publicbeta）。用屏幕二维码常规登录。";
+
+/* Vulkan driver details */
+"Vulkan on Metal 3 through MoltenVK with steamac's patches (macOS 15 or newer)." = "经 steamac 补丁的 MoltenVK 实现 Metal 3 上的 Vulkan（macOS 15 及更高版本）。";
+"Mesa's Vulkan driver on Metal 4 (macOS 26 or newer). Faster than MoltenVK: Stellar Blade Demo runs at ~29 FPS instead of ~18 on an M1 Max." = "Mesa 在 Metal 4 上的 Vulkan 驱动（macOS 26 及更高版本）。比 MoltenVK 更快：M1 Max 上《星刃》试玩版约 29 FPS，而 MoltenVK 约 18 FPS。";
+" Default on this Mac." = " 此 Mac 上的默认选项。";
+"needs macOS 26 or newer (Metal 4)" = "需要 macOS 26 或更高版本（Metal 4）";
+"not included in this build (%@)" = "此构建未包含（%@）";
+
+/* VM size warnings */
+"%@ MiB VM RAM + %@ MiB GPU budget + %@ MiB reserved for macOS on this %@ GB Mac. Too little GPU memory remains: lower VM memory or graphics settings to avoid swapping, out-of-memory errors or the VM being killed." = "此 %@ GB Mac 上：虚拟机内存 %@ MiB + GPU 预算 %@ MiB + macOS 保留 %@ MiB。GPU 内存剩余不足：请降低虚拟机内存或图形设置，以免交换内存、内存不足错误或虚拟机被杀。";
+"More than this Mac's %@ performance cores. The extra vCPUs run on efficiency cores, which slows the guest down and leaves fewer cores for the Mac's GPU work." = "超过此 Mac 的 %@ 个性能核。多余的 vCPU 将跑在能效核上，会拖慢客户机，也会挤占 Mac GPU 相关工作的核心。";
+
+/* Menus */
+"Check for Updates…" = "检查更新…";
+"Settings…" = "设置…";
+"Suspend" = "暂停";
+"Resume" = "继续";
+"Restart VM" = "重启虚拟机";
+"Force Quit" = "强制退出";
+"Quit FX Steam Launcher" = "退出 FX Steam Launcher";
+"View" = "显示";
+"Toggle Full Screen (Ctrl+Cmd+F)" = "切换全屏（Ctrl+Cmd+F）";
+"Grab Pointer (Ctrl+Cmd+G; Ctrl+Option releases)" = "捕获指针（Ctrl+Cmd+G；Ctrl+Option 释放）";
+"Show Boot Progress" = "显示启动进度";
+"Show Metal Performance HUD (Ctrl+Cmd+P)" = "显示 Metal 性能 HUD（Ctrl+Cmd+P）";
+"Help" = "帮助";
+"Capture Mouse in This Game" = "在此游戏中捕获鼠标";
+"Capture Mouse in This Game (%@)" = "在此游戏中捕获鼠标（%@）";
+"Auto-Capture Mouse in Games" = "在游戏中自动捕获鼠标";
+"Capture / Release Mouse Now (Ctrl+Cmd+G)" = "立即捕获 / 释放鼠标（Ctrl+Cmd+G）";
+"Edit" = "编辑";
+"Undo" = "撤销";
+"Redo" = "重做";
+"Cut" = "剪切";
+"Copy" = "拷贝";
+"Paste" = "粘贴";
+"Select All" = "全选";
+"Window" = "窗口";
+"Close" = "关闭";
+"Minimize" = "最小化";
+
+/* Window titles / status */
+"sleeping — click to wake" = "睡眠中 — 点按唤醒";
+"paused" = "已暂停";
+"mouse captured — Ctrl+Option releases" = "鼠标已捕获 — Ctrl+Option 释放";
+"click to capture the mouse" = "点按以捕获鼠标";
+"click to capture the mouse (Ctrl+Option releases)" = "点按以捕获鼠标（Ctrl+Option 释放）";
+"auto-capture on for %@" = "已为 %@ 开启自动捕获";
+"auto-capture off for %@" = "已为 %@ 关闭自动捕获";
+"auto-capture in games on" = "游戏中自动捕获已开启";
+"auto-capture in games off" = "游戏中自动捕获已关闭";
+"shutting down… (close again to force quit)" = "正在关机…（再次关闭则强制退出）";
+"restarting… (close to force quit)" = "正在重启…（关闭则强制退出）";
+"Create SteamOS Disk" = "创建 SteamOS 磁盘";
+"Software Update" = "软件更新";
+"Stop creating the disk?" = "停止创建磁盘？";
+"Downloaded data is kept; creating the disk again continues from there." = "已下载的数据会保留；下次创建将从断点继续。";
+"Stop" = "停止";
+"Continue" = "继续";
+"Location of the new SteamOS disk" = "新 SteamOS 磁盘的位置";
+
+/* First run */
+"No SteamOS disk image" = "没有 SteamOS 磁盘映像";
+"FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse)." = "FX Steam Launcher 需要 SteamOS 磁盘映像（steamos.img，约 87 GB 稀疏文件）。";
+"The image chosen in Settings is not readable:\n%@" = "设置中所选映像不可读：\n%@";
+"Looked in:" = "已查找：";
+"Create a new one: the official SteamOS image is downloaded from Valve and verified (about 4.5 GB; the disk uses ~10 GB on your Mac at first). Or choose an existing image, which is used in place and never copied." = "可新建一个：从 Valve 下载官方 SteamOS 映像并校验（约 4.5 GB；磁盘起初在 Mac 上占用约 10 GB）。或选择已有映像，就地使用，从不复制。";
+"Choose a SteamOS disk image" = "选择 SteamOS 磁盘映像";
+"Raw GPT disk image (e.g. steamos.img). It stays where it is." = "裸 GPT 磁盘映像（如 steamos.img）。就地使用，不移动。";
+"Quit" = "退出";
+
+/* Suspend */
+"SteamOS is suspended" = "SteamOS 已暂停";
+"SteamOS suspended" = "SteamOS 已暂停";
+"Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. The suspended state (and a running game's unsaved progress) is not kept." = "退出 FX Steam Launcher 会关闭 SteamOS：它会先恢复再干净关机。暂停状态（及运行中游戏未保存的进度）不会保留。";
+"Since %@ · %@" = "自 %@ · %@";
+"memory unknown" = "内存未知";
+" of memory in use" = "内存正在使用";
+"SteamOS suspended — FX Steam Launcher" = "SteamOS 已暂停 — FX Steam Launcher";
+"Suspended state is kept while FX Steam Launcher is running." = "暂停状态仅在 FX Steam Launcher 运行期间保留。";
+"Shut Down SteamOS" = "关闭 SteamOS";
+
+/* Stall / pause / no-picture cards */
+"Still working — loading or compiling shaders…" = "仍在工作 — 正在加载或编译着色器…";
+"SteamOS is not responding…" = "SteamOS 无响应…";
+"waiting (%@ s)" = "等待中（%@ 秒）";
+"VM CPU %@ cores" = "虚拟机 CPU %@ 核";
+"guest alive" = "客户机存活";
+"Report…" = "报告…";
+"Game paused" = "游戏已暂停";
+"Click to resume" = "点按以继续";
+"SteamOS is sleeping" = "SteamOS 睡眠中";
+"Click or press a key or controller button to wake it" = "点按、按键或按手柄按键唤醒";
+"Waiting for SteamOS to draw…" = "等待 SteamOS 绘制…";
+
+/* Create disk window */
+"Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM." = "从 Valve 下载官方 SteamOS 映像（签名包，约 4.5 GB 数据），校验 Valve 签名和映像校验和，并写入新磁盘。首次启动时再在虚拟机内完成设置。";
+"SteamOS branch" = "SteamOS 分支";
+"Home partition (games, sparse)" = "Home 分区（游戏，稀疏文件）";
+"Location" = "位置";
+"A file with this name exists; it is never overwritten. Choose another name." = "同名文件已存在；从不覆盖，请另选名称。";
+"%@ free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache." = "该处可用 %@；约需 14 GB（磁盘为稀疏文件）另加约 6 GB 下载缓存。";
+"Password for user steamos (optional)" = "steamos 用户密码（可选）";
+"none" = "无";
+"I accept Valve's SteamOS license and the Steam Subscriber Agreement" = "我接受 Valve 的 SteamOS 许可和 Steam 订户协议";
+"SteamOS and the Steam client are Valve's software. Valve licenses them for personal use only and forbids redistributing them; Steam itself is governed by the Steam Subscriber Agreement." = "SteamOS 和 Steam 客户端是 Valve 的软件。Valve 仅许可个人使用，禁止再分发；Steam 本身受 Steam 订户协议约束。";
+"Failed" = "失败";
+"Stopped — Create continues where it left off" = "已停止 — 下次创建将从断点继续";
+"Starting…" = "正在开始…";
+"Choose…" = "选择…";
+"Create" = "创建";
+
+/* Crash reporting */
+"Crash reports and rare errors go to the FX Steam Launcher developers (Sentry). No personal data." = "崩溃报告和偶发错误会发送给 FX Steam Launcher 开发者（Sentry）。不含个人数据。";
+"Crash reports of the launcher and the VM process: crash reason, stack traces, loaded libraries." = "启动器和虚拟机进程的崩溃报告：崩溃原因、堆栈、已加载库。";
+"A few errors: guest GPU context lost, shader pipeline compile failures (with an excerpt of the failing Metal shader source), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding." = "少量错误：客户机 GPU 上下文丢失、着色器管线编译失败（附失败 Metal 着色器源码片段）、libkrun panic、磁盘创建或首次启动设置失败、虚拟机意外停止或被杀（附 Mac 内存占用）、SteamOS 无响应。";
+"The launcher's last ~200 log lines (launcher, MoltenVK, libkrun and virglrenderer messages; home folder paths shortened to ~) and the boot stages." = "启动器最近约 200 行日志（启动器、MoltenVK、libkrun 和 virglrenderer 消息；家目录路径缩写为 ~）及启动阶段。";
+"Versions and setup: app, macOS, libkrun/virglrenderer/MoltenVK builds, kernel, SteamOS build, Mac model, GPU, VM CPUs/RAM/display mode, game App IDs." = "版本与配置：应用、macOS、libkrun/virglrenderer/MoltenVK 构建、内核、SteamOS 构建、Mac 机型、GPU、虚拟机 CPU/内存/显示模式、游戏 App ID。";
+"A random install ID (not linked to you) to count affected Macs." = "随机安装 ID（与你无关），用于统计受影响的 Mac 数量。";
+"Never: your name, user or computer name, IP address, Steam account, game titles, files, or the SteamOS console." = "绝不包含：你的姓名、用户名或电脑名、IP 地址、Steam 账号、游戏标题、文件、SteamOS 控制台。";
+"Reports go to the developers' own Sentry server (sentry.fxgam.es). Turn this off any time in Settings > General, or for one run with --no-crash-reports / STEAMAC_SENTRY=0." = "报告发送到开发者自己的 Sentry 服务器（sentry.fxgam.es）。可随时在“设置 > 通用”中关闭，或单次用 --no-crash-reports / STEAMAC_SENTRY=0 关闭。";
+
+/* Update check */
+"Checking for updates…" = "正在检查更新…";
+"FX Steam Launcher %@ is available — you have %@" = "FX Steam Launcher %@ 可用 — 当前为 %@";
+"Release notes" = "更新说明";
+"You're up to date" = "已是最新版本";
+"FX Steam Launcher %@ is the newest version available." = "FX Steam Launcher %@ 已是最新版本。";
+"Couldn't check for updates" = "无法检查更新";
+"Skip This Version" = "跳过此版本";
+"Remind Me Later" = "稍后提醒";
+"Download" = "下载";
+"OK" = "好";
+"Open Releases Page" = "打开发布页面";
+
+/* Report a Problem */
+"Email" = "邮箱";
+"Enter a valid email address." = "请输入有效的邮箱地址。";
+"So the developers can reply. Remembered on this Mac." = "以便开发者回复。记住在此 Mac 上。";
+"What happened?" = "发生了什么？";
+"What you did, what you expected and what happened instead (game, settings, since when)…" = "你做了什么、期望什么、实际发生了什么（游戏、设置、何时开始）…";
+"A few more words, please (at least 10 characters)." = "请再多写几句（至少 10 个字符）。";
+"Describe what went wrong. Your description, your email and the items checked below go to the FX Steam Launcher developers (sentry.fxgam.es)." = "描述故障经过。你的描述、邮箱和下方勾选的内容将发送给 FX Steam Launcher 开发者（sentry.fxgam.es）。";
+"Include launcher logs" = "包含启动器日志";
+"This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)." = "本次会话的启动器、libkrun、virglrenderer 和 MoltenVK 消息及 perf/stall 行（最近约 2 MB；家目录路径缩写为 ~，移除用户名和电脑名）。";
+"Include SteamOS logs (system journal, Steam/Proton logs)" = "包含 SteamOS 日志（系统 journal、Steam/Proton 日志）";
+"The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Steam IDs, account names and email addresses are removed where recognisable." = "SteamOS 控制台、本次启动的系统 journal、coredump、dmesg、Steam 客户端日志和 Proton 日志。可识别的 Steam ID、账号名和邮箱会被移除。";
+"SteamOS is not running: only its console log of this session is included." = "SteamOS 未运行：仅包含本次会话的控制台日志。";
+"Include a screenshot of the VM window" = "包含虚拟机窗口截图";
+"Off by default: the picture may show your Steam account name, friends or other personal information." = "默认关闭：画面可能显示你的 Steam 账号名、好友或其他个人信息。";
+"No VM window is open." = "没有打开的虚拟机窗口。";
+"Report sent — thank you!" = "报告已发送 — 谢谢！";
+"The report could not be sent" = "报告发送失败";
+"Always included: app, macOS and library versions, Mac model, GPU, disk sizes and the launcher settings (never passwords or Keychain items)." = "始终包含：应用、macOS 和库版本、Mac 机型、GPU、磁盘大小和启动器设置（绝不含密码或钥匙串内容）。";
+"Crash reports are off. Sending this report does not turn them on: only this report is sent." = "崩溃报告已关闭。发送此报告不会将其打开：仅发送这一份报告。";
+"Show What Will Be Sent" = "查看将发送的内容";
+"Send" = "发送";
+"Report ID:" = "报告 ID：";
+"Mention this ID if you contact the developers about this problem." = "联系开发者时请附上此 ID。";
+"It was saved in %@. Try again later, or send that folder to the developers by email." = "已保存在 %@。稍后重试，或将该文件夹用邮件发给开发者。";
+"Done" = "完成";
+"Reveal in Finder" = "在访达中显示";
+"Retry" = "重试";
+"FX Steam Launcher stopped unexpectedly" = "FX Steam Launcher 意外停止";
+"The virtual machine ended without being asked to (%@)." = "虚拟机在未被要求的情况下结束了（%@）。";
+"Report it with the logs of this session so the developers can look into it." = "请附上本次会话的日志进行报告，以便开发者排查。";
+
+/* Misc UI */
+"DPI: %@" = "DPI：%@";
+"game %@" = "游戏 %@";
+"auto-capture off for %@ (Ctrl+Cmd+G captures)" = "已为 %@ 关闭自动捕获（Ctrl+Cmd+G 手动捕获）";
+"Update Available: %@…" = "有可用更新：%@…";
+"enter a whole number of GiB" = "请输入整数 GiB";
+"The password could not be read from the Keychain." = "无法从钥匙串读取密码。";
+"Games currently have %.1f GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space. SteamOS will shut down normally, the image will be enlarged while it is stopped, then restart." = "游戏当前占用 %.1f GiB。请输入更大的 home 容量（GiB，上限 4096）。此操作从不缩小或删除磁盘。APFS / Mac OS 扩展格式按 SteamOS 实际写入占用空间；exFAT 会立即占用全部新增空间，需要等量空闲空间。SteamOS 将正常关机，停止期间扩展映像，然后重启。";
+"Games currently have %.1f GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space. SteamOS must be stopped. The partition and filesystem grow on its next boot." = "游戏当前占用 %.1f GiB。请输入更大的 home 容量（GiB，上限 4096）。此操作从不缩小或删除磁盘。APFS / Mac OS 扩展格式按 SteamOS 实际写入占用空间；exFAT 会立即占用全部新增空间，需要等量空闲空间。SteamOS 必须处于停止状态，分区和文件系统将在下次启动时扩容。";

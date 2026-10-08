@@ -232,7 +232,7 @@ final class UpdateChecker {
     }
 
     var menuTitle: String {
-        available.map { "Update Available: \($0.versionString)…" } ?? "Check for Updates…"
+        available.map { tr("Update Available: %@…", $0.versionString) } ?? tr("Check for Updates…")
     }
 
     /// GET the release JSON (10 s, If-None-Match with the cached ETag); `done` on the main queue.
@@ -400,7 +400,7 @@ final class UpdatePanel {
         window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: UpdatePanel.width, height: 200),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
         host = NSHostingView(rootView: UpdateView(model: model, actions: actions))
-        window.title = "Software Update"
+        window.title = tr("Software Update")
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.isFloatingPanel = false
@@ -550,7 +550,7 @@ struct UpdateView: View {
                         Button("Cancel") { actions.dismiss() }.keyboardShortcut(.cancelAction)
                     }
                 case .available(let r, let current):
-                    Text("FX Steam Launcher \(r.versionString) is available — you have \(current)")
+                    Text(tr("FX Steam Launcher %@ is available — you have %@", r.versionString, current))
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                     if let subtitle = subtitle(r) {
@@ -575,7 +575,7 @@ struct UpdateView: View {
                     }
                 case .upToDate(let current):
                     Text("You're up to date").font(.headline)
-                    Text("FX Steam Launcher \(current) is the newest version available.")
+                    Text(tr("FX Steam Launcher %@ is the newest version available.", current))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {

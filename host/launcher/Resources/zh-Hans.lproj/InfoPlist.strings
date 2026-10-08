@@ -1,0 +1,3 @@
+/* FX Steam Launcher — Simplified Chinese Info.plist strings. */
+"NSMicrophoneUsageDescription" = "SteamOS 虚拟机在其中的游戏或 Steam 语音聊天使用麦克风时进行录音。";
+"NSLocalNetworkUsageDescription" = "在启用局域网 Remote Play 时，发现本地网络上的 Steam Link 和 Remote Play 设备，并将其连接到 SteamOS 虚拟机中的 Steam。";

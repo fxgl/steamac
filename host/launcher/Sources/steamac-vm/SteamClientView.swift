@@ -12,13 +12,13 @@ struct SteamClientPicker: View {
             Picker("Steam client", selection: $settings.steamClient) {
                 ForEach(LauncherSettings.SteamClient.allCases) { Text(SteamClientPicker.itemTitle($0)).tag($0) }
             }
-            Text(settings.steamClient.detail + " " + LauncherSettings.SteamClient.switchNote)
+            Text(tr(settings.steamClient.detail) + " " + tr(LauncherSettings.SteamClient.switchNote))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
     static func itemTitle(_ c: LauncherSettings.SteamClient) -> String {
-        c == .deck ? c.title + " (default)" : c.title
+        c == .deck ? c.title + tr(" (default)") : c.title
     }
 
     /// First-run alert accessory: the Steam client choice above the crash reports checkbox.
