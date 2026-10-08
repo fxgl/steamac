@@ -1,29 +1,49 @@
-From: steamac <steamac@localhost>
-Subject: [PATCH] virtio-snd: detect macOS output speakers and route up to eight PCM channels
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Thu, 8 Oct 2026 12:00:00 +0000
+Subject: [PATCH] virtio-snd: route up to twelve PCM channels to macOS output
+ speakers
 
-Snapshot the selected/default output's configured speaker layout when the guest
-first reads device config. Advertise fixed mono-to-eight-channel PCM maps in ALSA
-order, retaining explicitly identified height speakers. Do not infer 5.1.2 from
-an eight-channel count: unclassified/discrete layouts use the preferred stereo
-pair. Capture remains mono/stereo. Correct config.chmaps to match all entries.
+Snapshot the selected/default output's configured speaker layout when the
+guest first reads device config. Advertise fixed mono-to-twelve-channel PCM
+maps in ALSA order, keeping explicitly identified height speakers (5.1.2,
+7.1.4). Do not infer 5.1.2 from an eight-channel count: unclassified/discrete
+layouts use the preferred stereo pair. Capture remains mono/stereo. Correct
+config.chmaps to match all entries, and the TSL..BRC chmap positions to the
+Linux VirtIO/ALSA UAPI numbers (30..36; upstream had 34..40).
 
-Use a device-bound HAL output unit and recheck the default/selected device and
-layout once a second. The callback consumes guest-format PCM on the existing
-ring/clock, then applies a precomputed speaker matrix into interleaved Float32
-physical outputs. Missing speakers fold into front channels with headroom;
-unknown physical channels stay silent. Rebuild/retry output units on hotplug
-without changing guest frame accounting or allocating/locking in the callback.
-The WAV diagnostic now captures guest PCM before mapping.
+Use a device-bound HAL output unit. Default-output and device-list
+notifications wake the pump to rebuild it at once (AirPods connecting, a
+selected device unplugged); the layout is also rechecked once a second. The
+callback consumes guest-format PCM on the existing ring/clock, then applies a
+precomputed speaker matrix into interleaved Float32 physical outputs. Missing
+speakers fold into front channels with headroom; unknown physical channels
+stay silent. A device with more than 32 output channels (BlackHole 64ch,
+aggregates, large interfaces) gets a stereo route without a channel map, the
+HAL's default mapping as before. Rebuild/retry output units on hotplug
+without changing guest frame accounting or allocating/locking in the
+callback. The WAV diagnostic now captures guest PCM before mapping.
 
 Guest maps remain fixed for a boot: virtio-snd/ALSA cache PCM capabilities and
 there is no PCM-info/channel-map-change event. Restart the VM to expose added
 channels or a new guest speaker layout. This is PCM routing, not Atmos encoding.
 
-Validation: cargo check -p krun-devices --features snd; cargo test -p
-krun-devices --features snd --test macos_audio (11 tests). HAL Float32 format,
-identity channel map and initialization also checked on an eight-channel Mac
-output. Physical speaker listening and live device-switch tests remain.
+Tests: cargo test -p krun-devices --features snd --test macos_audio (layout
+parsing, guest maps vs config, permutation/height routing, 7.1.4, downmix,
+sample formats, UAPI numbers).
 ---
+ src/devices/src/virtio/snd/audio_backends.rs  |   6 +-
+ .../snd/audio_backends/channel_layout.rs      | 398 ++++++++++++++++
+ .../virtio/snd/audio_backends/coreaudio.rs    | 444 +++++++++++++++---
+ src/devices/src/virtio/snd/device.rs          |  11 +-
+ src/devices/src/virtio/snd/mod.rs             |  14 +-
+ src/devices/src/virtio/snd/virtio_sound.rs    |  14 +-
+ src/devices/src/virtio/snd/worker.rs          |  42 +-
+ src/devices/tests/macos_audio.rs              |  39 ++
+ 8 files changed, 893 insertions(+), 75 deletions(-)
+ create mode 100644 src/devices/src/virtio/snd/audio_backends/channel_layout.rs
+ create mode 100644 src/devices/tests/macos_audio.rs
+
 diff --git a/src/devices/src/virtio/snd/audio_backends.rs b/src/devices/src/virtio/snd/audio_backends.rs
 index 65aa761..3046a90 100644
 --- a/src/devices/src/virtio/snd/audio_backends.rs
@@ -52,14 +72,14 @@ index 65aa761..3046a90 100644
  use super::{stream::Stream, BackendType, Result, SndControl, VirtioSndPcmSetParams};
 diff --git a/src/devices/src/virtio/snd/audio_backends/channel_layout.rs b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
 new file mode 100644
-index 0000000..bd9901b
+index 0000000..c1bea30
 --- /dev/null
 +++ b/src/devices/src/virtio/snd/audio_backends/channel_layout.rs
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,398 @@
 +// Speaker positions and allocation-free PCM routing for the macOS backend.
 +use super::super::virtio_sound::*;
 +
-+pub const MAX_CHANNELS: usize = 8;
++pub const MAX_CHANNELS: usize = 12;
 +pub const MAX_DEVICE_CHANNELS: usize = 32;
 +
 +pub fn apple_position(label: u32) -> u8 {
@@ -313,6 +333,15 @@ index 0000000..bd9901b
 +            .collect()
 +    }
 +    #[test]
++    fn dolby_top_middle_uses_linux_uapi_numbers() {
++        let speakers: Vec<_> = [1, 2, 3, 4, 5, 6, 49, 51]
++            .iter().map(|&label| apple_position(label)).collect();
++        assert_eq!(guest_maps(&speakers)[7], [3, 4, 7, 8, 9, 10, 30, 31]);
++        assert_eq!([VIRTIO_SND_CHMAP_LLFE, VIRTIO_SND_CHMAP_RLFE,
++            VIRTIO_SND_CHMAP_BC, VIRTIO_SND_CHMAP_BLC, VIRTIO_SND_CHMAP_BRC],
++            [32, 33, 34, 35, 36]);
++    }
++    #[test]
 +    fn maps_preserve_height_and_alsa_order() {
 +        let speakers = [3, 4, 7, 8, 9, 10, 22, 23];
 +        let maps = guest_maps(&speakers);
@@ -383,7 +412,36 @@ index 0000000..bd9901b
 +            [0.0, 0.25, 0.0, -0.5]
 +        );
 +        assert_eq!(guest_maps(&[0, 3, 0, 4]), [vec![2], vec![3, 4]]);
-+        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 22, 23]).len(), 8);
++        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 22, 23]).len(), 10);
++        assert_eq!(guest_maps(&[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 21, 22, 23, 24, 25, 26, 30, 31]).len(), 12);
++    }
++    #[test]
++    fn seven_one_four_preserves_all_speakers_and_routes_each_channel() {
++        // Physical order: front pair, center/LFE, sides, rears, top front/rear.
++        let speakers = [3, 4, 7, 8, 9, 10, 5, 6, 22, 23, 25, 26];
++        let maps = guest_maps(&speakers);
++        let source = [3, 4, 5, 6, 7, 8, 9, 10, 22, 23, 25, 26];
++        assert_eq!(maps.len(), 12);
++        assert_eq!(maps[11], source);
++        let output = [26, 25, 23, 22, 6, 5, 10, 9, 8, 7, 4, 3];
++        for channel in 0..12 {
++            let mut input = [0.0; 12];
++            input[channel] = 0.5;
++            let rendered = route(&source, &output, &input);
++            for (index, speaker) in output.iter().enumerate() {
++                assert_eq!(rendered[index], if *speaker == source[channel] { 0.5 } else { 0.0 });
++            }
++            let stereo = route(&source, &[3, 4], &input);
++            assert!(stereo.iter().any(|sample| *sample > 0.0));
++        }
++        assert!(route(&source, &[3, 4], &[1.0; 12]).iter().all(|sample| *sample <= 1.0));
++        let mut bytes = vec![0; 12 + 12 * 20];
++        bytes[8..12].copy_from_slice(&12u32.to_ne_bytes());
++        let labels = [1u32, 2, 3, 4, 5, 6, 33, 34, 13, 15, 16, 18];
++        for (index, label) in labels.iter().enumerate() {
++            bytes[12 + index * 20..16 + index * 20].copy_from_slice(&label.to_ne_bytes());
++        }
++        assert_eq!(descriptions(&bytes, 12).unwrap(), speakers);
 +    }
 +    #[test]
 +    fn parses_labels_but_rejects_unknown_truncated_and_duplicate_layouts() {
@@ -417,10 +475,10 @@ index 0000000..bd9901b
 +    }
 +}
 diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
-index 8279afb..689b407 100644
+index 8279afb..0984ecd 100644
 --- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
 +++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
-@@ -2,12 +2,11 @@
+@@ -2,12 +2,13 @@
  //
  // CoreAudio backend for virtio-snd (macOS).
  //
@@ -431,14 +489,16 @@ index 8279afb..689b407 100644
 -// 6.7 the driver only queues what the application has written), and the real-time render
 -// callback only copies out of the ring. A playback message is completed once the device has
 +// Playback: a HAL AudioUnit bound to the selected or current default output device.
-+// Speaker layouts are detected at boot and checked once a second. The guest's PCM stays in
-+// its own format in the lock-free SPSC ring; the callback converts it to interleaved Float32
-+// in physical speaker order, with a precomputed matrix for downmixing missing speakers.
-+// A playback message is completed once the device has
++// Speaker layouts are detected at boot. The unit follows default-output and device-list
++// notifications at once and rechecks the layout once a second. The guest's PCM stays in its
++// own format in the lock-free SPSC ring; the callback converts it to interleaved Float32 in
++// physical speaker order, with a precomputed matrix for downmixing missing speakers. Devices
++// wider than the mixer get stereo and the HAL's own channel mapping. A playback message is
++// completed once the device has
  // played up to a host FIFO before its end (fifo_bytes: one device IO buffer plus safety offset,
  // plus the SndControl buffer, at most the guest buffer minus two periods), with the callback's
  // chunks spread over their play time, so the guest's hw_ptr advances smoothly at the device
-@@ -26,7 +25,7 @@
+@@ -26,7 +27,7 @@
  // by more data counts as one underrun and is logged by the pump thread. Device and device
  // rate changes are picked up once a second (FIFO, latency and log line follow).
  //
@@ -447,7 +507,7 @@ index 8279afb..689b407 100644
  // while it runs (underrun silence included) to a WAV file (a new file per format change).
  // STEAMAC_SND_TRACE=1 logs PCM commands and a per-second heartbeat of the stream state.
  
-@@ -47,6 +46,7 @@ use super::super::{
+@@ -47,6 +48,7 @@ use super::super::{
      virtio_sound::*,
      Direction, Error, Result, SndControl, Stream,
  };
@@ -455,7 +515,21 @@ index 8279afb..689b407 100644
  use super::AudioBackend;
  
  #[allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
-@@ -145,7 +145,6 @@ mod ffi {
+@@ -128,6 +130,13 @@ mod ffi {
+         pub mElement: u32,
+     }
+ 
++    pub type AudioObjectPropertyListenerProc = extern "C" fn(
++        AudioObjectID,
++        u32,
++        *const AudioObjectPropertyAddress,
++        *mut c_void,
++    ) -> OSStatus;
++
+     #[repr(C)]
+     pub struct MachTimespec {
+         pub tv_sec: u32,
+@@ -145,7 +154,6 @@ mod ffi {
      }
  
      pub const kAudioUnitType_Output: u32 = fourcc(b"auou");
@@ -463,7 +537,7 @@ index 8279afb..689b407 100644
      pub const kAudioUnitSubType_HALOutput: u32 = fourcc(b"ahal");
      pub const kAudioUnitManufacturer_Apple: u32 = fourcc(b"appl");
  
-@@ -153,6 +152,7 @@ mod ffi {
+@@ -153,6 +161,7 @@ mod ffi {
      pub const kAudioUnitProperty_Latency: u32 = 12;
      pub const kAudioUnitProperty_SetRenderCallback: u32 = 23;
      pub const kAudioOutputUnitProperty_CurrentDevice: u32 = 2000;
@@ -471,11 +545,12 @@ index 8279afb..689b407 100644
      pub const kAudioOutputUnitProperty_EnableIO: u32 = 2003;
      pub const kAudioOutputUnitProperty_SetInputCallback: u32 = 2005;
  
-@@ -167,6 +167,12 @@ mod ffi {
+@@ -167,6 +176,13 @@ mod ffi {
      pub const kAudioUnitRenderAction_OutputIsSilence: u32 = 1 << 4;
  
      pub const kAudioObjectSystemObject: AudioObjectID = 1;
 +    pub const kAudioHardwarePropertyDefaultOutputDevice: u32 = fourcc(b"dOut");
++    pub const kAudioHardwarePropertyDevices: u32 = fourcc(b"dev#");
 +    pub const kAudioDevicePropertyStreamConfiguration: u32 = fourcc(b"slay");
 +    pub const kAudioDevicePropertyPreferredChannelLayout: u32 = fourcc(b"srnd");
 +    pub const kAudioDevicePropertyPreferredChannelsForStereo: u32 = fourcc(b"dch2");
@@ -484,7 +559,7 @@ index 8279afb..689b407 100644
      pub const kAudioHardwarePropertyDefaultInputDevice: u32 = fourcc(b"dIn ");
      pub const kAudioHardwarePropertyTranslateUIDToDevice: u32 = fourcc(b"uidd");
      pub const kHALOutputParam_Volume: u32 = 14;
-@@ -231,6 +237,19 @@ mod ffi {
+@@ -231,6 +247,19 @@ mod ffi {
              offset_frames: u32,
          ) -> OSStatus;
  
@@ -504,7 +579,37 @@ index 8279afb..689b407 100644
          pub fn AudioConverterNew(
              inSourceFormat: *const AudioStreamBasicDescription,
              inDestinationFormat: *const AudioStreamBasicDescription,
-@@ -516,7 +535,7 @@ fn ticks_to_nanos(ticks: u64) -> u64 {
+@@ -264,6 +293,18 @@ mod ffi {
+             qualifier: *const c_void,
+             outDataSize: *mut u32,
+         ) -> OSStatus;
++        pub fn AudioObjectAddPropertyListener(
++            id: AudioObjectID,
++            address: *const AudioObjectPropertyAddress,
++            listener: AudioObjectPropertyListenerProc,
++            clientData: *mut c_void,
++        ) -> OSStatus;
++        pub fn AudioObjectRemovePropertyListener(
++            id: AudioObjectID,
++            address: *const AudioObjectPropertyAddress,
++            listener: AudioObjectPropertyListenerProc,
++            clientData: *mut c_void,
++        ) -> OSStatus;
+     }
+ 
+     #[link(name = "CoreFoundation", kind = "framework")]
+@@ -290,8 +331,8 @@ mod ffi {
+ 
+ use ffi::*;
+ 
+-/// Ring capacity per stream: ~2.7 s of the largest format (48 kHz FLOAT stereo), far above
+-/// what the guest driver ever queues (its whole buffer).
++/// Ring capacity per stream: ~2.7 s of 48 kHz FLOAT stereo, ~0.45 s at twelve channels. A
++/// guest buffer that does not fit waits in the queue until the ring drains.
+ const RING_BYTES: usize = 1 << 20;
+ /// Capture: largest IO slice the input callback accepts (frames).
+ const CAPTURE_MAX_FRAMES: usize = 16384;
+@@ -516,7 +557,7 @@ fn ticks_to_nanos(ticks: u64) -> u64 {
  /// State shared with a CoreAudio IO thread. Everything the callbacks touch is lock-free.
  struct Shared {
      ring: Ring,
@@ -513,7 +618,7 @@ index 8279afb..689b407 100644
      dump: Option<Ring>,
      /// Between START and STOP.
      running: AtomicBool,
-@@ -551,12 +570,14 @@ struct Shared {
+@@ -551,12 +592,14 @@ struct Shared {
      unit: AtomicPtr<c_void>,
      /// Capture: AudioUnitRender target, touched only by the IO thread.
      scratch: UnsafeCell<Box<[u8]>>,
@@ -529,7 +634,7 @@ index 8279afb..689b407 100644
  unsafe impl Sync for Shared {}
  unsafe impl Send for Shared {}
  
-@@ -564,7 +585,9 @@ impl Shared {
+@@ -564,7 +607,9 @@ impl Shared {
      fn new(direction: Direction, dump: bool, wake: Arc<Semaphore>) -> Self {
          let scratch = match direction {
              Direction::Input => vec![0u8; CAPTURE_MAX_FRAMES * 2 * 4].into_boxed_slice(),
@@ -540,7 +645,7 @@ index 8279afb..689b407 100644
          };
          Self {
              ring: Ring::new(RING_BYTES),
-@@ -586,6 +609,7 @@ impl Shared {
+@@ -586,6 +631,7 @@ impl Shared {
              silence_bytes: AtomicU64::new(0),
              unit: AtomicPtr::new(ptr::null_mut()),
              scratch: UnsafeCell::new(scratch),
@@ -548,7 +653,7 @@ index 8279afb..689b407 100644
              wake,
          }
      }
-@@ -603,7 +627,7 @@ extern "C" fn render_output(
+@@ -603,7 +649,7 @@ extern "C" fn render_output(
      // SAFETY: refcon is the Arc<Shared> kept alive by the HostStream owning the unit, and the
      // unit is stopped and disposed before that Arc is released. `io` holds one interleaved
      // buffer of `mDataByteSize` bytes (the format set on the unit's input scope).
@@ -557,7 +662,7 @@ index 8279afb..689b407 100644
          let buf = &mut (*io).mBuffers[0];
          if buf.mData.is_null() {
              return 0;
-@@ -618,7 +642,12 @@ extern "C" fn render_output(
+@@ -618,7 +664,12 @@ extern "C" fn render_output(
      sh.callbacks.fetch_add(1, Ordering::Relaxed);
      sh.last_callback.store(now, Ordering::Relaxed);
      let fb = sh.frame_bytes.load(Ordering::Relaxed) as usize;
@@ -571,7 +676,7 @@ index 8279afb..689b407 100644
      let running = sh.running.load(Ordering::Acquire);
      let playable = sh
          .limit
-@@ -651,6 +680,7 @@ extern "C" fn render_output(
+@@ -651,6 +702,7 @@ extern "C" fn render_output(
      if off < want {
          out[off..].fill(sh.silence.load(Ordering::Relaxed));
      }
@@ -579,7 +684,7 @@ index 8279afb..689b407 100644
      if running {
          if off < want {
              sh.silence_bytes
-@@ -776,11 +806,13 @@ impl Format {
+@@ -776,11 +828,13 @@ impl Format {
              | VIRTIO_SND_PCM_FMT_FLOAT => {}
              _ => return None,
          }
@@ -598,7 +703,7 @@ index 8279afb..689b407 100644
      }
  
      fn sample_bytes(&self) -> u32 {
-@@ -868,6 +900,169 @@ fn object_property<T: Copy + Default>(
+@@ -868,6 +922,182 @@ fn object_property<T: Copy + Default>(
      (status == 0).then_some(value)
  }
  
@@ -639,7 +744,7 @@ index 8279afb..689b407 100644
 +    let count = u32::from_ne_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
 +    let offset = std::mem::offset_of!(AudioBufferList, mBuffers);
 +    let stride = std::mem::size_of::<AudioBuffer>();
-+    if count > MAX_DEVICE_CHANNELS || bytes.len() < offset + count * stride {
++    if bytes.len() < offset + count * stride {
 +        return None;
 +    }
 +    let channels: usize = (0..count)
@@ -651,9 +756,7 @@ index 8279afb..689b407 100644
 +            ) as usize
 +        })
 +        .sum();
-+    (1..=MAX_DEVICE_CHANNELS)
-+        .contains(&channels)
-+        .then_some(channels)
++    (channels > 0).then_some(channels)
 +}
 +
 +fn expanded_layout(mut bytes: Vec<u8>) -> Option<Vec<u8>> {
@@ -701,8 +804,10 @@ index 8279afb..689b407 100644
 +#[derive(Clone, Debug, PartialEq, Eq)]
 +struct OutputRoute {
 +    device: AudioObjectID,
-+    /// Physical device order; NONE leaves an unclassified output silent.
++    /// Physical device order; NONE leaves an unclassified output silent. Shorter than
++    /// `device_channels` only for a device wider than the mixer (stereo, HAL mapping).
 +    positions: Vec<u8>,
++    device_channels: usize,
 +}
 +
 +fn output_route(control: &SndControl) -> Option<OutputRoute> {
@@ -719,6 +824,15 @@ index 8279afb..689b407 100644
 +        })
 +        .filter(|id| *id != 0)?;
 +    let channels = device_channels(device)?;
++    if channels > MAX_DEVICE_CHANNELS {
++        // Wider than the mixer (BlackHole 64ch, aggregates, large interfaces): stereo into the
++        // HAL's default channel mapping, as before speaker routing.
++        return Some(OutputRoute {
++            device,
++            positions: vec![VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR],
++            device_channels: channels,
++        });
++    }
 +    let positions = property_bytes(device, kAudioDevicePropertyPreferredChannelLayout)
 +        .and_then(expanded_layout)
 +        .and_then(|bytes| channel_layout::descriptions(&bytes, channels))
@@ -744,7 +858,11 @@ index 8279afb..689b407 100644
 +            }
 +            positions
 +        });
-+    Some(OutputRoute { device, positions })
++    Some(OutputRoute {
++        device,
++        positions,
++        device_channels: channels,
++    })
 +}
 +
 +pub fn playback_maps(control: &SndControl) -> Vec<Vec<u8>> {
@@ -768,7 +886,7 @@ index 8279afb..689b407 100644
  fn device_name(device: AudioObjectID) -> String {
      let addr = property_address(kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal);
      let mut cfstr: *const c_void = ptr::null();
-@@ -1302,7 +1497,8 @@ struct HostStream {
+@@ -1302,7 +1532,8 @@ struct HostStream {
      /// Control generation last applied.
      seen_generation: u64,
      /// Playback: device the unit was created for (None = the default-output unit).
@@ -778,7 +896,7 @@ index 8279afb..689b407 100644
      /// The unit is stopped because the VM is paused (SndControl::paused) and starts again on
      /// resume.
      suspended: bool,
-@@ -1341,7 +1537,8 @@ impl HostStream {
+@@ -1341,7 +1572,8 @@ impl HostStream {
              dump_files: 0,
              control,
              seen_generation: u64::MAX,
@@ -788,7 +906,7 @@ index 8279afb..689b407 100644
              suspended: false,
              traced_callbacks: 0,
          }
-@@ -1415,22 +1612,29 @@ impl HostStream {
+@@ -1415,22 +1647,29 @@ impl HostStream {
          let Some(fmt) = self.format else {
              return; // applied by configure()
          };
@@ -832,7 +950,7 @@ index 8279afb..689b407 100644
          }
          if let Some(unit) = self.unit.as_ref() {
              unit.set_volume(self.control.volume());
-@@ -1445,12 +1649,13 @@ impl HostStream {
+@@ -1445,12 +1684,13 @@ impl HostStream {
      /// FIFO) and playback carries on from the same sample without an underrun.
      fn follow_pause(&mut self) {
          if self.control.paused() {
@@ -847,7 +965,7 @@ index 8279afb..689b407 100644
              self.suspended = false;
              if let Err(err) = self.start_unit() {
                  log::error!("snd: stream {}: restarting after VM pause: {err}", self.id);
-@@ -1469,27 +1674,18 @@ impl HostStream {
+@@ -1469,27 +1709,18 @@ impl HostStream {
          }
          let unit = match self.direction {
              Direction::Output => {
@@ -887,7 +1005,7 @@ index 8279afb..689b407 100644
                  let cb = AURenderCallbackStruct {
                      inputProc: render_output,
                      inputProcRefCon: self.refcon(),
-@@ -1545,13 +1741,46 @@ impl HostStream {
+@@ -1545,13 +1776,50 @@ impl HostStream {
          unit.uninitialize();
          match self.direction {
              Direction::Output => {
@@ -906,21 +1024,25 @@ index 8279afb..689b407 100644
 +                    &float_asbd(fmt.rate as f64, mixer.output_channels as u32),
                      "StreamFormat(output)",
                  )?;
-+                let map: Vec<i32> = (0..mixer.output_channels as i32).collect();
-+                // SAFETY: map is a live array of physical output-channel indices.
-+                check(
-+                    unsafe {
-+                        AudioUnitSetProperty(
-+                            unit.au,
-+                            kAudioOutputUnitProperty_ChannelMap,
-+                            kAudioUnitScope_Input,
-+                            0,
-+                            map.as_ptr().cast(),
-+                            (map.len() * 4) as u32,
-+                        )
-+                    },
-+                    "ChannelMap(output)",
-+                )?;
++                // Identity map over every physical channel. A device wider than the mixer
++                // (stereo route) keeps the HAL's default mapping instead.
++                if route.device_channels == mixer.output_channels {
++                    let map: Vec<i32> = (0..mixer.output_channels as i32).collect();
++                    // SAFETY: map is a live array of physical output-channel indices.
++                    check(
++                        unsafe {
++                            AudioUnitSetProperty(
++                                unit.au,
++                                kAudioOutputUnitProperty_ChannelMap,
++                                kAudioUnitScope_Input,
++                                0,
++                                map.as_ptr().cast(),
++                                (map.len() * 4) as u32,
++                            )
++                        },
++                        "ChannelMap(output)",
++                    )?;
++                }
 +                // SAFETY: configure uninitialized the unit, so no render callback can read it.
 +                unsafe {
 +                    *self.shared.mixer.get() = mixer;
@@ -935,6 +1057,99 @@ index 8279afb..689b407 100644
                  self.shared
                      .frame_bytes
                      .store(fmt.frame_bytes(), Ordering::Relaxed);
+@@ -2035,6 +2303,29 @@ struct Inner {
+     hosts: Mutex<Vec<HostStream>>,
+     wake: Arc<Semaphore>,
+     quit: AtomicBool,
++    /// Set by `route_listener`: recheck the output route on the next pass.
++    route_changed: AtomicBool,
++}
++
++/// System properties after which the output route is rechecked at once: the default output
++/// (AirPods connecting, Control Center) and the device list (a selected device unplugged).
++const ROUTE_SELECTORS: [u32; 2] = [
++    kAudioHardwarePropertyDefaultOutputDevice,
++    kAudioHardwarePropertyDevices,
++];
++
++extern "C" fn route_listener(
++    _object: AudioObjectID,
++    _count: u32,
++    _addresses: *const AudioObjectPropertyAddress,
++    data: *mut c_void,
++) -> OSStatus {
++    // SAFETY: data is the Inner of a CoreAudioBackend, which removes this listener before it
++    // releases its reference.
++    let inner = unsafe { &*(data as *const Inner) };
++    inner.route_changed.store(true, Ordering::Release);
++    inner.wake.signal();
++    0
+ }
+ 
+ fn pump_thread(inner: Arc<Inner>) {
+@@ -2045,8 +2336,10 @@ fn pump_thread(inner: Arc<Inner>) {
+         inner.wake.wait(timeout);
+         timeout = HOUSEKEEPING;
+         let mut hosts = inner.hosts.lock().unwrap();
++        let recheck =
++            inner.route_changed.swap(false, Ordering::AcqRel) || last.elapsed() >= HOUSEKEEPING;
+         for host in hosts.iter_mut() {
+-            host.apply_control(last.elapsed() >= HOUSEKEEPING);
++            host.apply_control(recheck);
+             host.pump(&inner.streams);
+             if let Some(due) = host.next_completion() {
+                 timeout = timeout.min(due);
+@@ -2083,12 +2376,31 @@ impl CoreAudioBackend {
+             hosts: Mutex::new(hosts),
+             wake,
+             quit: AtomicBool::new(false),
++            route_changed: AtomicBool::new(false),
+         });
+         let pump_inner = inner.clone();
+         let pump = std::thread::Builder::new()
+             .name("virtio-snd coreaudio".into())
+             .spawn(move || pump_thread(pump_inner))
+             .map_err(|e| Error::UnexpectedAudioBackendError(e.to_string()))?;
++        for selector in ROUTE_SELECTORS {
++            let addr = property_address(selector, kAudioObjectPropertyScopeGlobal);
++            // SAFETY: `inner` outlives the registration; Drop removes it first.
++            let status = unsafe {
++                AudioObjectAddPropertyListener(
++                    kAudioObjectSystemObject,
++                    &addr,
++                    route_listener,
++                    Arc::as_ptr(&inner) as *mut c_void,
++                )
++            };
++            if status != 0 {
++                log::warn!(
++                    "snd: output route listener {selector:#x}: OSStatus {status}; the output \
++                     follows device changes once a second"
++                );
++            }
++        }
+         Ok(Self {
+             inner,
+             pump: Some(pump),
+@@ -2127,6 +2439,18 @@ impl CoreAudioBackend {
+ 
+ impl Drop for CoreAudioBackend {
+     fn drop(&mut self) {
++        for selector in ROUTE_SELECTORS {
++            let addr = property_address(selector, kAudioObjectPropertyScopeGlobal);
++            // SAFETY: same address, proc and client data as registered in new().
++            unsafe {
++                AudioObjectRemovePropertyListener(
++                    kAudioObjectSystemObject,
++                    &addr,
++                    route_listener,
++                    Arc::as_ptr(&self.inner) as *mut c_void,
++                )
++            };
++        }
+         self.inner.quit.store(true, Ordering::Release);
+         self.inner.wake.signal();
+         if let Some(pump) = self.pump.take() {
 diff --git a/src/devices/src/virtio/snd/device.rs b/src/devices/src/virtio/snd/device.rs
 index 8dc1036..ca9f65b 100644
 --- a/src/devices/src/virtio/snd/device.rs
@@ -958,7 +1173,7 @@ index 8dc1036..ca9f65b 100644
  
          let config_slice = config.as_slice();
 diff --git a/src/devices/src/virtio/snd/mod.rs b/src/devices/src/virtio/snd/mod.rs
-index c95b407..c22c68f 100644
+index c95b407..9946b9e 100644
 --- a/src/devices/src/virtio/snd/mod.rs
 +++ b/src/devices/src/virtio/snd/mod.rs
 @@ -24,6 +24,8 @@ pub use self::audio_backends::output_device_exists;
@@ -993,14 +1208,41 @@ index c95b407..c22c68f 100644
      /// Measured in a SteamOS guest: PipeWire stalls of 25-40 ms under load (Steam startup)
      /// starve a smaller host buffer.
      pub const DEFAULT_BUFFER_MS: u32 = 40;
-@@ -163,7 +174,7 @@ mod defs {
+@@ -162,8 +173,9 @@ mod defs {
+         | (1 << VIRTIO_SND_PCM_RATE_48000);
  
      pub const CHANNELS_MIN: u8 = 1;
++    /// Upper bound only: the worker narrows playback to the boot layout and capture to stereo.
      #[cfg(target_os = "macos")]
 -    pub const CHANNELS_MAX: u8 = 2;
-+    pub const CHANNELS_MAX: u8 = 8;
++    pub const CHANNELS_MAX: u8 = 12;
      #[cfg(not(target_os = "macos"))]
      pub const CHANNELS_MAX: u8 = 6;
+ 
+diff --git a/src/devices/src/virtio/snd/virtio_sound.rs b/src/devices/src/virtio/snd/virtio_sound.rs
+index a666b3f..023a7bc 100644
+--- a/src/devices/src/virtio/snd/virtio_sound.rs
++++ b/src/devices/src/virtio/snd/virtio_sound.rs
+@@ -141,13 +141,13 @@ pub const VIRTIO_SND_CHMAP_TRR: u8 = 26; /* top rear right */
+ pub const VIRTIO_SND_CHMAP_TRC: u8 = 27; /* top rear center */
+ pub const VIRTIO_SND_CHMAP_TFLC: u8 = 28; /* top front left center */
+ pub const VIRTIO_SND_CHMAP_TFRC: u8 = 29; /* top front right center */
+-pub const VIRTIO_SND_CHMAP_TSL: u8 = 34; /* top side left */
+-pub const VIRTIO_SND_CHMAP_TSR: u8 = 35; /* top side right */
+-pub const VIRTIO_SND_CHMAP_LLFE: u8 = 36; /* left LFE */
+-pub const VIRTIO_SND_CHMAP_RLFE: u8 = 37; /* right LFE */
+-pub const VIRTIO_SND_CHMAP_BC: u8 = 38; /* bottom center */
+-pub const VIRTIO_SND_CHMAP_BLC: u8 = 39; /* bottom left center */
+-pub const VIRTIO_SND_CHMAP_BRC: u8 = 40; /* bottom right center */
++pub const VIRTIO_SND_CHMAP_TSL: u8 = 30; /* top side left */
++pub const VIRTIO_SND_CHMAP_TSR: u8 = 31; /* top side right */
++pub const VIRTIO_SND_CHMAP_LLFE: u8 = 32; /* left LFE */
++pub const VIRTIO_SND_CHMAP_RLFE: u8 = 33; /* right LFE */
++pub const VIRTIO_SND_CHMAP_BC: u8 = 34; /* bottom center */
++pub const VIRTIO_SND_CHMAP_BLC: u8 = 35; /* bottom left center */
++pub const VIRTIO_SND_CHMAP_BRC: u8 = 36; /* bottom right center */
+ // maximum possible number of channels
+ pub const VIRTIO_SND_CHMAP_MAX_SIZE: usize = 18;
  
 diff --git a/src/devices/src/virtio/snd/worker.rs b/src/devices/src/virtio/snd/worker.rs
 index 4ff20f9..dd34da2 100644
@@ -1074,7 +1316,7 @@ index 4ff20f9..dd34da2 100644
          let audio_backend = RwLock::new(
 diff --git a/src/devices/tests/macos_audio.rs b/src/devices/tests/macos_audio.rs
 new file mode 100644
-index 0000000..d159bed
+index 0000000..9a95de6
 --- /dev/null
 +++ b/src/devices/tests/macos_audio.rs
 @@ -0,0 +1,39 @@
@@ -1099,7 +1341,7 @@ index 0000000..d159bed
 +    let mut config = [0; 12];
 +    device.read_config(0, &mut config);
 +    let maps = control.playback_maps().clone();
-+    assert!((1..=8).contains(&maps.len()));
++    assert!((1..=12).contains(&maps.len()));
 +    for (i, map) in maps.iter().enumerate() {
 +        assert_eq!(map.len(), i + 1);
 +    }
