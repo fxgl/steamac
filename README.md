@@ -222,7 +222,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | General | boot/shutdown overlay; “Still working…” indicator on GPU idle; “When FX Steam Launcher is in the background”: **Mute sound** (on by default: `krun_snd_set_volume(…, mute)` with a gradual ~150 ms fade-out; volume is restored when returning to the window) and **Pause the game** (off by default: the guest agent freezes only the game in focus — `systemctl --user freeze app-steam-app<appid>-*.scope`, cgroup v2; Steam, downloads, and updates continue running; online games may disconnect). While the agent confirms the freeze (`game-frozen`/`game-thawed`), the window is dimmed, with a “Game paused · Click to resume” card and “— paused” in the title; clicking the window resumes the game and is not passed to the guest; crash reports (`--no-crash-reports`, see below); **Check for updates at startup** (on by default, see “Update check”); frame statistics logging (`--perf-stats`) | full screen at startup; **Use the Mac's time zone and clock format** (on by default, see above) |
 | Display | guest follows window size; Apple's Metal Performance HUD in the upper-right corner of the window (Ctrl+Cmd+P, View → Show Metal Performance HUD); **MetalFX super resolution** (off by default): Apple's MetalFX spatial upscaler scales the guest picture to the window's pixel size whenever the window has more pixels than the guest (2× on Retina screens, scaled or fullscreen windows) instead of linear / nearest scaling; it runs on the guest frame in the launcher, so it works for every game and the Steam UI | physical size source (auto from display / DPI / mm — `--dpi`, `--display-mm`), refresh rate (`--refresh`), window size (`--display`): standard resolutions from 1280 × 800 (Steam Deck) to 3840 × 2160 (those that do not fit on the display are marked “larger than this screen”; the window is shrunk as before), “Fit to screen” (largest size for the display, recalculated on every launch), or “Custom…” (W × H fields); **Retina resolution** (optional, off by default): the guest display gets the screen's pixel density (window points × the screen's backing scale, taken at boot; the scale is lowered so no side exceeds 4094 px) at the same EDID physical size, so SteamOS scales its UI up to the same size with sharp text — but games draw 4× the pixels and each frame copy is 4× larger; recommended instead: Retina resolution off + MetalFX super resolution (a 2× upscale on Retina screens) |
 | Mouse | auto-capture in games; game list (name from `appmanifest_<appid>.acf`, Default/Auto/Off, remove) | — |
-| Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, swap A/B and X/Y, stick dead zone, live input test | — |
+| Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”) |
 
@@ -410,9 +410,24 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
+**Several controllers.** With Settings → Controller → **Additional controllers** (on by default,
+applies now) further connected controllers are players 2–4, each with a gamepad of its own in
+SteamOS, for local co-op. Every player has a virtio-console port: `fx.pad` for player 1, as above,
+and `fx.pad2` … `fx.pad4`, each served by an instance of `fx-pad@.service` named after its port
+(the same `fx-progress-agent pad` with `FX_PAD_PORT`, started by udev), so the protocol on a port
+is the same for every player, and a pad's rumble plays on the controller that drives it. A player
+gets a controller once the guest's service of that port said `hello`: a guest layer without
+`fx-pad@.service` keeps the one pad. The controller chosen in Settings is player 1; a player keeps
+their controller until it disconnects (the others do not move up), and a reconnected controller
+takes the first free player. Kind, swap A/B and dead zone are the same for all pads. Only player 1's
+DualSense is passed through, and not while another player's controller is a DualSense too
+(GameController does not say which HID device is whose): both get uinput pads then. Off: one
+controller drives the one pad, as before.
+
 `--control-fifo` test commands: `pad on` (a pad without a controller, as `--input-selftest` uses),
-`pad off`, `pad test` (A + left stick), `pad state` (the guest's pad, its last rumble level, whether
-the guest takes HID devices, connected DualSenses and input reports passed through).
+`pad off`, `pad test` (A + left stick) — each takes a player number (`pad on 2`; 1 if not given) —
+and `pad state` (the guest's pads, their last rumble level, whether the guest takes HID devices,
+connected DualSenses and input reports passed through).
 
 ## FX Steam Launcher.app
 
