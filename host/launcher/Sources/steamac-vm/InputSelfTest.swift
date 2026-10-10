@@ -3,9 +3,10 @@ import Carbon.HIToolbox
 
 /// `--input-selftest SECONDS`: after the delay, synthesize AppKit key/mouse events and route them
 /// through the normal NSApplication.sendEvent path (no Accessibility permission needed), and
-/// feed a scripted state into the virtual gamepad (a pad without a controller, over fx.pad). The
-/// smoke initramfs prints what the guest receives ("input[<device>] type= code= value=" for the
-/// virtio-input devices, "pad[<line>]" for fx.pad). Finally it closes the window via
+/// feed a scripted state into the virtual gamepads of players 1 and 2 (pads without a controller,
+/// over fx.pad and fx.pad2). The smoke initramfs prints what the guest receives ("input[<device>]
+/// type= code= value=" for the virtio-input devices, "pad[<line>]" for fx.pad, "pad2[<line>]" for
+/// fx.pad2). Finally it closes the window via
 /// performClose (the real close-button path -> guest power key) a few seconds later.
 enum InputSelfTest {
     static func schedule(after seconds: Double, window wc: WindowController, gamepad: GamepadBridge?) {

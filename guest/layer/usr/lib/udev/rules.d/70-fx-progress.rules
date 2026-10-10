@@ -11,6 +11,10 @@ SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.clock", TAG+="systemd", ENV{SYSTEMD_W
 # uinput gamepad, its rumble back) is served by the root service fx-pad.service;
 # the device node keeps the default root-only mode.
 SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.pad", TAG+="systemd", ENV{SYSTEMD_WANTS}+="fx-pad.service"
+# steamac: the launcher's ports "fx.pad2", "fx.pad3", ... (further controllers:
+# players 2 and up, one port and one pad each) are served by an instance of
+# fx-pad@.service named after the port.
+SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.pad[2-9]", TAG+="systemd", ENV{SYSTEMD_WANTS}+="fx-pad@$attr{name}.service"
 # The port "fx.sleep" (guest sleep -> the launcher pauses the VM) needs no rule:
 # only root's systemd-suspend.service opens it (fx-progress-agent sleep), and
 # the default root-only mode is right.

@@ -493,7 +493,7 @@ private final class PadSlot {
 /// player.
 final class GamepadBridge {
     /// Players at most: one PadPort each.
-    static let maxPads = 1
+    static let maxPads = 4
 
     private let slots: [PadSlot]
     private let settings: LauncherSettings
@@ -564,9 +564,9 @@ final class GamepadBridge {
             self?.assignControllers()
         })
         // @Published emits before the property changes: re-read on the next main-queue turn.
-        subscriptions.append(settings.$controllerID.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            self?.assignControllers()
-        })
+        for p in [settings.$controllerID.map { _ in () }.eraseToAnyPublisher(), settings.$additionalPads.map { _ in () }.eraseToAnyPublisher()] {
+            subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in self?.assignControllers() })
+        }
         for p in [settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(), settings.$padType.map { _ in () }.eraseToAnyPublisher(),
                   settings.$dualSensePassthrough.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in
@@ -601,7 +601,7 @@ final class GamepadBridge {
     /// Player `i` can have a controller: player 1 always (before the guest runs too: a button
     /// wakes it), the others with "Additional controllers" on and their guest service up.
     private func usable(_ i: Int) -> Bool {
-        i == 0 || slots[i].serviceReady
+        i == 0 || (settings.additionalPads && slots[i].serviceReady)
     }
 
     /// Give the players their controllers. One player: the controller chosen in Settings, else
@@ -691,10 +691,11 @@ final class GamepadBridge {
         return s
     }
 
-    /// --input-selftest: player 1's pad even without a controller, press/release A and push the
-    /// left stick right, then return to rest.
+    /// --input-selftest: pads for players 1 and 2 even without controllers (player 2 if the guest
+    /// serves its port), each presses/releases A and pushes the left stick right, then returns to
+    /// rest.
     func injectTestSequence() {
-        slots[0].injectTestSequence()
+        for s in slots.prefix(2) where s.index == 0 || s.serviceReady { s.injectTestSequence() }
     }
 
     /// --control-fifo `pad on|off|test [<player>]`, `pad state` (DebugControl).

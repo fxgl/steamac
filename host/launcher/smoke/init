@@ -60,12 +60,14 @@ for d in /sys/class/input/event*; do
     esac
 done
 
-# The gamepad comes over the virtio-console port fx.pad (the launcher's GamepadBridge): stand in
-# for the guest's fx-pad service (guest/progress-agent/src/pad.rs) — say hello, print what arrives.
+# The gamepads come over the virtio-console ports fx.pad, fx.pad2, ... (the launcher's
+# GamepadBridge, one port per player): stand in for the guest's fx-pad services
+# (guest/progress-agent/src/pad.rs) — say hello, print what arrives (pad[...], pad2[...], ...).
 for p in /sys/class/virtio-ports/*; do
-    [ "$(cat "$p/name" 2>/dev/null)" = fx.pad ] || continue
+    n=$(cat "$p/name" 2>/dev/null)
+    case "$n" in fx.pad|fx.pad[2-9]) ;; *) continue ;; esac
     ( exec 4<>"/dev/${p##*/}"; echo hello >&4
-      while read -r line <&4; do echo "pad[$line]"; done ) &
+      while read -r line <&4; do echo "${n#fx.}[$line]"; done ) &
 done
 
 echo "--- network"
