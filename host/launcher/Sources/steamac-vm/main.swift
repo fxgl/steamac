@@ -312,15 +312,15 @@ do {
     let clockPort = try ClockPort()
     // Guest sleep needs the window (overlay, wake input): headless, the guest's sleep fails instead.
     let sleepPort = options.headless ? nil : try SleepPort()
-    // The guest's gamepad follows the Mac's controller (GamepadBridge): needs the window too.
-    let padPort = options.headless || !options.gamepad ? nil : try PadPort()
+    // The guest's gamepads follow the Mac's controllers (GamepadBridge): need the window too.
+    let padPorts = options.headless || !options.gamepad ? [] : try (0..<GamepadBridge.maxPads).map { try PadPort(player: $0) }
     // Clipboard sharing follows the app's activation (ClipboardSync): window only.
     let clipboardPort = options.headless ? nil : try ClipboardPort()
     let vm = try VM(options: options, display: display, console: console, progressPort: progressPort,
-                    clockPort: clockPort, sleepPort: sleepPort, padPort: padPort, clipboardPort: clipboardPort,
+                    clockPort: clockPort, sleepPort: sleepPort, padPorts: padPorts, clipboardPort: clipboardPort,
                     inputs: inputs, netSocket: Supervisor.netSocket)
     lifecycle.vm = vm
-    let gamepad = padPort.map { GamepadBridge(port: $0, settings: settings, typeOverride: options.padType) }
+    let gamepad = padPorts.isEmpty ? nil : GamepadBridge(ports: padPorts, settings: settings, typeOverride: options.padType)
     let sound = SoundControl()
     if vm.hasSound {
         sound.attach(ctx: vm.ctx, settings: settings)
