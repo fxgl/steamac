@@ -194,7 +194,7 @@ Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
 | 通用 | 开关机覆盖层；GPU 空闲“仍在工作 — 正在加载或编译着色器…”指示；“当 FX Steam Launcher 在后台时”：**静音**（默认开：`krun_snd_set_volume(…, mute)` 约 150 ms 渐隐，切回窗口恢复音量）与**暂停游戏**（默认关：客户机代理只冻结焦点游戏——`systemctl --user freeze app-steam-app<appid>-*.scope`，cgroup v2；Steam、下载与更新继续；在线游戏可能断线）。代理确认冻结期间（`game-frozen`/`game-thawed`）窗口变暗并显示“游戏已暂停 · 点按以继续”卡片与标题“— 已暂停”；点按窗口恢复游戏且不传给客户机；崩溃报告（`--no-crash-reports`，见下）；**启动时检查更新**（默认开，见“更新检查”）；帧统计日志（`--perf-stats`） | 启动时全屏；**使用 Mac 的时区和时钟格式**（默认开，见上） |
 | 显示 | 客户机跟随窗口大小；窗口右上角 Apple Metal 性能 HUD（Ctrl+Cmd+P，显示菜单）；**MetalFX 超分辨率**（默认关）：窗口像素多于客户机时（Retina 屏 2 倍、缩放或全屏窗口），Apple MetalFX 空间放大把客户机画面放大到窗口像素尺寸，而非线性 / 最近邻缩放；跑在启动器中的客户机帧上，对所有游戏与 Steam UI 有效 | 物理尺寸来源（屏幕自动 / DPI / 毫米——`--dpi`、`--display-mm`），刷新率（`--refresh`），窗口大小（`--display`）：1280 × 800（Steam Deck）到 3840 × 2160 的标准分辨率（超出显示器的标注“超出当前屏幕尺寸”；窗口照旧缩小），“适应屏幕”（按显示器取最大，每次启动重算）或“自定…”（宽 × 高输入）；**Retina 分辨率**（可选，默认关）：客户机显示器获得屏幕像素密度（窗口点数 × 启动时屏幕 backing scale，每边不超过 4094 px 者降档），EDID 物理尺寸不变，SteamOS 把 UI 放大到同样尺寸、文字锐利——但游戏要画 4 倍像素，每帧拷贝大 4 倍；更推荐：Retina 分辨率关 + MetalFX 超分辨率（Retina 屏 2 倍放大） |
 | 鼠标 | 游戏中自动捕获；游戏列表（名取自 `appmanifest_<appid>.acf`，使用默认/自动/关闭、忘记此游戏） | — |
-| 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
+| 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，其余控制器是否成为玩家 2–4，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
 | 声音 | 输出设备（系统默认跟随 macOS，或指定 CoreAudio 设备），音量/静音，低（10 毫秒）/普通（20 毫秒）/稳定（60 毫秒）缓冲——经 `krun_snd_set_*`（`dlsym` 查找；旧 libkrun 下字段置灰并说明） | 声音（`--no-sound`） |
 | 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”） |
 
@@ -324,8 +324,10 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
+**多个控制器。** 开启设置 → 控制器 → **更多控制器**（默认开，立即生效）后，其余已连接的控制器成为玩家 2–4，在 SteamOS 中各有自己的手柄，用于本地合作。每个玩家一个 virtio-console 端口：玩家 1 用上述 `fx.pad`，其余用 `fx.pad2` … `fx.pad4`，各由以端口命名的 `fx-pad@.service` 实例服务（同一个 `fx-progress-agent pad`，以 `FX_PAD_PORT` 指定端口，由 udev 启动），因此各玩家端口上的协议相同，手柄的振动在驱动它的控制器上播放。客户机对应端口的服务发出 `hello` 后该玩家才获得控制器：没有 `fx-pad@.service` 的客户机层仍只有一个手柄。设置中选定的控制器是玩家 1；玩家的控制器在断开前保持不变（其他玩家不递补），重新连接的控制器占用第一个空位。种类、A/B 互换与死区对所有手柄相同。只有玩家 1 的 DualSense 可直通，且另一玩家的控制器也是 DualSense 时不直通（GameController 不报告哪个 HID 设备属于谁）：此时两者都获得 uinput 手柄。关闭：一个控制器驱动一个手柄，与之前相同。
+
 `--control-fifo` 测试命令：`pad on`（无控制器的手柄，如 `--input-selftest` 所用）、
-`pad off`、`pad test`（A + 左摇杆）、`pad state`（客户机手柄、上次振动等级、客户机是否接管 HID 设备、已连接 DualSense 与直通输入报告数）。
+`pad off`、`pad test`（A + 左摇杆）——均可带玩家编号（`pad on 2`；不带则为 1）——以及 `pad state`（客户机手柄、上次振动等级、客户机是否接管 HID 设备、已连接 DualSense 与直通输入报告数）。
 
 ## FX Steam Launcher.app
 

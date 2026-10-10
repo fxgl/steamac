@@ -66,6 +66,8 @@ else
         "input[steamac virtio mouse] type=1 code=272 value=1"
         "input[steamac virtio mouse] type=2 code=8 value=1"
         "pad[ev 1:304:1 3:0:32767]"
+        "pad2[create 0003 045e 028e 0114 "
+        "pad2[ev 1:304:1 3:0:32767]"
         "gpio-keys key pressed"
     )
 fi

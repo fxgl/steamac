@@ -610,6 +610,12 @@ private struct ControllerTab: View {
                 } label: {
                     Label2(title: "Controller that drives it", now: true)
                 }
+                Toggle(isOn: $settings.additionalPads) {
+                    Label2(title: "Additional controllers",
+                           detail: String(localized: "Further connected controllers are players 2 to 4 in SteamOS, each with a gamepad of its own, for local co-op. A player keeps their controller until it disconnects. Off: only one controller is used."),
+                           now: true)
+                }
+                .disabled(!settings.virtualPad)
                 Toggle(isOn: $settings.swapABXY) {
                     Label2(title: "Swap A/B and X/Y", detail: String(localized: "For Nintendo-style button layouts."), now: true)
                 }

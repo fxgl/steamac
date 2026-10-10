@@ -1,0 +1,22 @@
+# steamac: the gamepad of a further player (2 and up). The launcher gives every
+# player's controller a virtio-console port of its own (fx.pad2, fx.pad3, ...);
+# this is fx-pad.service for one of them: %i is the port's name. Started by udev
+# when the port appears (70-fx-progress.rules); launchers with one pad have no
+# such ports and never start it. See guest/progress-agent/src/pad.rs.
+[Unit]
+Description=FX Steam Launcher gamepad (%i)
+ConditionPathExists=/dev/virtio-ports/%i
+
+[Service]
+Type=simple
+Environment=FX_PAD_PORT=/dev/virtio-ports/%i
+ExecStart=/usr/lib/steamac/fx-progress-agent pad
+Restart=on-failure
+RestartSec=2
+# Root opens the root-only /dev/uinput and port by their mode bits: no capabilities.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes

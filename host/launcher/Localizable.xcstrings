@@ -458,6 +458,22 @@
         }
       }
     },
+    "Additional controllers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дополнительные контроллеры"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多控制器"
+          }
+        }
+      }
+    },
     "Advanced" : {
       "localizations" : {
         "ru" : {
@@ -2181,6 +2197,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SteamOS 启动、重启和关机时，在整个窗口显示 FX 进度界面。关闭此项或点按后，只显示一个小进度指示条。"
+          }
+        }
+      }
+    },
+    "Further connected controllers are players 2 to 4 in SteamOS, each with a gamepad of its own, for local co-op. A player keeps their controller until it disconnects. Off: only one controller is used." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остальные подключённые контроллеры становятся игроками 2–4 в SteamOS, у каждого свой геймпад — для совместной игры на одном экране. Контроллер остаётся за игроком, пока не отключится. Выключено: используется только один контроллер."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其余已连接的控制器在 SteamOS 中成为玩家 2 到 4，各有自己的手柄，用于本地合作。玩家的控制器在断开前保持不变。关闭：只使用一个控制器。"
           }
         }
       }

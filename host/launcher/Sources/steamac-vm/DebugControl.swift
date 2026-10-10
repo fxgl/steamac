@@ -39,9 +39,10 @@ import Foundation
 ///                         retry, close, dsn, dump)
 ///   update …              new-version check (UpdateChecker.control: check, startup, press
 ///                         download|skip|later|ok|releases, dump PATH, state)
-///   pad on|off|test|state  GamepadBridge.control: a guest pad without a controller (as
-///                         --input-selftest) / follow the controller again; press A + push the left
-///                         stick; log the guest pad and the guest's last rumble
+///   pad on|off|test [N] | state  GamepadBridge.control: a guest pad for player N (1 if not
+///                         given) without a controller (as --input-selftest) / follow the
+///                         controller again; press A + push the left stick; log the guest pads
+///                         and the guest's last rumble
 enum DebugControl {
     nonisolated(unsafe) private static var settingsWindow: SettingsWindowController?
     nonisolated(unsafe) private static var gamepad: GamepadBridge?

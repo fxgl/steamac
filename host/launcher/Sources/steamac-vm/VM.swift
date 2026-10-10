@@ -37,7 +37,7 @@ final class VM {
     static let maxDisplaySide = 4095
 
     init(options o: Options, display: DisplayBackend, console: Console, progressPort: ProgressPort?,
-         clockPort: ClockPort?, sleepPort: SleepPort?, padPort: PadPort?, clipboardPort: ClipboardPort?,
+         clockPort: ClockPort?, sleepPort: SleepPort?, padPorts: [PadPort], clipboardPort: ClipboardPort?,
          inputs: VMInputs?, netSocket: String?) throws {
         VM.raiseFileLimit()
         try krun("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.krunLogLevel, UInt32(KRUN_LOG_STYLE_AUTO), 0))
@@ -65,10 +65,11 @@ final class VM {
             try krun("krun_add_console_port_inout(\(SleepPort.name))",
                      krun_add_console_port_inout(ctx, UInt32(con), SleepPort.name, s.guestInputFd, s.guestOutputFd))
         }
-        // The Mac's controller -> the guest's uinput gamepad (fx-pad.service), its rumble back.
-        if let p = padPort {
-            try krun("krun_add_console_port_inout(\(PadPort.name))",
-                     krun_add_console_port_inout(ctx, UInt32(con), PadPort.name, p.guestInputFd, p.guestOutputFd))
+        // The Mac's controllers -> the guest's uinput gamepads (fx-pad.service, fx-pad@.service: one
+        // port per player), their rumble back.
+        for p in padPorts {
+            try krun("krun_add_console_port_inout(\(p.name))",
+                     krun_add_console_port_inout(ctx, UInt32(con), p.name, p.guestInputFd, p.guestOutputFd))
         }
         // The Mac's clipboard <-> SteamOS's (fx-clipboard-agent.service, ClipboardSync).
         if let c = clipboardPort {

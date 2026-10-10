@@ -55,6 +55,11 @@ grep -q 'fx-progress-agent clock-sync' "$ST/usr/lib/systemd/system/fx-clock-sync
 grep -q 'fx-progress-agent pad$' "$ST/usr/lib/systemd/system/fx-pad.service" \
     && grep -q 'fx-pad.service' "$ST/usr/lib/udev/rules.d/70-fx-progress.rules" \
     || { echo "[layer] fx-pad.service / its udev rule missing" >&2; exit 1; }
+# ... and one instance per further player's port (fx.pad2, ...).
+grep -q 'fx-progress-agent pad$' "$ST/usr/lib/systemd/system/fx-pad@.service" \
+    && grep -q 'FX_PAD_PORT=/dev/virtio-ports/%i$' "$ST/usr/lib/systemd/system/fx-pad@.service" \
+    && grep -q 'fx-pad@\$attr{name}.service' "$ST/usr/lib/udev/rules.d/70-fx-progress.rules" \
+    || { echo "[layer] fx-pad@.service / its udev rule missing" >&2; exit 1; }
 # Same binary as systemd-suspend.service's ExecStart: the launcher pauses the VM instead.
 grep -q 'fx-progress-agent sleep suspend$' "$ST/usr/lib/systemd/system/systemd-suspend.service.d/50-steamac-sleep.conf" \
     || { echo "[layer] systemd-suspend.service drop-in (fx-progress-agent sleep) missing" >&2; exit 1; }
