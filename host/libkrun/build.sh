@@ -17,6 +17,8 @@
 # vsock timesync is always built). SND on macOS uses the CoreAudio virtio-snd backend from
 # patch 0014 (no PipeWire); its debug knob STEAMAC_SND_DUMP=/path.wav records the playback
 # guest PCM before speaker mapping (patch 0017 detects and routes output speakers).
+# GPU also has the wmtr context type (patch 0018, capset 30) for a host executor library; it
+# exists only with STEAMAC_WMTR=1 and a loadable STEAMAC_WMTR_LIB, so by default nothing changes.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -105,6 +107,9 @@ done
 	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_audio
+	# wmtr context type against a stand-in executor (fences, blobs, command checks).
+	cd ../rutabaga_gfx
+	cargo test -q --lib -- wmtr
 )
 
 # --- install (temp file + rename for every output)

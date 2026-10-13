@@ -1,0 +1,742 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: StonkGuy <68372320+StonkGuy@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 01:40:48 +0300
+Subject: [PATCH] rutabaga_gfx(macos): wmtr context type for remoted DXMT
+ winemetal calls
+
+Add an opt-in virtio-gpu context type (capset 30, "wmtr") whose guest
+process forwards DXMT's winemetal unix calls through a shared-memory ring
+to a host executor that runs them against Metal. The executor is a
+separate library (libwmtr_host.dylib, STEAMAC_WMTR_LIB or the default
+name) loaded with dlopen; this patch only carries the transport:
+
+- blobs (blob_id = ring/buffer number, at most 1024) are POSIX shared
+  memory, mapped into the guest by the existing SHM blob path and into
+  the VMM for the executor;
+- EXECBUFFER carries 24-byte commands: RING (blob 0 is initialised:
+  start the executor), KICK (wake it), WAIT (the next fence on this ring
+  completes when the executor's reply slot reaches the sequence number;
+  progress is checked and the waiter queued under one lock, so a reply
+  cannot slip between them); fences on rings without a WAIT complete at
+  once, and pending ones complete when the context is destroyed;
+- the capset id is below 32 because VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs
+  reports a 32-bit mask; no stock rutabaga capset uses 30.
+
+The component exists only with STEAMAC_WMTR=1 and a loadable library
+that exports the host API (one cached load shared by the device's config
+space and the rutabaga builder). Then num_capsets counts it: the stock 5
+covers virgl, virgl2, venus, drm and cross-domain, and the guest never
+asks for an index at or above that count. Without it nothing changes:
+no library is loaded and the guest sees the same five capsets.
+
+Unit tests (cargo test --lib wmtr in rutabaga_gfx, against a stand-in
+executor: no Metal, no library): off unless enabled; a WAIT fence stays
+pending until the reply and completes on it; satisfied WAITs and
+fences without a WAIT complete at once; pending fences complete on
+context drop and the executor is destroyed; malformed blobs and
+commands are rejected. virtio::gpu: num_capsets stays 5 without
+STEAMAC_WMTR.
+---
+ src/devices/src/virtio/gpu/device.rs   |  23 +-
+ src/rutabaga_gfx/src/lib.rs            |   9 +
+ src/rutabaga_gfx/src/rutabaga_core.rs  |  18 +-
+ src/rutabaga_gfx/src/rutabaga_utils.rs |   3 +
+ src/rutabaga_gfx/src/wmtr.rs           | 548 +++++++++++++++++++++++++
+ 5 files changed, 598 insertions(+), 3 deletions(-)
+ create mode 100644 src/rutabaga_gfx/src/wmtr.rs
+
+diff --git a/src/devices/src/virtio/gpu/device.rs b/src/devices/src/virtio/gpu/device.rs
+index cc0f8d4..b58075f 100644
+--- a/src/devices/src/virtio/gpu/device.rs
++++ b/src/devices/src/virtio/gpu/device.rs
+@@ -181,7 +181,9 @@ impl VirtioDevice for Gpu {
+             },
+             events_clear: 0,
+             num_scanouts: self.displays.len() as u32,
+-            num_capsets: 5,
++            // virgl, virgl2, venus, drm, cross-domain, plus wmtr when it is enabled: the driver
++            // only asks for capset indices below this count.
++            num_capsets: 5 + u32::from(rutabaga_gfx::wmtr_enabled()),
+             blob_alignment: self.blob_alignment,
+         };
+ 
+@@ -293,4 +295,23 @@ mod tests {
+         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u32;
+         assert_eq!(u32::from_le_bytes(data), page_size);
+     }
++
++    /// Without STEAMAC_WMTR=1 the device offers the five stock capsets, as before the wmtr context.
++    #[test]
++    fn num_capsets_stock_without_wmtr() {
++        std::env::remove_var("STEAMAC_WMTR");
++        let gpu = Gpu::new(
++            0,
++            None,
++            Box::new([]),
++            NoopDisplayBackend::into_display_backend(None),
++            Arc::new(DisplayControl::new(&[])),
++            #[cfg(target_os = "macos")]
++            crossbeam_channel::unbounded().0,
++        )
++        .unwrap();
++        let mut data = [0u8; 4];
++        gpu.read_config(12, &mut data);
++        assert_eq!(u32::from_le_bytes(data), 5);
++    }
+ }
+diff --git a/src/rutabaga_gfx/src/lib.rs b/src/rutabaga_gfx/src/lib.rs
+index 06c75ae..602e428 100644
+--- a/src/rutabaga_gfx/src/lib.rs
++++ b/src/rutabaga_gfx/src/lib.rs
+@@ -14,6 +14,8 @@ mod macros;
+ #[cfg(any(feature = "gfxstream", feature = "virgl_renderer"))]
+ mod renderer_utils;
+ mod rutabaga_2d;
++#[cfg(target_os = "macos")]
++mod wmtr;
+ mod rutabaga_core;
+ mod rutabaga_gralloc;
+ mod rutabaga_os;
+@@ -36,3 +38,10 @@ pub use crate::rutabaga_os::IntoRawDescriptor as RutabagaIntoRawDescriptor;
+ pub use crate::rutabaga_os::MappedRegion as RutabagaMappedRegion;
+ pub use crate::rutabaga_os::SafeDescriptor as RutabagaDescriptor;
+ pub use crate::rutabaga_utils::*;
++#[cfg(target_os = "macos")]
++pub use crate::wmtr::enabled as wmtr_enabled;
++/// The wmtr context type exists only on macOS.
++#[cfg(not(target_os = "macos"))]
++pub fn wmtr_enabled() -> bool {
++    false
++}
+diff --git a/src/rutabaga_gfx/src/rutabaga_core.rs b/src/rutabaga_gfx/src/rutabaga_core.rs
+index 691ad8a..8cd744b 100644
+--- a/src/rutabaga_gfx/src/rutabaga_core.rs
++++ b/src/rutabaga_gfx/src/rutabaga_core.rs
+@@ -257,7 +257,7 @@ struct RutabagaCapsetInfo {
+     pub name: &'static str,
+ }
+ 
+-const RUTABAGA_CAPSETS: [RutabagaCapsetInfo; 9] = [
++const RUTABAGA_CAPSETS: [RutabagaCapsetInfo; 10] = [
+     RutabagaCapsetInfo {
+         capset_id: RUTABAGA_CAPSET_VIRGL,
+         component: RutabagaComponentType::VirglRenderer,
+@@ -303,6 +303,11 @@ const RUTABAGA_CAPSETS: [RutabagaCapsetInfo; 9] = [
+         component: RutabagaComponentType::Gfxstream,
+         name: "gfxstream-composer",
+     },
++    RutabagaCapsetInfo {
++        capset_id: RUTABAGA_CAPSET_WMTR,
++        component: RutabagaComponentType::Wmtr,
++        name: "wmtr",
++    },
+ ];
+ 
+ pub fn calculate_capset_mask<'a, I: Iterator<Item = &'a str>>(context_names: I) -> u64 {
+@@ -334,6 +339,7 @@ fn calculate_component(component_mask: u8) -> RutabagaResult<RutabagaComponentTy
+         1 => Ok(RutabagaComponentType::VirglRenderer),
+         2 => Ok(RutabagaComponentType::Gfxstream),
+         3 => Ok(RutabagaComponentType::CrossDomain),
++        4 => Ok(RutabagaComponentType::Wmtr),
+         _ => Err(RutabagaError::InvalidComponent),
+     }
+ }
+@@ -774,7 +780,9 @@ impl Rutabaga {
+                 .get_mut(&ctx_id)
+                 .ok_or(RutabagaError::InvalidContextId)?;
+ 
+-            if ctx.component_type() == RutabagaComponentType::CrossDomain {
++            if ctx.component_type() == RutabagaComponentType::CrossDomain
++                || ctx.component_type() == RutabagaComponentType::Wmtr
++            {
+                 context = Some(ctx);
+             }
+         }
+@@ -1321,6 +1329,12 @@ impl RutabagaBuilder {
+             )?;
+             rutabaga_components.insert(RutabagaComponentType::CrossDomain, cross_domain);
+             push_capset(RUTABAGA_CAPSET_CROSS_DOMAIN);
++
++            #[cfg(target_os = "macos")]
++            if let Some(wmtr) = crate::wmtr::Wmtr::init(fence_handler.clone()) {
++                rutabaga_components.insert(RutabagaComponentType::Wmtr, wmtr);
++                push_capset(RUTABAGA_CAPSET_WMTR);
++            }
+         }
+ 
+         Ok(Rutabaga {
+diff --git a/src/rutabaga_gfx/src/rutabaga_utils.rs b/src/rutabaga_gfx/src/rutabaga_utils.rs
+index 085912c..3ccfd93 100644
+--- a/src/rutabaga_gfx/src/rutabaga_utils.rs
++++ b/src/rutabaga_gfx/src/rutabaga_utils.rs
+@@ -174,6 +174,8 @@ pub const RUTABAGA_CAPSET_DRM: u32 = 6;
+ pub const RUTABAGA_CAPSET_GFXSTREAM_MAGMA: u32 = 7;
+ pub const RUTABAGA_CAPSET_GFXSTREAM_GLES: u32 = 8;
+ pub const RUTABAGA_CAPSET_GFXSTREAM_COMPOSER: u32 = 9;
++/// steamac: remoted DXMT winemetal calls executed against Metal (see wmtr.rs).
++pub const RUTABAGA_CAPSET_WMTR: u32 = 30;
+ 
+ /// An error generated while using this crate.
+ #[sorted]
+@@ -623,6 +625,7 @@ pub enum RutabagaComponentType {
+     VirglRenderer,
+     Gfxstream,
+     CrossDomain,
++    Wmtr,
+ }
+ 
+ /// Rutabaga handle types (memory and sync in same namespace)
+diff --git a/src/rutabaga_gfx/src/wmtr.rs b/src/rutabaga_gfx/src/wmtr.rs
+new file mode 100644
+index 0000000..d380c20
+--- /dev/null
++++ b/src/rutabaga_gfx/src/wmtr.rs
+@@ -0,0 +1,548 @@
++// SPDX-License-Identifier: Apache-2.0
++
++//! wmtr: a virtio-gpu context type that carries DXMT's winemetal unix calls from a guest process
++//! to a host executor (libwmtr_host.dylib, loaded at runtime) that runs them against Metal.
++//!
++//! Guest protocol (see wmtr_vgpu.h): blobs are VIRTGPU_BLOB_MEM_HOST3D with blob_id = wmtr blob
++//! number; this context backs each one with POSIX shared memory that is mapped both into the guest
++//! (by the VMM's existing SHM blob path) and into this process for the executor. EXECBUFFER carries
++//! 24-byte commands: RING (blob 0 is initialised: start the executor), KICK (wake it), WAIT (the
++//! next fence on this ring completes when the reply slot or event queue reaches `seq`).
++//!
++//! The component only exists when STEAMAC_WMTR=1 and the library loads, so nothing changes for
++//! guests that never ask for the capset.
++
++use log::{error, info};
++use std::collections::BTreeMap;
++use std::ffi::c_void;
++use std::ffi::CString;
++use std::sync::Arc;
++use std::sync::Mutex;
++use std::sync::OnceLock;
++
++use crate::rutabaga_core::RutabagaComponent;
++use crate::rutabaga_core::RutabagaContext;
++use crate::rutabaga_core::RutabagaResource;
++use crate::rutabaga_os::FromRawDescriptor;
++use crate::rutabaga_os::SafeDescriptor;
++use crate::rutabaga_utils::*;
++
++pub const RUTABAGA_CAPSET_WMTR: u32 = 30;
++
++const WMTR_VGPU_RING: u32 = 1;
++const WMTR_VGPU_KICK: u32 = 2;
++const WMTR_VGPU_WAIT: u32 = 3;
++const CMD_SIZE: usize = 24;
++
++#[repr(C)]
++struct WmtrHostOps {
++    blob_ptr: extern "C" fn(*mut c_void, u32, *mut u64) -> *mut c_void,
++    wake: extern "C" fn(*mut c_void, u32),
++    create_view: Option<extern "C" fn(*mut c_void, u64, *mut c_void, *mut u64) -> u64>,
++    release_view: Option<extern "C" fn(*mut c_void, u64)>,
++    map_path: Option<extern "C" fn(*mut c_void, *const i8, *mut i8, u64) -> *const i8>,
++}
++
++type HostCreate = unsafe extern "C" fn(*mut c_void, *const WmtrHostOps, *mut c_void) -> *mut c_void;
++type HostVoid = unsafe extern "C" fn(*mut c_void);
++type HostProgress = unsafe extern "C" fn(*mut c_void, u32) -> u64;
++type ViewCreate = extern "C" fn(*mut c_void, u64, *mut c_void, *mut u64) -> u64;
++type ViewRelease = extern "C" fn(*mut c_void, u64);
++type MapPath = extern "C" fn(*mut c_void, *const i8, *mut i8, u64) -> *const i8;
++
++#[derive(Clone, Copy)]
++struct HostLib {
++    create: HostCreate,
++    kick: HostVoid,
++    destroy: HostVoid,
++    progress: HostProgress,
++    create_view: Option<ViewCreate>,
++    release_view: Option<ViewRelease>,
++    map_path: Option<MapPath>,
++}
++
++unsafe impl Send for HostLib {}
++unsafe impl Sync for HostLib {}
++
++fn load_host_lib() -> Option<HostLib> {
++    let name = std::env::var("STEAMAC_WMTR_LIB").unwrap_or_else(|_| "libwmtr_host.dylib".into());
++    let cname = CString::new(name.clone()).ok()?;
++    // SAFETY: dlopen/dlsym on a library we built; symbols are checked for null before use.
++    unsafe {
++        let h = libc::dlopen(cname.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
++        if h.is_null() {
++            error!("wmtr: cannot load {name}");
++            return None;
++        }
++        let sym = |s: &str| -> *mut c_void {
++            let c = CString::new(s).unwrap();
++            libc::dlsym(h, c.as_ptr())
++        };
++        let (c, k, d, p) = (
++            sym("wmtr_host_create"),
++            sym("wmtr_host_kick"),
++            sym("wmtr_host_destroy"),
++            sym("wmtr_host_progress"),
++        );
++        if c.is_null() || k.is_null() || d.is_null() || p.is_null() {
++            error!("wmtr: {name} lacks the host API");
++            return None;
++        }
++        let opt = |s: &str| {
++            let p = sym(s);
++            if p.is_null() {
++                None
++            } else {
++                Some(p)
++            }
++        };
++        Some(HostLib {
++            create: std::mem::transmute::<*mut c_void, HostCreate>(c),
++            kick: std::mem::transmute::<*mut c_void, HostVoid>(k),
++            destroy: std::mem::transmute::<*mut c_void, HostVoid>(d),
++            progress: std::mem::transmute::<*mut c_void, HostProgress>(p),
++            create_view: opt("wmtr_present_create_view")
++                .map(|p| std::mem::transmute::<*mut c_void, ViewCreate>(p)),
++            release_view: opt("wmtr_present_release_view")
++                .map(|p| std::mem::transmute::<*mut c_void, ViewRelease>(p)),
++            map_path: opt("wmtr_map_path").map(|p| std::mem::transmute::<*mut c_void, MapPath>(p)),
++        })
++    }
++}
++
++/// The host library, loaded once per process (the device's config space and the rutabaga builder
++/// must agree on whether the capset exists). None unless STEAMAC_WMTR=1 and the library loads.
++fn host_lib() -> Option<HostLib> {
++    if std::env::var("STEAMAC_WMTR").ok().as_deref() != Some("1") {
++        return None;
++    }
++    static LIB: OnceLock<Option<HostLib>> = OnceLock::new();
++    *LIB.get_or_init(load_host_lib)
++}
++
++/// Whether the wmtr capset is offered: the virtio-gpu device adds it to `num_capsets`.
++pub fn enabled() -> bool {
++    host_lib().is_some()
++}
++
++struct Waiter {
++    fence: RutabagaFence,
++    slot: u32,
++    seq: u64,
++}
++
++/// State shared with the executor's callbacks (which run on executor/dispatch threads).
++struct Shared {
++    lib: HostLib,
++    blobs: Mutex<BTreeMap<u32, (usize, u64)>>,
++    waiters: Mutex<Vec<Waiter>>,
++    host: Mutex<usize>,
++    fence_handler: RutabagaFenceHandler,
++}
++
++extern "C" fn cb_blob_ptr(ctx: *mut c_void, blob: u32, size: *mut u64) -> *mut c_void {
++    // SAFETY: ctx is the Shared the context keeps alive until the executor is destroyed.
++    let s = unsafe { &*(ctx as *const Shared) };
++    match s.blobs.lock().unwrap().get(&blob) {
++        Some(&(p, n)) => {
++            // SAFETY: size points to the caller's u64.
++            unsafe { *size = n };
++            p as *mut c_void
++        }
++        None => std::ptr::null_mut(),
++    }
++}
++
++extern "C" fn cb_wake(ctx: *mut c_void, slot: u32) {
++    // SAFETY: as above.
++    let s = unsafe { &*(ctx as *const Shared) };
++    s.signal_ready(Some(slot));
++}
++
++impl Shared {
++    fn progress(&self, slot: u32) -> u64 {
++        let host = *self.host.lock().unwrap();
++        if host == 0 {
++            return 0;
++        }
++        // SAFETY: host is a live executor handle.
++        unsafe { (self.lib.progress)(host as *mut c_void, slot) }
++    }
++
++    /// Completes every waiter (of `slot`, or all) whose condition holds.
++    fn signal_ready(&self, slot: Option<u32>) {
++        let mut w = self.waiters.lock().unwrap();
++        let mut i = 0;
++        while i < w.len() {
++            if slot.is_none_or(|s| s == w[i].slot) && self.progress(w[i].slot) >= w[i].seq {
++                let x = w.swap_remove(i);
++                self.fence_handler.call(x.fence);
++            } else {
++                i += 1;
++            }
++        }
++    }
++}
++
++pub struct WmtrContext {
++    shared: Arc<Shared>,
++    ops: Box<WmtrHostOps>,
++    pending: BTreeMap<u8, (u32, u64)>,
++    maps: Vec<(usize, u64)>,
++}
++
++// SAFETY: the raw pointers are only host addresses of mappings this context owns.
++unsafe impl Send for WmtrContext {}
++
++impl WmtrContext {
++    fn host(&self) -> *mut c_void {
++        *self.shared.host.lock().unwrap() as *mut c_void
++    }
++}
++
++impl RutabagaContext for WmtrContext {
++    fn context_create_blob(
++        &mut self,
++        resource_id: u32,
++        resource_create_blob: ResourceCreateBlob,
++        _handle_opt: Option<RutabagaHandle>,
++    ) -> RutabagaResult<RutabagaResource> {
++        let blob = resource_create_blob.blob_id as u32;
++        let size = resource_create_blob.size;
++        if size == 0 || blob as usize >= 1024 {
++            return Err(RutabagaError::SpecViolation("wmtr: bad blob"));
++        }
++        let name = CString::new(format!("/wmtr.{}.{}.{}", std::process::id(), resource_id, blob)).unwrap();
++        // SAFETY: plain POSIX shm calls; every result is checked.
++        let (fd, ptr) = unsafe {
++            let fd = libc::shm_open(name.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600);
++            if fd < 0 {
++                return Err(RutabagaError::SpecViolation("wmtr: shm_open failed"));
++            }
++            libc::shm_unlink(name.as_ptr());
++            if libc::ftruncate(fd, size as libc::off_t) != 0 {
++                libc::close(fd);
++                return Err(RutabagaError::SpecViolation("wmtr: ftruncate failed"));
++            }
++            let p = libc::mmap(
++                std::ptr::null_mut(),
++                size as usize,
++                libc::PROT_READ | libc::PROT_WRITE,
++                libc::MAP_SHARED,
++                fd,
++                0,
++            );
++            if p == libc::MAP_FAILED {
++                libc::close(fd);
++                return Err(RutabagaError::SpecViolation("wmtr: mmap failed"));
++            }
++            (fd, p as usize)
++        };
++        self.shared.blobs.lock().unwrap().insert(blob, (ptr, size));
++        self.maps.push((ptr, size));
++        // SAFETY: fd is a fresh descriptor we own.
++        let os_handle = unsafe { SafeDescriptor::from_raw_descriptor(fd) };
++        Ok(RutabagaResource {
++            resource_id,
++            handle: Some(Arc::new(RutabagaHandle {
++                os_handle,
++                handle_type: RUTABAGA_MEM_HANDLE_TYPE_SHM,
++            })),
++            blob: true,
++            blob_mem: resource_create_blob.blob_mem,
++            blob_flags: resource_create_blob.blob_flags,
++            map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_RW),
++            info_2d: None,
++            info_3d: None,
++            vulkan_info: None,
++            backing_iovecs: None,
++            component_mask: 1 << (RutabagaComponentType::Wmtr as u8),
++            size,
++            mapping: None,
++        })
++    }
++
++    fn submit_cmd(&mut self, commands: &mut [u8], _fence_ids: &[u64]) -> RutabagaResult<()> {
++        for c in commands.chunks_exact(CMD_SIZE) {
++            let ty = u32::from_le_bytes(c[0..4].try_into().unwrap());
++            let slot = u32::from_le_bytes(c[4..8].try_into().unwrap());
++            let seq = u64::from_le_bytes(c[8..16].try_into().unwrap());
++            match ty {
++                WMTR_VGPU_RING => {
++                    if !self.host().is_null() {
++                        return Err(RutabagaError::SpecViolation("wmtr: ring already started"));
++                    }
++                    let ring = match self.shared.blobs.lock().unwrap().get(&0) {
++                        Some(&(p, _)) => p,
++                        None => return Err(RutabagaError::SpecViolation("wmtr: no ring blob")),
++                    };
++                    let ctx = Arc::as_ptr(&self.shared) as *mut c_void;
++                    // SAFETY: ring is our mapping of blob 0; ops and ctx outlive the executor
++                    // (destroyed in Drop before they are freed).
++                    let h = unsafe { (self.shared.lib.create)(ring as *mut c_void, &*self.ops, ctx) };
++                    if h.is_null() {
++                        return Err(RutabagaError::SpecViolation("wmtr: executor start failed"));
++                    }
++                    *self.shared.host.lock().unwrap() = h as usize;
++                }
++                WMTR_VGPU_KICK => {
++                    let h = self.host();
++                    if !h.is_null() {
++                        // SAFETY: live executor.
++                        unsafe { (self.shared.lib.kick)(h) };
++                    }
++                }
++                WMTR_VGPU_WAIT => {
++                    let ring = if slot >= 64 { 63 } else { 1 + (slot % 62) as u8 };
++                    self.pending.insert(ring, (slot, seq));
++                }
++                _ => return Err(RutabagaError::SpecViolation("wmtr: unknown command")),
++            }
++        }
++        Ok(())
++    }
++
++    fn attach(&mut self, _resource: &mut RutabagaResource) {}
++
++    fn detach(&mut self, _resource: &RutabagaResource) {}
++
++    fn context_create_fence(&mut self, fence: RutabagaFence) -> RutabagaResult<()> {
++        let Some((slot, seq)) = self.pending.remove(&fence.ring_idx) else {
++            self.shared.fence_handler.call(fence);
++            return Ok(());
++        };
++        // Check and enqueue under the waiter lock: the executor publishes progress before it
++        // takes this lock in cb_wake, so a reply cannot slip between the check and the push.
++        let mut w = self.shared.waiters.lock().unwrap();
++        if self.shared.progress(slot) >= seq {
++            drop(w);
++            self.shared.fence_handler.call(fence);
++        } else {
++            w.push(Waiter { fence, slot, seq });
++        }
++        Ok(())
++    }
++
++    fn component_type(&self) -> RutabagaComponentType {
++        RutabagaComponentType::Wmtr
++    }
++}
++
++impl Drop for WmtrContext {
++    fn drop(&mut self) {
++        let h = self.host();
++        if !h.is_null() {
++            // SAFETY: live executor; destroy joins its thread.
++            unsafe { (self.shared.lib.destroy)(h) };
++            *self.shared.host.lock().unwrap() = 0;
++        }
++        // complete anything still waiting so guest pollers do not hang
++        for w in self.shared.waiters.lock().unwrap().drain(..) {
++            self.shared.fence_handler.call(w.fence);
++        }
++        for &(p, n) in &self.maps {
++            // SAFETY: our own mappings.
++            unsafe { libc::munmap(p as *mut c_void, n as usize) };
++        }
++    }
++}
++
++pub struct Wmtr {
++    lib: HostLib,
++    fence_handler: RutabagaFenceHandler,
++}
++
++impl Wmtr {
++    /// Returns the component when STEAMAC_WMTR=1 and the host library loads.
++    pub fn init(fence_handler: RutabagaFenceHandler) -> Option<Box<dyn RutabagaComponent>> {
++        let lib = host_lib()?;
++        info!("wmtr: context type enabled (capset {RUTABAGA_CAPSET_WMTR})");
++        Some(Box::new(Wmtr { lib, fence_handler }))
++    }
++}
++
++impl RutabagaComponent for Wmtr {
++    fn get_capset_info(&self, _capset_id: u32) -> (u32, u32) {
++        (1, 16)
++    }
++
++    fn get_capset(&self, _capset_id: u32, _version: u32) -> Vec<u8> {
++        // struct wmtr_vgpu_caps { u32 version, page_size; u64 max_blob; }
++        let mut v = Vec::with_capacity(16);
++        v.extend_from_slice(&1u32.to_le_bytes());
++        v.extend_from_slice(&16384u32.to_le_bytes());
++        v.extend_from_slice(&(4u64 << 30).to_le_bytes());
++        v
++    }
++
++    fn create_fence(&mut self, fence: RutabagaFence) -> RutabagaResult<()> {
++        self.fence_handler.call(fence);
++        Ok(())
++    }
++
++    fn create_context(
++        &self,
++        _ctx_id: u32,
++        _context_init: u32,
++        _context_name: Option<&str>,
++        fence_handler: RutabagaFenceHandler,
++    ) -> RutabagaResult<Box<dyn RutabagaContext>> {
++        let ops = Box::new(WmtrHostOps {
++            blob_ptr: cb_blob_ptr,
++            wake: cb_wake,
++            create_view: self.lib.create_view,
++            release_view: self.lib.release_view,
++            map_path: self.lib.map_path,
++        });
++        Ok(Box::new(WmtrContext {
++            shared: Arc::new(Shared {
++                lib: self.lib,
++                blobs: Mutex::new(BTreeMap::new()),
++                waiters: Mutex::new(Vec::new()),
++                host: Mutex::new(0),
++                fence_handler,
++            }),
++            ops,
++            pending: BTreeMap::new(),
++            maps: Vec::new(),
++        }))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    //! The context against a stand-in executor (no Metal, no host library): blob 0 backs the ring,
++    //! RING starts the executor, a WAIT fence completes exactly when the executor reports progress.
++    use super::*;
++    use std::sync::atomic::{AtomicU64, Ordering};
++
++    struct Fake {
++        ops: *const WmtrHostOps,
++        ctx: *mut c_void,
++        ring: *mut c_void,
++    }
++    unsafe impl Send for Fake {}
++    static FAKE: Mutex<Option<Fake>> = Mutex::new(None);
++    static PROGRESS: AtomicU64 = AtomicU64::new(0);
++    static KICKS: AtomicU64 = AtomicU64::new(0);
++    const SLOT: u32 = 5;
++
++    unsafe extern "C" fn create(ring: *mut c_void, ops: *const WmtrHostOps, ctx: *mut c_void) -> *mut c_void {
++        *FAKE.lock().unwrap() = Some(Fake { ops, ctx, ring });
++        ring
++    }
++    /// One kick = one reply on SLOT: publish progress, then wake (the real executor's order).
++    unsafe extern "C" fn kick(_h: *mut c_void) {
++        KICKS.fetch_add(1, Ordering::SeqCst);
++        let (ops, ctx) = {
++            let f = FAKE.lock().unwrap();
++            let f = f.as_ref().unwrap();
++            (f.ops, f.ctx)
++        };
++        PROGRESS.fetch_add(1, Ordering::SeqCst);
++        ((*ops).wake)(ctx, SLOT);
++    }
++    unsafe extern "C" fn destroy(_h: *mut c_void) {
++        *FAKE.lock().unwrap() = None;
++    }
++    unsafe extern "C" fn progress(_h: *mut c_void, slot: u32) -> u64 {
++        if slot == SLOT {
++            PROGRESS.load(Ordering::SeqCst)
++        } else {
++            0
++        }
++    }
++
++    fn component(done: Arc<Mutex<Vec<u64>>>) -> (Wmtr, RutabagaFenceHandler) {
++        let handler = RutabagaFenceHandler::new(move |f: RutabagaFence| done.lock().unwrap().push(f.fence_id));
++        let lib = HostLib {
++            create,
++            kick,
++            destroy,
++            progress,
++            create_view: None,
++            release_view: None,
++            map_path: None,
++        };
++        (Wmtr { lib, fence_handler: handler.clone() }, handler)
++    }
++
++    fn cmd(ty: u32, slot: u32, seq: u64) -> Vec<u8> {
++        let mut v = Vec::with_capacity(CMD_SIZE);
++        v.extend_from_slice(&ty.to_le_bytes());
++        v.extend_from_slice(&slot.to_le_bytes());
++        v.extend_from_slice(&seq.to_le_bytes());
++        v.extend_from_slice(&0u64.to_le_bytes());
++        v
++    }
++
++    fn blob(id: u64, size: u64) -> ResourceCreateBlob {
++        ResourceCreateBlob { blob_mem: 2, blob_flags: 3, blob_id: id, size }
++    }
++
++    fn fence(id: u64, ring_idx: u8) -> RutabagaFence {
++        RutabagaFence { flags: RUTABAGA_FLAG_INFO_RING_IDX, fence_id: id, ctx_id: 1, ring_idx }
++    }
++
++    #[test]
++    fn off_unless_enabled() {
++        std::env::remove_var("STEAMAC_WMTR");
++        assert!(!enabled());
++        assert!(Wmtr::init(RutabagaFenceHandler::new(|_| {})).is_none());
++    }
++
++    #[test]
++    fn wait_fence_completes_on_reply() {
++        let done = Arc::new(Mutex::new(Vec::new()));
++        let (comp, handler) = component(done.clone());
++        assert_eq!(comp.get_capset(RUTABAGA_CAPSET_WMTR, 1).len(), 16);
++        let mut ctx = comp.create_context(1, RUTABAGA_CAPSET_WMTR, None, handler).unwrap();
++
++        // the ring blob is shared memory the guest maps through the SHM handle
++        let res = ctx.context_create_blob(1, blob(0, 65536), None).unwrap();
++        let handle = res.handle.as_ref().unwrap();
++        assert_eq!(handle.handle_type, RUTABAGA_MEM_HANDLE_TYPE_SHM);
++        assert_eq!(res.size, 65536);
++
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_RING, 0, 0), &[]).unwrap();
++        assert!(FAKE.lock().unwrap().as_ref().is_some_and(|f| !f.ring.is_null()));
++
++        // WAIT slot 5 seq 1 (ring 6) before any reply: the fence stays pending
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_WAIT, SLOT, 1), &[]).unwrap();
++        ctx.context_create_fence(fence(77, 6)).unwrap();
++        assert!(done.lock().unwrap().is_empty(), "fence completed before the reply");
++
++        // the reply completes it
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_KICK, 0, 0), &[]).unwrap();
++        assert_eq!(*done.lock().unwrap(), vec![77]);
++
++        // a WAIT already satisfied completes at once
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_WAIT, SLOT, 1), &[]).unwrap();
++        ctx.context_create_fence(fence(78, 6)).unwrap();
++        // a fence on a ring without a WAIT completes at once
++        ctx.context_create_fence(fence(79, 0)).unwrap();
++        assert_eq!(*done.lock().unwrap(), vec![77, 78, 79]);
++
++        // a WAIT that never gets its reply is completed when the context goes away
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_WAIT, SLOT, 100), &[]).unwrap();
++        ctx.context_create_fence(fence(80, 6)).unwrap();
++        assert_eq!(done.lock().unwrap().len(), 3);
++        drop(ctx);
++        assert_eq!(*done.lock().unwrap(), vec![77, 78, 79, 80]);
++        assert!(FAKE.lock().unwrap().is_none(), "executor not destroyed");
++        assert_eq!(KICKS.load(Ordering::SeqCst), 1);
++    }
++
++    #[test]
++    fn rejects_malformed_requests() {
++        let (comp, handler) = component(Arc::new(Mutex::new(Vec::new())));
++        let mut ctx = comp.create_context(2, RUTABAGA_CAPSET_WMTR, None, handler).unwrap();
++        assert!(ctx.context_create_blob(1, blob(0, 0), None).is_err());
++        assert!(ctx.context_create_blob(1, blob(1024, 4096), None).is_err());
++        // RING before blob 0 exists, then an unknown command
++        assert!(ctx.submit_cmd(&mut cmd(WMTR_VGPU_RING, 0, 0), &[]).is_err());
++        assert!(ctx.submit_cmd(&mut cmd(9, 0, 0), &[]).is_err());
++        // KICK without an executor is ignored
++        ctx.submit_cmd(&mut cmd(WMTR_VGPU_KICK, 0, 0), &[]).unwrap();
++    }
++}
