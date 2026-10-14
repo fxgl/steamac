@@ -69,6 +69,8 @@ final class WindowController: NSObject, NSWindowDelegate {
     private var mouseButtons = Set<UInt16>()
     private var lastAbs: (Int32, Int32) = (-1, -1)
     private var captured = false
+    /// The Mac cursor is hidden over the picture (updateHostCursor); one NSCursor.hide while set.
+    private var hostCursorHidden = false
     private var relRemainder = (0.0, 0.0)
     /// Auto mode: where the guest cursor is (guest pixels); nil = unknown, re-anchor first.
     private var guestCursor: (Int, Int)?
@@ -835,7 +837,32 @@ extension WindowController {
         pressedKeys.removeAll()
         releasePointer()
         releaseButtons()
+        setHostCursorHidden(false)
         guestCursor = nil
+    }
+
+    /// gamescope draws the SteamOS cursor itself, so over the picture the Mac cursor is hidden
+    /// (two cursors otherwise, the Mac one a frame or two ahead). It shows outside the picture,
+    /// over a clickable overlay (pill, "Report…"), while booting, paused or asleep, and in
+    /// `capture` mode, where the guest cursor does not follow until a click captures. While
+    /// captured, grabPointer hides it on its own.
+    private func updateHostCursor(_ e: NSEvent) {
+        guard !captured else { return }
+        var hide = mouseMode != .capture && !bootOrShutdown && !pauseView.shown && !guestAsleep && inPicture(e)
+        if hide, let sup = view.superview {
+            hide = view.hitTest(sup.convert(e.locationInWindow, from: nil)) === view
+        }
+        setHostCursorHidden(hide)
+    }
+
+    private func setHostCursorHidden(_ hide: Bool) {
+        guard hide != hostCursorHidden else { return }
+        hostCursorHidden = hide
+        if hide { NSCursor.hide() } else { NSCursor.unhide() }
+    }
+
+    func pointerExited() {
+        if !captured { setHostCursorHidden(false) }
     }
 
     private func button(for e: NSEvent) -> UInt16 {
@@ -907,6 +934,7 @@ extension WindowController {
     }
 
     func pointerMoved(_ e: NSEvent) {
+        updateHostCursor(e)
         if pauseView.shown || guestAsleep { return }   // nothing reaches a frozen game / sleeping guest
         if captured {
             moveRelative(dx: Double(e.deltaX), dy: Double(e.deltaY))
