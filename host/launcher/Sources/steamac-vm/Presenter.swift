@@ -135,6 +135,17 @@ final class VMView: NSView {
     override func otherMouseUp(with e: NSEvent) { controller?.pointerButton(e, down: false) }
     override func scrollWheel(with e: NSEvent) { controller?.scroll(e) }
 
+    // Leaving the view shows the Mac cursor again (it is hidden over the picture, see
+    // WindowController.updateHostCursor): no mouseMoved arrives once the pointer is elsewhere.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if trackingAreas.isEmpty {
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                           owner: self))
+        }
+    }
+    override func mouseExited(with e: NSEvent) { controller?.pointerExited() }
+
     private func updateDrawableSize() {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         metalLayer.contentsScale = scale

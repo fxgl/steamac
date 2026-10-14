@@ -1,0 +1,217 @@
+From fba71080e2ec9e75fa9f289ca463da10926627e5 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 00:42:49 +0200
+Subject: [PATCH] kk: support 64-bit buffer atomics
+
+Metal has no 64-bit atomic that returns a value: metal_atomic's
+_valid_fetch_other_type and _valid_non_fetch_type admit int, uint and float
+only, so there is no 64-bit fetch min/max, load, store, exchange or
+compare-exchange. __HAVE_ATOMIC_ULONG_MIN_MAX__ (set by the GPU compiler on
+GPUs that have it) does add a *void* atomic_min_explicit/atomic_max_explicit
+for device atomic_ulong, and nothing else: no signed atomic_long exists, and
+_valid_max_type admits "device ulong*" alone, so there is no threadgroup 64-bit
+atomic at all.
+
+Advertise VK_KHR_shader_atomic_int64 (shaderBufferInt64Atomics) and lower
+OpAtomicUMax/OpAtomicUMin on a 64-bit device pointer to the void form, preceded
+by a read of the cell when the result is used. The effect on memory is exactly
+Vulkan's; the returned value is the cell's contents read just before the
+operation, which differs from OpAtomicUMax's exact original value when another
+invocation wins the race in between. Without the lowering those pipelines do
+not compile at all. shaderSharedInt64Atomics stays false.
+
+Tested with host/moltenvk/repro/atomic64.c: 32768 invocations racing on 64-bit
+min/max with the CPU recomputing every expectation, the fetch results checked
+against the values that were actually written, and the uncontended fetch result
+checked exactly.
+
+Generated-by: LLM
+---
+ docs/drivers/kosmickrisp.rst                | 11 ++++-
+ docs/features.txt                           |  2 +-
+ docs/relnotes/new_features.txt              |  1 +
+ src/kosmickrisp/compiler/nir_to_msl.c       | 49 +++++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_debug.c           |  1 +
+ src/kosmickrisp/vulkan/kk_debug.h           |  4 ++
+ src/kosmickrisp/vulkan/kk_physical_device.c |  9 ++++
+ 7 files changed, 75 insertions(+), 2 deletions(-)
+
+diff --git a/docs/drivers/kosmickrisp.rst b/docs/drivers/kosmickrisp.rst
+index 144fb85..ff09656 100644
+--- a/docs/drivers/kosmickrisp.rst
++++ b/docs/drivers/kosmickrisp.rst
+@@ -75,7 +75,7 @@ Environment variables
+ 
+ KosmicKrisp specific environment variables:
+ 
+-- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders. ``novertexsubgroups`` to stop advertising subgroups in the vertex stage (A/B for the lane-id recovery there).
++- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders. ``novertexsubgroups`` to stop advertising subgroups in the vertex stage (A/B for the lane-id recovery there). ``noint64atomics`` to stop advertising ``VK_KHR_shader_atomic_int64``.
+ - ``MESA_KK_GPU_CAPTURE``: Starts Metal capture at device create and ends it at device destroy. Set to ``1`` to activate.
+ - ``MESA_KK_GPU_CAPTURE_DIRECTORY``: Metal capture will be saved to the specified directory. Defaults to Xcode if no path is provided.
+ - ``MESA_KK_DISABLE_WORKAROUNDS``: Provide ``all`` to disable all workarounds. Otherwise, provide a comma separated list to disable wanted workarounds e.g. ``1,3,4`` to disable workaround 1, 3 and 4.
+@@ -83,6 +83,15 @@ KosmicKrisp specific environment variables:
+   - ``custom_border`` to advertise ``VK_EXT_custom_border_color`` and ``VK_EXT_border_color_swizzle``.
+   - ``m5_optimize_e5r9g9b9`` to use allowGPUOptimizedContents on M5 with this format, which causes some CTS tests for vkCmdCopyImage() to fail
+ 
++``VK_KHR_shader_atomic_int64`` is supported for 64-bit buffer atomics: Metal has a
++void ``atomic_min_explicit``/``atomic_max_explicit`` on device ``atomic_ulong`` and nothing else,
++so ``OpAtomicUMax``/``OpAtomicUMin`` lower to it, preceded by a read of the cell when the result is
++used. That returned value is the cell's contents just before the operation, which can differ from
++the original value OpAtomicUMax is defined to return when another invocation wins the race in
++between. Metal has no 64-bit atomic in threadgroup memory and no signed 64-bit atomic at all, so
++``shaderSharedInt64Atomics`` stays unsupported along with ``OpAtomicSMax``/``OpAtomicSMin`` on
++64-bit integers (and 64-bit atomic add, exchange and compare-exchange).
++
+ Metal workarounds
+ *****************
+ 
+diff --git a/docs/features.txt b/docs/features.txt
+index 215a88d..a6442c9 100644
+--- a/docs/features.txt
++++ b/docs/features.txt
+@@ -479,7 +479,7 @@ Vulkan 1.2 -- all DONE: anv, hk, nvk, panvk, pvr, tu, vn
+   VK_KHR_imageless_framebuffer                          DONE (anv, dzn, hasvk, kk, lvp, nvk, panvk, pvr, radv, tu, v3dv, vn)
+   VK_KHR_sampler_mirror_clamp_to_edge                   DONE (anv, dzn, hasvk, kk, lvp, nvk, panvk, pvr, radv, tu, v3dv, vn)
+   VK_KHR_separate_depth_stencil_layouts                 DONE (anv, dzn, hasvk, kk, lvp, nvk, panvk, pvr, radv, tu, v3dv, vn)
+-  VK_KHR_shader_atomic_int64                            DONE (anv, lvp, nvk, panvk/v9+, radv, vn, tu/a740+)
++  VK_KHR_shader_atomic_int64                            DONE (anv, kk, lvp, nvk, panvk/v9+, radv, vn, tu/a740+)
+   VK_KHR_shader_float16_int8                            DONE (anv, dzn, hasvk, kk, lvp, nvk, panvk, radv, tu, v3dv/vc7+, vn)
+   VK_KHR_shader_float_controls                          DONE (anv, dzn, hasvk, kk, lvp, nvk, panvk, pvr, radv, tu, v3dv, vn)
+   VK_KHR_shader_subgroup_extended_types                 DONE (anv, hasvk, kk, lvp, nvk, panvk, pvr, radv, tu, v3dv, vn)
+diff --git a/docs/relnotes/new_features.txt b/docs/relnotes/new_features.txt
+index a9237cd..ddfcaae 100644
+--- a/docs/relnotes/new_features.txt
++++ b/docs/relnotes/new_features.txt
+@@ -80,3 +80,4 @@ GLES 3.0 on etnaviv/HALTI5
+ VK_QCOM_rotated_copy_commands on Turnip
+ VK_KHR_maintenance10 on panvk
+ VK_KHR_map_memory2 on v3dv
++VK_KHR_shader_atomic_int64 on KosmicKrisp
+diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
+index 6cccf74..c9f1079 100644
+--- a/src/kosmickrisp/compiler/nir_to_msl.c
++++ b/src/kosmickrisp/compiler/nir_to_msl.c
+@@ -960,6 +960,50 @@ atomic_op_to_msl(nir_atomic_op op)
+    }
+ }
+ 
++/* 64-bit integer atomics are the one part of MSL's atomic support that is not 32-bit-shaped, and
++ * they are shaped differently again: metal_atomic's _valid_fetch_other_type and
++ * _valid_non_fetch_type admit int, uint and float only, so there is no 64-bit fetch min/max, no
++ * 64-bit load/store, exchange or compare-exchange, and __HAVE_ATOMIC_ULONG_MIN_MAX__ (defined on
++ * this GPU, an M5 Max, by the GPU compiler) adds a *void* atomic_min/max_explicit for device
++ * atomic_ulong and nothing else: no signed atomic_long exists, and no threadgroup 64-bit atomic at
++ * all (metal_atomic's _valid_max_type is "device ulong*" alone). This lowers OpAtomicUMax/UMin on a
++ * 64-bit device pointer to the void form, which is Metal's only 64-bit atomic operation. The effect
++ * on memory is exactly Vulkan's; the returned value is the cell's contents read just before the
++ * operation, which differs from OpAtomicUMax's exact original value when another invocation wins
++ * the race in between. Without the lowering those pipelines do not compile at all. */
++static bool
++atomic_is_64bit_unsigned_minmax(nir_intrinsic_instr *instr)
++{
++   if (instr->intrinsic != nir_intrinsic_global_atomic ||
++       instr->def.bit_size != 64)
++      return false;
++
++   nir_atomic_op op = nir_intrinsic_atomic_op(instr);
++   return op == nir_atomic_op_umax || op == nir_atomic_op_umin;
++}
++
++static void
++atomic_64bit_minmax_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
++{
++   const bool is_max = nir_intrinsic_atomic_op(instr) == nir_atomic_op_umax;
++   const char *type = msl_type_for_def(ctx->types, &instr->def);
++
++   /* Only read the cell when the result is used: the load exists to give the fetch form something
++    * to return, and skipping it keeps an unused atomic a pure store. */
++   if (!nir_def_is_unused(&instr->def)) {
++      P_IND(ctx, "%s t%d = *(device %s*)(", type, instr->def.index, type);
++      src_to_msl(ctx, &instr->src[0]);
++      P(ctx, ");\n");
++   }
++
++   P_IND(ctx, "%s_explicit((device atomic_%s*)", is_max ? "atomic_max" : "atomic_min",
++         type);
++   src_to_msl(ctx, &instr->src[0]);
++   P(ctx, ", ");
++   src_to_msl(ctx, &instr->src[1]);
++   P(ctx, ", memory_order_relaxed);\n");
++}
++
+ static void
+ atomic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr,
+               const char *scope, bool shared)
+@@ -1131,6 +1175,11 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+        instr->intrinsic == nir_intrinsic_load_barycentric_at_offset)
+       return;
+ 
++   if (atomic_is_64bit_unsigned_minmax(instr)) {
++      atomic_64bit_minmax_to_msl(ctx, instr);
++      return;
++   }
++
+    const nir_intrinsic_info *info = &nir_intrinsic_infos[instr->intrinsic];
+    if (instrinsic_needs_dest_type(instr)) {
+       P_IND(ctx, "t%d = ", instr->def.index);
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+index 621d2ba..0c6eedd 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -17,6 +17,7 @@ const struct debug_named_value debug_flags[] = {
+    {"commits", KK_DEBUG_COMMITS},
+    {"cbs", KK_DEBUG_CBS},
+    {"compiles", KK_DEBUG_COMPILES},
++   {"noint64atomics", KK_DEBUG_NO_INT64_ATOMICS},
+    {"novertexsubgroups", KK_DEBUG_NO_VERTEX_SUBGROUPS},
+    {NULL, 0},
+ };
+diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
+index acc6042..6df4591 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.h
++++ b/src/kosmickrisp/vulkan/kk_debug.h
+@@ -24,6 +24,10 @@ enum kk_debug {
+    /* Log every Metal compile (library, compute or render pipeline) with its
+     * MSL hashes, thread, MTL4Compiler and the compiles in flight with it */
+    KK_DEBUG_COMPILES = 1ull << 6,
++   /* Do not advertise VK_KHR_shader_atomic_int64 (64-bit buffer atomics,
++    * lowered in nir_to_msl.c): A/B and a fallback if a title trips over the
++    * lowering's racy fetch result */
++   KK_DEBUG_NO_INT64_ATOMICS = 1ull << 7,
+    /* Do not advertise subgroups in the vertex stage (the lane id is recovered
+     * there in msl_emit_vertex_subgroup_helpers): A/B for the recovery */
+    KK_DEBUG_NO_VERTEX_SUBGROUPS = 1ull << 8,
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index 50d12c4..05df951 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -77,6 +77,13 @@ kk_get_device_extensions(const struct kk_instance *instance,
+       .KHR_imageless_framebuffer = true,
+       .KHR_sampler_mirror_clamp_to_edge = true,
+       .KHR_separate_depth_stencil_layouts = true,
++      /* 64-bit buffer atomics: MSL has no 64-bit fetch min/max, load, store or
++       * CAS, but a void atomic_max/min_explicit on device atomic_ulong, which
++       * nir_to_msl.c lowers OpAtomicUMax/OpAtomicUMin to. Threadgroup 64-bit
++       * atomics stay unsupported (MSL has no threadgroup 64-bit atomic at
++       * all), so shaderSharedInt64Atomics stays false. */
++      .KHR_shader_atomic_int64 = !KK_DEBUG(NO_INT64_ATOMICS),
++      .KHR_shader_float_controls = true,
+       .KHR_shader_float16_int8 = true,
+       .KHR_shader_subgroup_extended_types = true,
+       .KHR_spirv_1_4 = true,
+@@ -306,6 +313,7 @@ kk_get_device_features(
+       .samplerMirrorClampToEdge = true,
+       .scalarBlockLayout = true,
+       .separateDepthStencilLayouts = true,
++      .shaderBufferInt64Atomics = !KK_DEBUG(NO_INT64_ATOMICS),
+       .shaderFloat16 = true,
+       .shaderInputAttachmentArrayDynamicIndexing = true,
+       .shaderInputAttachmentArrayNonUniformIndexing = true,
+@@ -313,6 +321,7 @@ kk_get_device_features(
+       .shaderOutputLayer = true,
+       .shaderOutputViewportIndex = true,
+       .shaderSampledImageArrayNonUniformIndexing = true,
++      .shaderSharedInt64Atomics = false,
+       .shaderStorageBufferArrayNonUniformIndexing = true,
+       .shaderStorageImageArrayNonUniformIndexing = true,
+       .shaderStorageTexelBufferArrayDynamicIndexing = true,

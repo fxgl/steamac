@@ -81,6 +81,17 @@ settings stays. Launcher 1.4 shipped both settings off (`"DisableShaderCache" "1
 `"EnableShaderBackgroundProcessing" "0"`); on the first Steam start after updating, the script turns
 both back on once, but only if both are still exactly those values.
 
+Per-title environment that a game needs from the driver it runs on is a default, not code:
+`/usr/lib/steamac/steam-title-defaults` (also an ExecStartPre of `steam.service`) puts the required
+`VAR=value` words in front of a title's Steam launch options (`%command%`), which
+`steam-launch-wrapper` exports for the game. It ships one entry: Dragon's Dogma 2 (2054970) asks for
+D3D feature level 12_1, which vkd3d-proton derives from ROVs and conservative rasterization — on
+Metal neither exists (conservative rasterization has no Metal API; ROVs would need Metal's raster
+order groups mapped to `VK_EXT_fragment_shader_interlock`), and the title only checks the level, so
+it is reported as `VKD3D_FEATURE_LEVEL=12_1 VKD3D_SHADER_MODEL=6_6`. An existing value is only
+prefixed, never replaced, a value without `%command%` is left alone, and an edit made in Steam after
+ours wins (marker `~/.config/steamac/title-defaults.json`).
+
 SteamOS takes the Mac's time zone and 12/24-hour clock format (Settings > General
 **Use the Mac's time zone and clock format**, on by default, applies on the next start).
 On every boot the launcher adds `steamac.tz=<IANA zone of the Mac>` (`TimeZone.current`) and
@@ -140,7 +151,9 @@ start over.
 | Ctrl+Option | release the captured mouse |
 | close window | shut down the guest (power button) |
 
-Mouse (`--mouse auto`, by default): the SteamOS cursor follows the Mac cursor precisely. gamescope
+Mouse (`--mouse auto`, by default): the SteamOS cursor follows the Mac cursor precisely, and the Mac
+cursor is hidden over the picture so only gamescope's cursor shows (it reappears over the black bars,
+the progress pill, while booting, paused or asleep, and outside the window). gamescope
 (gaming mode) does not accept absolute coordinates, so the launcher moves it with relative deltas
 without acceleration, in pixels of the surface gamescope shows: the agent sends its size with each
 focus line (`focus steam 1920x1200` when Steam's Settings > Display > Resolution is not the native

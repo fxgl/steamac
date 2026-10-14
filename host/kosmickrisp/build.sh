@@ -191,6 +191,34 @@
 #              fault in AGX). A shared compiler compiles as concurrently. A thread compiling for Metal is named after
 #              its compile ("kk <kind> <MSL hashes> compiler <n>: <k> in flight on <m>", shown in crash reports);
 #              MESA_KK_DEBUG=compiles logs every compile. Repro: host/moltenvk/repro compilers.c.
+#   0048       steamac: subgroup operations in the vertex stage (simd_* functions are legal in MSL vertex functions,
+#              only the attributes are not). Dragon's Dogma 2 uses wave ops in vertex shaders. Repro: wave_vertex.c.
+#   0049       steamac: 64-bit buffer atomics (min/max lowered to MSL's void atomic_max/min_explicit on device
+#              atomic_ulong); the operations MSL cannot express fail at pipeline creation. Repro: atomic64.c.
+#   0050       steamac: the device keeps compiled MSL libraries, keyed by the source (a title asks for the same
+#              program ~100 times: Dragon's Dogma 2 87,243 -> 6,244 library compiles in a warm launch).
+#   0051       steamac: a pipeline's programs are compiled on a pool of threads (MESA_KK_COMPILE_THREADS) instead of the
+#              ring thread; draws, dispatches and binds compile or wait for them.
+#   0052       steamac: equal pipelines share their compiled Metal pipeline states (single-flight tables per device).
+#   0053       steamac: destroying a shader whose program is still queued or compiling no longer waits for it; the
+#              worker frees it. Dragon's Dogma 2's pipeline ring thread spent 73% of its time in vkDestroyPipeline
+#              waiting for compiles, which kept Metal at ~2 compiles in flight.
+#   0054       steamac: the graphics state hash covers the depth/stencil formats, the color attachment count and
+#              location map and the depth clip/clamp lowering (pipelines that differed only there shared shaders
+#              through a VkPipelineCache).
+#   0055       steamac: the device's in-memory pipeline cache and Mesa's disk cache (translated MSL), so a pipeline is
+#              translated SPIR-V -> NIR -> MSL once, not on every creation and every launch.
+#   0056       steamac: MESA_KK_DEBUG=compiles lines carry start and end times ("[t <start> <end>]", ms).
+#   0057       steamac: the first use of a program that is still queued compiles it right away instead of waiting
+#              for the queue ahead of it (a bind under virglrenderer's shared submission lock froze the guest).
+#              0053 + 0057, Dragon's Dogma 2 first launch, every cache cleared, M5 Max: the game's compile screen
+#              takes ~8.5 min and gameplay renders at ~9 min, with ~7.5-9 Metal compiles in flight (62 min before
+#              0051; 0052 alone reached 16% of the compile screen in 6 min).
+#   0058       steamac: 64-bit image atomics (VK_EXT_shader_image_atomic_int64, shaderImageInt64Atomics): R64_UINT/
+#              R64_SINT storage images as R32G32_UINT, image umax/umin lowered to Metal's void texture atomic_max/min
+#              on ulong4, every other 64-bit image atomic rejected at pipeline creation (the buffer case is 0049).
+#              Needed by UE5's D3D12 SM6 path (Nanite) through vkd3d-proton; MESA_KK_DEBUG=noimageint64atomics
+#              turns it off. Repro case 27 (image_atomic64.c).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver

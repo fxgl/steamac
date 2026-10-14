@@ -1,0 +1,37 @@
+From 22deabc927a5372ddbe2438fd9208457fc99a0ef Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 12:03:00 +0200
+Subject: [PATCH] kk: start and end times in the MESA_KK_DEBUG=compiles log
+
+Each compile line now ends with its start and end time in milliseconds
+of the monotonic clock ("[t <start> <end>]"). With them the log tells
+how many compiles really overlapped and when Metal was idle - the sum of
+compile times against wall time does not, since it cannot tell a busy
+compiler from a starved one.
+
+Generated-by: LLM
+---
+ src/kosmickrisp/bridge/mtl_compiler.m | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
+index 64b7eed..9aab72f 100644
+--- a/src/kosmickrisp/bridge/mtl_compiler.m
++++ b/src/kosmickrisp/bridge/mtl_compiler.m
+@@ -160,10 +160,11 @@
+    pthread_threadid_np(NULL, &thread);
+    fprintf(stderr,
+            "kk: compile %s%s on thread %" PRIu64 " with MTL4Compiler %u: %.1f ms%s; "
+-           "%u compiles in flight at its start on %u compilers, up to %u on %u\n",
++           "%u compiles in flight at its start on %u compilers, up to %u on %u"
++           " [t %.3f %.3f]\n",
+            c->kind, msl, thread, c->compiler, (end_ns - c->start_ns) / 1e6,
+            ok ? "" : ", failed", c->in_flight, c->compilers, peak_in_flight,
+-           peak_compilers);
++           peak_compilers, c->start_ns / 1e6, end_ns / 1e6);
+ }
+ 
+ /* Compiler */
+-- 
+2.54.0 (Apple Git-157)
+

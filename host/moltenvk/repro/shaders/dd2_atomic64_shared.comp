@@ -1,0 +1,45 @@
+#version 460
+// 64-bit atomic min/max in workgroup (shared) memory: VK_KHR_shader_atomic_int64's
+// shaderSharedAtomicInt64. MSL has no 64-bit atomic of any kind in threadgroup memory
+// (not even the void min/max that device memory gets), so this is not lowerable — the case
+// documents that with a value check rather than a compile check.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+
+layout(local_size_x = 64) in;
+
+shared uint64_t smax;
+shared uint64_t smin;
+
+layout(set = 0, binding = 0, std430) buffer OutMax {
+	uint64_t cell_max[];
+} outmax;
+
+layout(set = 0, binding = 1, std430) buffer OutMin {
+	uint64_t cell_min[];
+} outmin;
+
+uint64_t mix(uint64_t x)
+{
+	x ^= x >> 33;
+	x *= 0xff51afd7ed558ccdUL;
+	x ^= x >> 29;
+	return x;
+}
+
+void main()
+{
+	if (gl_LocalInvocationIndex == 0u) {
+		smax = 0UL;
+		smin = ~0UL;
+	}
+	barrier();
+	uint64_t a = mix(gl_GlobalInvocationID.x);
+	atomicMax(smax, a);
+	atomicMin(smin, a);
+	barrier();
+	if (gl_LocalInvocationIndex == 0u) {
+		outmax.cell_max[gl_WorkGroupID.x] = smax;
+		outmin.cell_min[gl_WorkGroupID.x] = smin;
+	}
+}

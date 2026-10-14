@@ -1,0 +1,21 @@
+#version 460
+// The fetch forms of 64-bit atomic min/max with a single invocation: no contention, so the
+// returned value is the exact one Vulkan requires (OpAtomicUMax's result is the original value).
+// Ran twice by atomic64.c with presets where the atomic does and does not change the cell.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Cells {
+	uint64_t umax_val;
+	uint64_t umax_old;
+	uint64_t umin_val;
+	uint64_t umin_old;
+};
+
+void main()
+{
+	umax_old = atomicMax(umax_val, 0xfeedfacecafebeefUL);
+	umin_old = atomicMin(umin_val, 0x123456789abcdef0UL);
+}

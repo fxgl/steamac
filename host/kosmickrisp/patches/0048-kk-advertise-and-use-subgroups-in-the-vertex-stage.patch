@@ -1,0 +1,210 @@
+From 05c469a40b98d769f416739061add0468c20a84d Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 00:42:08 +0200
+Subject: [PATCH] kk: advertise and use subgroups in the vertex stage
+
+Metal rejects the SIMD-group attributes ([[thread_index_in_simdgroup]],
+[[simdgroup_index_in_threadgroup]], [[threads_per_simdgroup]],
+[[simdgroups_per_threadgroup]]) in a vertex function, but accepts every
+SIMD-group function there. KosmicKrisp declared gl_SubGroupInvocation as such
+an input, so a vertex shader that reads the lane id could not be compiled at
+all (36 of the 38 pipelines of a shipped D3D12 title that vkd3d-proton turns
+into vertex-stage wave ops failed to build).
+
+Declare the four system values as locals in a vertex function instead: the lane
+id is recovered from simd_ballot(true) and simd_prefix_exclusive_sum(1) over
+the active lanes (clearing that many low bits off the ballot leaves this
+invocation's own bit, whose index is the lane id; a fully active SIMD group
+already has its lane id in the scan), the SIMD group size is Metal's fixed 32,
+and gl_SubGroupID / gl_NumSubGroups are 0 and 1, because a vertex invocation
+belongs to no workgroup. VERTEX is added to subgroupSupportedStages.
+
+Tested with host/moltenvk/repro/wave_vertex.c: 96 vertices over three full SIMD
+groups plus a 3-vertex tail draw, with the lane ids, ballot masks and exclusive
+scans cross-checked against each other.
+
+Generated-by: LLM
+---
+ docs/drivers/kosmickrisp.rst                |  2 +-
+ src/kosmickrisp/compiler/nir_to_msl.c       | 67 +++++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_debug.c           |  1 +
+ src/kosmickrisp/vulkan/kk_debug.h           |  3 +
+ src/kosmickrisp/vulkan/kk_physical_device.c |  9 ++-
+ 5 files changed, 78 insertions(+), 4 deletions(-)
+
+diff --git a/docs/drivers/kosmickrisp.rst b/docs/drivers/kosmickrisp.rst
+index 99e86a1..144fb85 100644
+--- a/docs/drivers/kosmickrisp.rst
++++ b/docs/drivers/kosmickrisp.rst
+@@ -75,7 +75,7 @@ Environment variables
+ 
+ KosmicKrisp specific environment variables:
+ 
+-- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders.
++- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders. ``novertexsubgroups`` to stop advertising subgroups in the vertex stage (A/B for the lane-id recovery there).
+ - ``MESA_KK_GPU_CAPTURE``: Starts Metal capture at device create and ends it at device destroy. Set to ``1`` to activate.
+ - ``MESA_KK_GPU_CAPTURE_DIRECTORY``: Metal capture will be saved to the specified directory. Defaults to Xcode if no path is provided.
+ - ``MESA_KK_DISABLE_WORKAROUNDS``: Provide ``all`` to disable all workarounds. Otherwise, provide a comma separated list to disable wanted workarounds e.g. ``1,3,4`` to disable workaround 1, 3 and 4.
+diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
+index cc99c3e..6cccf74 100644
+--- a/src/kosmickrisp/compiler/nir_to_msl.c
++++ b/src/kosmickrisp/compiler/nir_to_msl.c
+@@ -70,16 +70,38 @@ static const char *sysval_table[SYSTEM_VALUE_MAX] = {
+ static const char *sysval_sample_mask_in_post_depth_coverage =
+    "uint gl_SampleMask [[sample_mask, post_depth_coverage]]";
+ 
++/* The SIMD-group and grid attributes Metal accepts in compute and fragment functions but rejects in
++ * a vertex function ("invalid '...' attribute for input declaration in a vertex function").
++ * Verified on macOS 27 with the runtime MSL compiler: [[thread_index_in_simdgroup]],
++ * [[simdgroup_index_in_threadgroup]], [[threads_per_simdgroup]] and
++ * [[simdgroups_per_threadgroup]] are all rejected there, while the SIMD-group *functions*
++ * (simd_ballot, simd_prefix_exclusive_sum, simd_shuffle*, quad_*, ...) are all accepted. */
++static bool
++sysval_vertex_illegal_attribute(unsigned sysval)
++{
++   return sysval == SYSTEM_VALUE_SUBGROUP_SIZE ||
++          sysval == SYSTEM_VALUE_SUBGROUP_INVOCATION ||
++          sysval == SYSTEM_VALUE_NUM_SUBGROUPS ||
++          sysval == SYSTEM_VALUE_SUBGROUP_ID;
++}
++
+ static void
+ emit_sysvals(struct nir_to_msl_ctx *ctx, nir_shader *shader)
+ {
+    bool is_frag_with_post_depth_coverage =
+       ctx->shader->info.stage == MESA_SHADER_FRAGMENT &&
+       ctx->shader->info.fs.post_depth_coverage;
++   const bool vertex = ctx->shader->info.stage == MESA_SHADER_VERTEX;
+ 
+    unsigned i;
+    BITSET_FOREACH_SET(i, shader->info.system_values_read, SYSTEM_VALUE_MAX) {
+       const char *sysval;
++      /* Metal rejects these attributes in a vertex function ("invalid
++       * 'thread_index_in_simdgroup' attribute for input declaration in a vertex
++       * function"): they are declared as locals in emit_local_vars() instead,
++       * computed from SIMD-group functions Metal does allow there. */
++      if (vertex && sysval_vertex_illegal_attribute(i))
++         continue;
+       if (is_frag_with_post_depth_coverage && i == SYSTEM_VALUE_SAMPLE_MASK_IN)
+          sysval = sysval_sample_mask_in_post_depth_coverage;
+       else
+@@ -126,6 +148,25 @@ output_type(nir_shader *shader)
+ static void
+ emit_local_vars(struct nir_to_msl_ctx *ctx, nir_shader *shader)
+ {
++   /* The SIMD-group sysvals Metal refuses to take as vertex-function inputs
++    * (sysval_vertex_illegal_attribute) are locals here. The lane id is the one
++    * that carries meaning: it is recovered by kk_vertex_lane_id() from
++    * functions a vertex function may call. A vertex invocation belongs to no
++    * workgroup, so gl_SubGroupID and gl_NumSubGroups have no faithful value
++    * (0 and 1); a vertex shader that indexes by SIMD group cannot be expressed. */
++   if (shader->info.stage == MESA_SHADER_VERTEX) {
++      if (BITSET_TEST(shader->info.system_values_read,
++                      SYSTEM_VALUE_SUBGROUP_SIZE))
++         P_IND(ctx, "uint gl_SubGroupSize = 32u;\n");
++      if (BITSET_TEST(shader->info.system_values_read,
++                      SYSTEM_VALUE_SUBGROUP_INVOCATION))
++         P_IND(ctx, "uint gl_SubGroupInvocation = kk_vertex_lane_id();\n");
++      if (BITSET_TEST(shader->info.system_values_read,
++                      SYSTEM_VALUE_NUM_SUBGROUPS))
++         P_IND(ctx, "uint gl_NumSubGroups = 1u;\n");
++      if (BITSET_TEST(shader->info.system_values_read, SYSTEM_VALUE_SUBGROUP_ID))
++         P_IND(ctx, "uint gl_SubGroupID = 0u;\n");
++   }
+    if (shader->info.shared_size) {
+       P_IND(ctx, "threadgroup char shared_data[%d];\n",
+             shader->info.shared_size);
+@@ -1954,6 +1995,31 @@ emit_minmax_helpers(struct nir_to_msl_ctx *ctx, nir_function_impl *impl)
+    }
+ }
+ 
++/* The lane id of a vertex invocation, from the SIMD-group functions Metal allows in a vertex
++ * function: the ballot of an always-true predicate is the set of active lanes, the exclusive scan
++ * of 1 over them is the number of active lanes below this invocation, and clearing that many low
++ * bits off the ballot leaves this invocation's own bit, whose index is the lane id. A fully active
++ * SIMD group already has its lane id in the scan, so the loop runs zero times there. */
++static void
++emit_vertex_lane_id_helper(struct nir_to_msl_ctx *ctx, nir_shader *shader)
++{
++   if (shader->info.stage != MESA_SHADER_VERTEX ||
++       !BITSET_TEST(shader->info.system_values_read,
++                    SYSTEM_VALUE_SUBGROUP_INVOCATION))
++      return;
++
++   P(ctx, "static uint\n"
++          "kk_vertex_lane_id(void)\n"
++          "{\n"
++          "   uint mask = (uint)(ulong)simd_ballot(true);\n"
++          "   uint compact = simd_prefix_exclusive_sum(1u);\n"
++          "   uint m = mask;\n"
++          "   for (uint i = 0; i < compact; ++i)\n"
++          "      m &= m - 1u;\n"
++          "   return m == 0u ? 0u : ctz(m);\n"
++          "}\n\n");
++}
++
+ static void
+ tex_to_msl(struct nir_to_msl_ctx *ctx, nir_tex_instr *tex)
+ {
+@@ -2961,6 +3027,7 @@ nir_to_msl(nir_shader *shader, struct nir_to_msl_options *options)
+    }
+ 
+    emit_minmax_helpers(&ctx, impl);
++   emit_vertex_lane_id_helper(&ctx, shader);
+ 
+    msl_emit_constant_data(&ctx, shader);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+index 32c9451..621d2ba 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -17,6 +17,7 @@ const struct debug_named_value debug_flags[] = {
+    {"commits", KK_DEBUG_COMMITS},
+    {"cbs", KK_DEBUG_CBS},
+    {"compiles", KK_DEBUG_COMPILES},
++   {"novertexsubgroups", KK_DEBUG_NO_VERTEX_SUBGROUPS},
+    {NULL, 0},
+ };
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
+index a9c5c8c..acc6042 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.h
++++ b/src/kosmickrisp/vulkan/kk_debug.h
+@@ -24,6 +24,9 @@ enum kk_debug {
+    /* Log every Metal compile (library, compute or render pipeline) with its
+     * MSL hashes, thread, MTL4Compiler and the compiles in flight with it */
+    KK_DEBUG_COMPILES = 1ull << 6,
++   /* Do not advertise subgroups in the vertex stage (the lane id is recovered
++    * there in msl_emit_vertex_subgroup_helpers): A/B for the recovery */
++   KK_DEBUG_NO_VERTEX_SUBGROUPS = 1ull << 8,
+ };
+ 
+ extern enum kk_debug kk_mesa_debug_flags;
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index 9e99176..50d12c4 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -77,8 +77,6 @@ kk_get_device_extensions(const struct kk_instance *instance,
+       .KHR_imageless_framebuffer = true,
+       .KHR_sampler_mirror_clamp_to_edge = true,
+       .KHR_separate_depth_stencil_layouts = true,
+-      .KHR_shader_atomic_int64 = false,
+-      .KHR_shader_float_controls = true,
+       .KHR_shader_float16_int8 = true,
+       .KHR_shader_subgroup_extended_types = true,
+       .KHR_spirv_1_4 = true,
+@@ -692,8 +690,13 @@ kk_get_device_properties(
+ 
+       /* Vulkan 1.1 properties */
+       .subgroupSize = 32,
++      /* Metal rejects the SIMD-group *attributes* ([[thread_index_in_simdgroup]]
++       * and friends) in a vertex function, but allows every SIMD-group
++       * *function* there, so nir_to_msl.c recovers the lane id from a ballot
++       * and a scan instead of declaring it. */
+       .subgroupSupportedStages =
+-         VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
++         VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
++         (KK_DEBUG(NO_VERTEX_SUBGROUPS) ? 0 : VK_SHADER_STAGE_VERTEX_BIT),
+       .subgroupSupportedOperations =
+          VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
+          VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
