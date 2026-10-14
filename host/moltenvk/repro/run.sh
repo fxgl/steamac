@@ -142,6 +142,20 @@
 #    compiles on several MTL4Compilers corrupted the heap on macOS 27 betas 1-4, where KosmicKrisp had turned it off) and
 #    compiles must still overlap on it (MESA_KK_DEBUG=compiles, child process); a compiling thread must be named after
 #    its compile (crash reports show every thread's name).
+# 25. atomic64.c: 64-bit atomic min/max on a storage buffer (32768 invocations hammering
+#    OpAtomicUMax/UMin, with the CPU recomputing every expectation; the racy fetch results
+#    checked against the values written, and the fetch result checked exactly with one invocation) and
+#    64-bit atomics in workgroup memory, with signed 64-bit min/max in a pipeline of its own because
+#    MSL has no atomic_long at all — Dragon's Dogma 2's first shader gap
+#    (VK_KHR_shader_atomic_int64: Metal has only a void min/max on device atomic_ulong, and nothing in
+#    threadgroup memory).
+# 26. wave_vertex.c: wave ops in the vertex stage — lane id, ballot, exclusive scan, broadcast-first,
+#    with a full and a partial-SIMD-group draw, plus the same ops in the fragment stage as a control.
+#    Dragon's Dogma 2's second gap: Metal rejects the [[thread_index_in_simdgroup]] attribute in a
+#    vertex function while allowing every SIMD-group function there.
+# Both print the capability they need and skip when the driver does not advertise it, so an honest
+# driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
+# capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -170,6 +184,12 @@ moltenvk)
 kosmickrisp)
 	work=$root/work/build/host-kosmickrisp/repro
 	kk=${1:?usage: REPRO_DRIVER=kosmickrisp $0 <libvulkan_kosmickrisp.dylib>}
+	# The loader resolves library_path relative to the ICD file's directory, so make it absolute
+	# (vkCreateInstance fails with VK_ERROR_INCOMPATIBLE_DRIVER otherwise).
+	case $kk in
+	/*) ;;
+	*) kk=$PWD/$kk ;;
+	esac
 	brew list --versions vulkan-loader > /dev/null 2>&1 || brew install vulkan-loader
 	loader=$(brew --prefix vulkan-loader)/lib
 	link="-L$loader -lvulkan -Wl,-rpath,$loader"
@@ -282,6 +302,16 @@ fi
 build device_address
 "$work/device_address" "$gspv"
 
+# 25./26.: Dragon's Dogma 2's two shader gaps. shaders/dd2_wave/ is compiled here because subgroup
+# ops need SPIR-V 1.3 (the generic .vert/.frag loop above targets SPIR-V 1.0).
+for s in "$here"/shaders/dd2_wave/*.vert "$here"/shaders/dd2_wave/*.frag; do
+	glslangValidator -V --quiet --target-env vulkan1.3 "$s" -o "$gspv/$(basename "$s").spv"
+done
+build atomic64
+"$work/atomic64" "$gspv"
+build wave_vertex
+"$work/wave_vertex" "$gspv"
+
 build queries
 "$work/queries" "$gspv"
 
@@ -326,6 +356,11 @@ fi
 
 build host_memory
 "$work/host_memory"
+
+# What vkd3d-proton derives for a D3D12 game from this driver, and which of it Metal cannot provide
+# (Dragon's Dogma 2 refuses the GPU over a capability named in the game's own dialog).
+build d3d12_caps
+"$work/d3d12_caps"
 
 if [ "$driver" = kosmickrisp ]; then
 	build sparse

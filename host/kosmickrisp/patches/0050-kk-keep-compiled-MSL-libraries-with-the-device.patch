@@ -1,0 +1,150 @@
+From 938aa0d92be1da4e9317e9a8babbf8ff23da1828 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 02:31:45 +0200
+Subject: [PATCH] kk: keep compiled MSL libraries with the device
+
+A title asks for the same MSL program once per pipeline: Dragon's Dogma 2
+issues ~100 compile requests per distinct program in a single launch (87,243
+library compiles for ~1,100 programs). Metal's own cache answers each request
+in fractions of a millisecond, but every request still costs the round trip to
+reach it (FEX -> vkd3d -> Venus -> virglrenderer -> this driver), milliseconds
+each, and the same work is repeated for every pipeline.
+
+Keep the compiled MTLLibrary by MSL source on the device instead: the library
+is retained for the device's lifetime and returned from a hash table keyed by
+the source string. On a warm Dragon's Dogma 2 launch this cuts library compiles
+from 87,243 to 6,244, all compile requests from 131,636 to 34,051 and the total
+Metal time from 80 s to 14 s (measured with MESA_KK_DEBUG=compiles).
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_device.c | 12 ++++++++
+ src/kosmickrisp/vulkan/kk_device.h |  9 ++++++
+ src/kosmickrisp/vulkan/kk_shader.c | 44 ++++++++++++++++++++++--------
+ 3 files changed, 54 insertions(+), 11 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index f726d89..3492790 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -392,6 +392,11 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+    dev->vk.command_dispatch_table = &dev->vk.dispatch_table;
+    dev->vk.get_timestamp = kk_get_timestamp;
+    simple_mtx_init(&dev->lazy_pipeline_lock, mtx_plain);
++   dev->msl_libraries =
++      _mesa_hash_table_create(&dev->vk.alloc, _mesa_hash_string,
++                              _mesa_key_string_equal);
++   if (dev->msl_libraries == NULL)
++      goto fail_init;
+ 
+    /* Create a new Metal pipeline compiler for the device */
+    dev->mtl_compiler_handle = kk_acquire_compiler(dev);
+@@ -501,6 +506,13 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+    mtl_release(dev->residency_set.handle);
+    simple_mtx_destroy(&dev->residency_set.mutex);
+ 
++   /* Compiled MSL libraries are held for the device's lifetime. */
++   hash_table_foreach(dev->msl_libraries, entry) {
++      mtl_release(entry->data);
++      free((char *)entry->key);
++   }
++   _mesa_hash_table_destroy(dev->msl_libraries, NULL);
++
+    kk_release_compiler(dev);
+    simple_mtx_destroy(&dev->lazy_pipeline_lock);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
+index ae873ab..03d919a 100644
+--- a/src/kosmickrisp/vulkan/kk_device.h
++++ b/src/kosmickrisp/vulkan/kk_device.h
+@@ -82,6 +82,15 @@ struct kk_device {
+    mtl_device *mtl_handle;
+    mtl_compiler *mtl_compiler_handle;
+ 
++   /* Compiled MSL libraries by source string. A title asks for the same program
++    * once per pipeline (Dragon's Dogma 2: ~100 times per program), and every
++    * request otherwise costs a Metal compile call plus the guest round trip to
++    * reach it (FEX -> vkd3d -> Venus -> virglrenderer -> here): Metal answers
++    * from its own cache in fractions of a millisecond, but the round trip is
++    * milliseconds each time. The libraries are retained here for the device's
++    * lifetime and their source strings are owned by the table. */
++   struct hash_table *msl_libraries;
++
+    /* Dispatch table exposed to the user. Required since we need to record all
+     * commands due to Metal limitations */
+    struct vk_device_dispatch_table exposed_dispatch_table;
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index 50c3f59..0de5fdc 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -1294,17 +1294,43 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
+    return nir;
+ }
+ 
++/* The compiled library of an MSL source, kept for the device's lifetime: a title
++ * asks for the same program once per pipeline (Dragon's Dogma 2: ~100 times per
++ * program), and while Metal's own cache answers each request in fractions of a
++ * millisecond, every request still pays the guest round trip to reach it
++ * (FEX -> vkd3d -> Venus -> virglrenderer -> here). Returns a reference the
++ * caller releases, like mtl_new_library does. */
++static mtl_library *
++kk_get_msl_library(struct kk_device *device, const char *source)
++{
++   struct hash_entry *entry =
++      _mesa_hash_table_search(device->msl_libraries, source);
++   if (entry != NULL)
++      return mtl_retain(entry->data);
++
++   struct kk_physical_device *pdev = kk_device_physical(device);
++   mtl_library *library = mtl_new_library(
++      device->mtl_compiler_handle, source, pdev->info.msl_version,
++      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   if (library == NULL)
++      return NULL;
++
++   char *key = strdup(source);
++   if (key == NULL) {
++      mtl_release(library);
++      return NULL;
++   }
++   _mesa_hash_table_insert(device->msl_libraries, key, mtl_retain(library));
++   return library;
++}
++
+ static VkResult
+ kk_compile_compute_pipeline(struct kk_device *device,
+                             const struct msl_compile_data *data,
+                             uint32_t local_size_threads,
+                             mtl_compute_pipeline_state **pipe)
+ {
+-   struct kk_physical_device *pdev = kk_device_physical(device);
+-
+-   mtl_library *library = mtl_new_library(
+-      device->mtl_compiler_handle, data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   mtl_library *library = kk_get_msl_library(device, data->code);
+    if (library == NULL)
+       return VK_ERROR_INVALID_SHADER_NV;
+ 
+@@ -1592,9 +1618,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+    }
+ 
+    const struct msl_compile_data *vs_data = &vs->msl_data[vs_stage];
+-   mtl_library *vertex_library = mtl_new_library(
+-      device->mtl_compiler_handle, vs_data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   mtl_library *vertex_library = kk_get_msl_library(device, vs_data->code);
+    if (vertex_library == NULL)
+       return VK_ERROR_INVALID_SHADER_NV;
+ 
+@@ -1603,9 +1627,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+                                           vs_data->entrypoint_name);
+ 
+    const struct msl_compile_data *fs_data = &vs->msl_data[MESA_SHADER_FRAGMENT];
+-   mtl_library *fragment_library = mtl_new_library(
+-      device->mtl_compiler_handle, fs_data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   mtl_library *fragment_library = kk_get_msl_library(device, fs_data->code);
+    if (fragment_library == NULL) {
+       result = VK_ERROR_INVALID_SHADER_NV;
+       goto destroy_vertex;

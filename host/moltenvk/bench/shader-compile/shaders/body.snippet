@@ -1,0 +1,13 @@
+	{
+		float x2 = x + k;
+		for (int i = 0; i < 64; i++) {
+			x2 = fract(x2 * 1.6180339 + 0.6180339 + nonce * 1e-7);
+			x2 += sin(dot(vec3(x2, k, float(i)), vec3(k, x2, 1.0))) * 0.01;
+			x2 = mix(x2, pow(abs(x2), 0.5) + k, 0.25);
+		}
+		for (uint j = 0u; j < 32u; j++) {
+			acc = mix(acc, sqrt(abs(x2) + float(j) * 0.0001 + k), 0.5);
+			x = acc * x + k * float(j);
+			acc = clamp(acc * 0.999 + sin(x) * 0.001 + cos(acc) * 0.0005, -1e6, 1e6);
+		}
+	}

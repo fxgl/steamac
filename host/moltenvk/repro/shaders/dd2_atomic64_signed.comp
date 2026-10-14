@@ -1,0 +1,33 @@
+#version 460
+// Signed 64-bit atomic min/max (OpAtomicSMax/SMin). Metal cannot express these at all: MSL has no
+// atomic_long type ("unknown type name 'atomic_long'; did you mean 'atomic_ulong'?"), no 64-bit
+// fetch or compare-exchange, and the void atomic_max/min_explicit the unsigned case lowers to is
+// declared for device atomic_ulong alone. atomic64.c keeps this in its own pipeline so that it can
+// report the limitation without failing the unsigned half, and can verify values if a driver ever
+// supports it.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0, std430) buffer Counters {
+	int64_t smax;
+	int64_t smin;
+};
+
+uint64_t mix(uint64_t x)
+{
+	x ^= x >> 33;
+	x *= 0xff51afd7ed558ccdUL;
+	x ^= x >> 29;
+	return x;
+}
+
+void main()
+{
+	uint64_t id = gl_GlobalInvocationID.x;
+	// Plenty of headroom from the int64 extremes.
+	int64_t sa = int64_t(mix(id + 0x100000000UL) >> 1) - 0x4000000000000000L;
+	atomicMax(smax, sa);
+	atomicMin(smin, sa);
+}

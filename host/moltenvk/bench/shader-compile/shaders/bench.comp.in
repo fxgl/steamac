@@ -1,0 +1,27 @@
+#version 460
+// One shader per pipeline, all distinct so every pipeline is a real compile (the constant below is
+// baked in, so the MSL differs per module). The body is deliberately substantive: a game's vertex
+// and fragment shaders are hundreds of lines of MSL, and a trivial shader would compile fast enough
+// to measure nothing.
+layout(local_size_x = 64) in;
+
+const float k = @K@;
+// A per-run nonce: Metal's compiled-library cache is keyed by the MSL, so without it a second run
+// would measure cache hits instead of compiles. Also makes each run's shaders distinct.
+const float nonce = @NONCE@;
+// A specialization constant, so one module can stand for a game's many pipeline variants (a driver
+// that resolves it at compile time compiles once per value, which is what a title's variant set
+// costs).
+layout(constant_id = 0) const float spec = 0.5;
+
+// An observable store, so the MSL the driver compiles cannot be optimized away to nothing.
+layout(set = 0, binding = 0, std430) buffer Out { float v[]; } outbuf;
+
+void main()
+{
+	uvec3 id = gl_GlobalInvocationID;
+	float acc = k + spec;
+	float x = float(id.x) * 0.001 + k;
+@BODY@
+	outbuf.v[gl_GlobalInvocationID.x & 1023u] = acc + x;
+}

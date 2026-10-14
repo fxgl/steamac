@@ -191,6 +191,15 @@
 #              fault in AGX). A shared compiler compiles as concurrently. A thread compiling for Metal is named after
 #              its compile ("kk <kind> <MSL hashes> compiler <n>: <k> in flight on <m>", shown in crash reports);
 #              MESA_KK_DEBUG=compiles logs every compile. Repro: host/moltenvk/repro compilers.c.
+#   0048       steamac: subgroup operations in the vertex stage (simd_* functions are legal in MSL vertex functions,
+#              only the attributes are not). Dragon's Dogma 2 uses wave ops in vertex shaders. Repro: wave_vertex.c.
+#   0049       steamac: 64-bit buffer atomics (min/max lowered to MSL's void atomic_max/min_explicit on device
+#              atomic_ulong); the operations MSL cannot express fail at pipeline creation. Repro: atomic64.c.
+#   0050       steamac: the device keeps compiled MSL libraries, keyed by the source (a title asks for the same
+#              program ~100 times: Dragon's Dogma 2 87,243 -> 6,244 library compiles in a warm launch).
+#   0051       steamac: a pipeline's programs are compiled on a pool of threads (MESA_KK_COMPILE_THREADS) instead of the
+#              ring thread; draws, dispatches and binds compile or wait for them.
+#   0052       steamac: equal pipelines share their compiled Metal pipeline states (single-flight tables per device).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
