@@ -200,6 +200,20 @@
 #   0051       steamac: a pipeline's programs are compiled on a pool of threads (MESA_KK_COMPILE_THREADS) instead of the
 #              ring thread; draws, dispatches and binds compile or wait for them.
 #   0052       steamac: equal pipelines share their compiled Metal pipeline states (single-flight tables per device).
+#   0053       steamac: destroying a shader whose program is still queued or compiling no longer waits for it; the
+#              worker frees it. Dragon's Dogma 2's pipeline ring thread spent 73% of its time in vkDestroyPipeline
+#              waiting for compiles, which kept Metal at ~2 compiles in flight.
+#   0054       steamac: the graphics state hash covers the depth/stencil formats, the color attachment count and
+#              location map and the depth clip/clamp lowering (pipelines that differed only there shared shaders
+#              through a VkPipelineCache).
+#   0055       steamac: the device's in-memory pipeline cache and Mesa's disk cache (translated MSL), so a pipeline is
+#              translated SPIR-V -> NIR -> MSL once, not on every creation and every launch.
+#   0056       steamac: MESA_KK_DEBUG=compiles lines carry start and end times ("[t <start> <end>]", ms).
+#   0057       steamac: the first use of a program that is still queued compiles it right away instead of waiting
+#              for the queue ahead of it (a bind under virglrenderer's shared submission lock froze the guest).
+#              0053 + 0057, Dragon's Dogma 2 first launch, every cache cleared, M5 Max: the game's compile screen
+#              takes ~8.5 min and gameplay renders at ~9 min, with ~7.5-9 Metal compiles in flight (62 min before
+#              0051; 0052 alone reached 16% of the compile screen in 6 min).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver

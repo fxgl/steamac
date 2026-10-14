@@ -1,0 +1,129 @@
+From 5cfb5770463f681f92ac04932ce95d08a985f49f Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 12:02:52 +0200
+Subject: [PATCH] kk: keep translated shaders in a device cache and on disk
+
+KosmicKrisp had neither the device's in-memory pipeline cache
+(vk_device::mem_cache) nor a disk cache, so every pipeline created
+without a VkPipelineCache - and every pipeline of every launch - went
+through SPIR-V -> NIR -> MSL again. That translation runs on the
+creating thread (msl_optimize_nir alone is ~90% of it) and costs ~14 ms
+for a 2,600-line program even when Metal answers from its own cache: a
+warm relaunch of Dragon's Dogma 2 spent minutes there while Metal took
+~30 s in total.
+
+Create the device's cache (weak references, as nvk and hk do) and the
+disk cache, which store what kk_shader_serialize already writes: the
+shader info and its MSL. Metal keeps compiled libraries in its own cache
+keyed by the MSL, so a cached shader skips the whole translation and its
+compile is a Metal cache hit. The device cache is destroyed before the
+compile pool, since its shaders wait for their compiles.
+
+The cache UUID and the disk cache key include what the emitted MSL
+depends on besides the build: the GPU family, the MSL version and the
+workarounds in effect (MESA_KK_DISABLE_WORKAROUNDS and the OS version).
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_device.c          | 17 ++++++++++++
+ src/kosmickrisp/vulkan/kk_physical_device.c | 29 +++++++++++++++++++++
+ 2 files changed, 46 insertions(+)
+
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index 65cab91..2d7a712 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -423,6 +423,18 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+       dev->has_queue = true;
+    }
+ 
++   /* Shaders of pipelines created without a VkPipelineCache are kept here (and
++    * in the disk cache), so an equal pipeline does not translate its SPIR-V
++    * to MSL again: a D3D12 title creates the same pipelines many times over */
++   struct vk_pipeline_cache_create_info cache_info = {
++      .weak_ref = true,
++   };
++   dev->vk.mem_cache = vk_pipeline_cache_create(&dev->vk, &cache_info, NULL);
++   if (dev->vk.mem_cache == NULL) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_queue;
++   }
++
+    result = kk_device_init_meta(dev);
+    if (result != VK_SUCCESS)
+       goto fail_mem_cache;
+@@ -459,6 +471,8 @@ fail_query_table:
+ fail_meta:
+    kk_device_finish_meta(dev);
+ fail_mem_cache:
++   vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
++fail_queue:
+    if (dev->has_queue) {
+       kk_queue_finish(dev, &dev->queue);
+       dev->has_queue = false;
+@@ -504,6 +518,9 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+    kk_oq_heap_finish(dev, &dev->occlusion_queries);
+    kk_destroy_sampler_heap(dev, &dev->samplers);
+ 
++   /* Its shaders wait for their compiles, so before the compile pool goes */
++   vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
++
+    /* Geometry heap */
+    if (dev->heap)
+       kk_destroy_bo(dev, dev->heap);
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index 05df951..266e295 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -995,6 +995,13 @@ kk_get_device_properties(
+             "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
+ }
+ 
++static uint64_t
++kk_physical_device_compiler_flags(const struct kk_physical_device *pdev)
++{
++   return (uint64_t)pdev->info.gpu_apple_family |
++          ((uint64_t)pdev->info.msl_version << 32);
++}
++
+ static void
+ kk_physical_device_init_pipeline_cache(struct kk_physical_device *pdev)
+ {
+@@ -1006,12 +1013,34 @@ kk_physical_device_init_pipeline_cache(struct kk_physical_device *pdev)
+    _mesa_blake3_update(&blake3_ctx, instance->driver_build_sha,
+                        sizeof(instance->driver_build_sha));
+ 
++   /* The MSL a shader translates to depends on the GPU family, the MSL
++    * version and the workarounds in effect (MESA_KK_DISABLE_WORKAROUNDS and
++    * the OS version), so a cached shader is only valid for the same ones */
++   const uint64_t compiler_flags = kk_physical_device_compiler_flags(pdev);
++   _mesa_blake3_update(&blake3_ctx, &compiler_flags, sizeof(compiler_flags));
++   _mesa_blake3_update(&blake3_ctx, &pdev->settings.disabled_workarounds,
++                       sizeof(pdev->settings.disabled_workarounds));
++
+    unsigned char blake3[BLAKE3_KEY_LEN];
+    _mesa_blake3_final(&blake3_ctx, blake3);
+ 
+    STATIC_ASSERT(BLAKE3_KEY_LEN >= VK_UUID_SIZE);
+    memcpy(pdev->vk.properties.pipelineCacheUUID, blake3, VK_UUID_SIZE);
+    memcpy(pdev->vk.properties.shaderBinaryUUID, blake3, VK_UUID_SIZE);
++
++#ifdef ENABLE_SHADER_CACHE
++   /* The translated MSL of every shader, so a title's second run does not
++    * translate its whole shader set again (Metal keeps the compiled libraries
++    * in its own cache, keyed by the MSL) */
++   char renderer[16];
++   snprintf(renderer, sizeof(renderer), "kk_apple%u",
++            pdev->info.gpu_apple_family);
++
++   char timestamp[BLAKE3_HEX_LEN];
++   _mesa_blake3_format(timestamp, blake3);
++
++   pdev->vk.disk_cache = disk_cache_create(renderer, timestamp, compiler_flags);
++#endif
+ }
+ 
+ static void
+-- 
+2.54.0 (Apple Git-157)
+

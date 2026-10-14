@@ -1,0 +1,149 @@
+From f783401cf7327c268db42e0617eb5ab83868ec85 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 12:02:51 +0200
+Subject: [PATCH] kk: do not wait for background compiles when destroying a shader
+
+Destroying a shader whose program is still queued for the compile pool
+(or being compiled) waited for that compile, on the thread that destroys
+it: the Venus ring thread. A title that creates pipelines and destroys
+them right away then serializes on Metal again, one compile at a time,
+which is what the pool exists to avoid. A sample of Dragon's Dogma 2's
+first launch shows its pipeline context's ring thread in
+vkDestroyPipeline -> kk_shader_destroy -> cnd_wait for 73% (975 of 1,329
+samples) and Metal busy only part of the time with ~1-2 compiles in
+flight.
+
+Mark such a shader orphaned instead; the worker that compiles it frees
+it afterwards. The compile still finishes, so an equal pipeline created
+later gets its Metal pipeline state from the device's tables. The
+runtime destroys pipeline shaders with the device's allocator, which
+lives as long as the pool; with an application allocator, which may not
+outlive the call, the destroy still waits. When the device goes away,
+queued orphans are freed without being compiled.
+
+Measured on Dragon's Dogma 2's first launch (all shader caches cleared,
+M5 Max): with this and the next patches Metal runs ~7.5-9 compiles at
+once for the whole compile screen instead of ~2, and the game's
+"compiling shaders" progress bar finishes in ~8.5 minutes instead of
+showing 16% after 6 (62 minutes before the compile pool).
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_shader.c | 56 ++++++++++++++++++++++++------
+ src/kosmickrisp/vulkan/kk_shader.h |  7 ++--
+ 2 files changed, 51 insertions(+), 12 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index 905205c..710b591 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -844,17 +844,46 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+ 
+ static const struct vk_shader_ops kk_shader_ops;
+ 
++static void kk_shader_free(struct kk_device *dev, struct kk_shader *shader,
++                           const VkAllocationCallbacks *pAllocator);
++
+ static void
+ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+                   const VkAllocationCallbacks *pAllocator)
+ {
+    struct kk_device *dev = container_of(vk_dev, struct kk_device, vk);
+ 
+-   /* A background compile may still be running for it: the pool writes into the
+-    * shader's pipeline handles (kk_compile_pool_init) */
+-   if (shader->compile_queued && !shader->compile_done)
+-      (void) kk_compile_wait(dev, shader);
++   /* A background compile may still be queued or running for it: the pool
++    * writes into the shader's pipeline handles (kk_compile_pool_init). Waiting
++    * for it here blocks the ring thread on Metal, and a title destroys
++    * pipelines right after creating them (Dragon's Dogma 2's pipeline context
++    * spent 73% of its time in vkDestroyPipeline waiting for compiles), so the
++    * worker frees it instead. The compile still finishes: an equal pipeline
++    * created later gets its Metal pipeline state from the device's tables.
++    * The runtime destroys pipeline shaders with the device's allocator; an
++    * application allocator may not outlive this call, so with one the destroy
++    * still waits. */
++   const bool device_alloc = pAllocator == NULL || pAllocator == &dev->vk.alloc;
++   if (shader->compile_queued) {
++      mtx_lock(&dev->compile_mtx);
++      if (!shader->compile_done && device_alloc) {
++         shader->compile_orphaned = true;
++         mtx_unlock(&dev->compile_mtx);
++         return;
++      }
++      mtx_unlock(&dev->compile_mtx);
++      if (!shader->compile_done)
++         (void) kk_compile_wait(dev, shader);
++   }
++
++   kk_shader_free(dev, shader, pAllocator);
++}
+ 
++static void
++kk_shader_free(struct kk_device *dev, struct kk_shader *shader,
++               const VkAllocationCallbacks *pAllocator)
++{
++   struct vk_device *vk_dev = &dev->vk;
+    struct kk_pipeline_handles *pipe = &shader->pipeline;
+ 
+    if (shader->info.stage == MESA_SHADER_COMPUTE) {
+@@ -2449,20 +2478,27 @@ kk_compile_worker(void *data)
+       if (dev->compile_head == NULL)
+          dev->compile_tail = NULL;
+       s->compile_next = NULL;
++      /* Nothing will use a destroyed program once the device goes away */
++      const bool skip = s->compile_orphaned && dev->compile_shutdown;
+       mtx_unlock(&dev->compile_mtx);
+ 
+-      /* The device's compiler: one MTL4Compiler compiles its compiles one at a
+-       * time (measured: 16 workers take as long as one, or as 16 compilers in
+-       * one process, while a second process does get a second channel), so
+-       * there is nothing to gain from one per worker. */
+-      VkResult result =
+-         kk_compile_program(dev, s, dev->mtl_compiler_handle);
++      /* All workers share the device's compiler: Metal compiles concurrently
++       * on one MTL4Compiler as well as on several. */
++      VkResult result = skip ? VK_INCOMPLETE
++                             : kk_compile_program(dev, s,
++                                                  dev->mtl_compiler_handle);
+ 
+       mtx_lock(&dev->compile_mtx);
+       s->compile_result = result;
+       s->compile_done = true;
+       dev->compile_pending--;
+       cnd_broadcast(&dev->compile_cnd);
++      if (s->compile_orphaned) {
++         /* Destroyed while it was queued or compiling (kk_shader_destroy) */
++         mtx_unlock(&dev->compile_mtx);
++         kk_shader_free(dev, s, &dev->vk.alloc);
++         mtx_lock(&dev->compile_mtx);
++      }
+    }
+    mtx_unlock(&dev->compile_mtx);
+    return 0;
+diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
+index 1ade194..7ce33d2 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.h
++++ b/src/kosmickrisp/vulkan/kk_shader.h
+@@ -175,12 +175,15 @@ struct kk_shader {
+ 
+    /* Background compilation (kk_device::compile_*): the program is queued at
+     * creation and the pool compiles it, so the ring thread does not spend a
+-    * title's whole shader compilation one pipeline at a time. First use and
+-    * destruction wait for compile_done. */
++    * title's whole shader compilation one pipeline at a time. First use waits
++    * for compile_done; destruction does not (compile_orphaned). */
+    struct kk_shader *compile_next;
+    bool compile_queued;
+    bool compile_done;
+    VkResult compile_result;
++   /* Destroyed while queued or compiling: the worker that compiles it frees
++    * it afterwards */
++   bool compile_orphaned;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(kk_shader, vk.base, VkShaderEXT,
+-- 
+2.54.0 (Apple Git-157)
+

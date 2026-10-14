@@ -1,0 +1,90 @@
+From 3f0cc0ce008b51a369beb81fb124b8b7f7d27826 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 12:02:52 +0200
+Subject: [PATCH] kk: hash all graphics state a pipeline's shaders are built from
+
+kk_hash_graphics_state is the key under which the runtime caches a
+pipeline's shaders, and the VS that holds a KosmicKrisp pipeline is
+built from more state than the key covered:
+
+  - the depth and stencil attachment formats (only "has depth" and
+    "has stencil" were hashed), which become the Metal pipeline's
+    attachment formats in gather_graphics_pipeline_create_info;
+  - the color attachment count and the color attachment location map;
+  - whether depth clipping and clamping can be equal, which
+    kk_lower_hw_vs and kk_lower_fs lower differently.
+
+Two pipelines that differ only there got each other's shaders from an
+application's VkPipelineCache - for instance a D32 pipeline built for a
+D24S8 attachment. Hash them too, for graphics stages only (compute
+pipelines have no graphics state).
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_shader.c | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index 710b591..218345e 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -123,6 +123,12 @@ kk_populate_vs_key(struct kk_vs_key *key,
+    key->vi = *state->vi;
+ }
+ 
++static bool kk_is_possible_both_depth_clip_clamp(
++   const struct vk_graphics_pipeline_state *state, bool enabled);
++static inline uint8_t
++kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
++                               uint8_t i);
++
+ struct kk_fs_key {
+    VkFormat color_formats[MESA_VK_MAX_COLOR_ATTACHMENTS];
+    struct vk_color_blend_state color_blend;
+@@ -135,6 +141,13 @@ struct kk_fs_key {
+    bool dynamic_input_attachment_map;
+    uint8_t depth_input_att;
+    uint8_t stencil_input_att;
++   /* The VS holding the pipeline is built from these too
++    * (gather_graphics_pipeline_create_info), so equal keys must mean equal
++    * attachments, not only "has depth" */
++   VkFormat depth_format;
++   VkFormat stencil_format;
++   uint32_t color_attachment_count;
++   uint8_t color_map[MESA_VK_MAX_COLOR_ATTACHMENTS];
+ };
+ 
+ static void
+@@ -173,6 +186,12 @@ kk_populate_fs_key(struct kk_fs_key *key,
+       state->ial ? state->ial->stencil_att : MESA_VK_ATTACHMENT_NO_INDEX;
+    key->dynamic_input_attachment_map =
+       BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_INPUT_ATTACHMENT_MAP);
++
++   key->depth_format = state->rp->depth_attachment_format;
++   key->stencil_format = state->rp->stencil_attachment_format;
++   key->color_attachment_count = state->rp->color_attachment_count;
++   for (uint32_t i = 0; i < MESA_VK_MAX_COLOR_ATTACHMENTS; i++)
++      key->color_map[i] = kk_get_logical_color_att_index(state, i);
+ }
+ 
+ enum kk_feature_key {
+@@ -224,6 +243,16 @@ kk_hash_graphics_state(struct vk_physical_device *device,
+                           sizeof(state->mv->view_mask));
+    }
+ 
++   /* kk_lower_hw_vs and kk_lower_fs lower depth clipping and clamping by what
++    * the rasterization state allows */
++   if (stages & (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)) {
++      const bool clip_clamp[2] = {
++         kk_is_possible_both_depth_clip_clamp(state, false),
++         kk_is_possible_both_depth_clip_clamp(state, true),
++      };
++      _mesa_blake3_update(&blake3_ctx, clip_clamp, sizeof(clip_clamp));
++   }
++
+    enum kk_feature_key feature_key = kk_make_feature_key(enabled_features);
+    _mesa_blake3_update(&blake3_ctx, &feature_key, sizeof(feature_key));
+ 
+-- 
+2.54.0 (Apple Git-157)
+
