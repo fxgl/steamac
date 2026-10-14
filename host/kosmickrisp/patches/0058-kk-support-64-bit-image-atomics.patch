@@ -1,0 +1,329 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 14 Oct 2026 15:00:00 +0200
+Subject: [PATCH] kk: support 64-bit image atomics
+
+Metal's texture templates declare a void atomic_max/atomic_min taking a ulong4
+on texture2d<ulong> (and the other dims) backed by R32G32_UINT, and no other
+64-bit texture atomic: no fetch form, add/and/or/xor, exchange or
+compare-exchange, and no signed variant. That is the same shape as the buffer
+case in "kk: support 64-bit buffer atomics".
+
+Map VK_FORMAT_R64_UINT/R64_SINT to R32G32_UINT as storage-image (atomic) and
+transfer formats, advertise VK_EXT_shader_image_atomic_int64
+(shaderImageInt64Atomics; sparseImageInt64Atomics stays false) and lower
+OpAtomicUMax/OpAtomicUMin on a 64-bit image to the void texture form, preceded
+by a level-0 texel read when the result is used. The effect on memory is exactly
+Vulkan's; the returned value is the texel read just before the operation, with
+the same caveat as the buffer path. Every other 64-bit image atomic is rejected
+before MSL is built (nir_uses_unsupported_64bit_atomics).
+
+Unreal Engine 5's D3D12 SM6 path (Nanite's visibility buffer) requires 64-bit
+typed-resource atomics, which vkd3d-proton derives from shaderImageInt64Atomics;
+without them UE5 titles report "DirectX 12 is not supported on your system".
+
+MESA_KK_DEBUG=noimageint64atomics stops advertising it.
+
+Tested with host/moltenvk/repro/image_atomic64.c: 32768 invocations racing on
+64-bit image min/max with the CPU recomputing every texel, and the uncontended
+fetch result checked exactly. The Metal operation itself was verified on an
+M5 Max with steamac-dev/scripts/mtl_tex_atomic64.swift.
+
+Generated-by: LLM
+---
+ docs/drivers/kosmickrisp.rst                | 11 ++++-
+ docs/features.txt                           |  2 +-
+ docs/relnotes/new_features.txt              |  1 +
+ src/kosmickrisp/compiler/nir_to_msl.c       | 73 +++++++++++++++++++++++++++--
+ src/kosmickrisp/vulkan/kk_debug.c           |  1 +
+ src/kosmickrisp/vulkan/kk_debug.h           |  4 ++
+ src/kosmickrisp/vulkan/kk_format.c          | 15 ++++++
+ src/kosmickrisp/vulkan/kk_image.c           | 14 ++++++
+ src/kosmickrisp/vulkan/kk_physical_device.c | 11 +++++
+ 9 files changed, 127 insertions(+), 5 deletions(-)
+
+diff --git a/docs/drivers/kosmickrisp.rst b/docs/drivers/kosmickrisp.rst
+index ff09656..bbbea90 100644
+--- a/docs/drivers/kosmickrisp.rst
++++ b/docs/drivers/kosmickrisp.rst
+@@ -75,7 +75,7 @@ Environment variables
+ 
+ KosmicKrisp specific environment variables:
+ 
+-- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders. ``novertexsubgroups`` to stop advertising subgroups in the vertex stage (A/B for the lane-id recovery there). ``noint64atomics`` to stop advertising ``VK_KHR_shader_atomic_int64``.
++- ``MESA_KK_DEBUG``: ``msl`` to log all generated Metal Shading Language (MSL) shaders. ``force_robustness`` to force robustness on all shaders. ``novertexsubgroups`` to stop advertising subgroups in the vertex stage (A/B for the lane-id recovery there). ``noint64atomics`` to stop advertising ``VK_KHR_shader_atomic_int64``. ``noimageint64atomics`` to stop advertising ``VK_EXT_shader_image_atomic_int64`` (and to leave the ``R64`` formats unsupported).
+ - ``MESA_KK_GPU_CAPTURE``: Starts Metal capture at device create and ends it at device destroy. Set to ``1`` to activate.
+ - ``MESA_KK_GPU_CAPTURE_DIRECTORY``: Metal capture will be saved to the specified directory. Defaults to Xcode if no path is provided.
+ - ``MESA_KK_DISABLE_WORKAROUNDS``: Provide ``all`` to disable all workarounds. Otherwise, provide a comma separated list to disable wanted workarounds e.g. ``1,3,4`` to disable workaround 1, 3 and 4.
+@@ -92,6 +92,15 @@ between. Metal has no 64-bit atomic in threadgroup memory and no signed 64-bit a
+ ``shaderSharedInt64Atomics`` stays unsupported along with ``OpAtomicSMax``/``OpAtomicSMin`` on
+ 64-bit integers (and 64-bit atomic add, exchange and compare-exchange).
+ 
++``VK_EXT_shader_image_atomic_int64`` is supported for 64-bit storage-image atomics: Metal declares
++the same void ``atomic_max``/``atomic_min`` on ``texture2d<ulong>`` (and the other dimensions) that
++it does on device ``atomic_ulong``, so ``OpAtomicUMax``/``OpAtomicUMin`` on an ``R64_UINT`` storage
++image lower to it, preceded by a level-0 texel read when the result is used. The returned value
++carries the same caveat as the buffer case (the texel read just before the operation), and the
++``R64_UINT``/``R64_SINT`` formats only expose storage-image and transfer use (no sampling, filtering,
++color attachment or blending). 64-bit signed image atomics, 64-bit add/exchange/compare-exchange on
++images and 64-bit sparse image atomics stay unsupported.
++
+ Metal workarounds
+ *****************
+ 
+diff --git a/docs/features.txt b/docs/features.txt
+index a6442c9..769e8c2 100644
+--- a/docs/features.txt
++++ b/docs/features.txt
+@@ -694,7 +694,7 @@ Khronos extensions that are not part of any Vulkan version:
+   VK_EXT_shader_atomic_float                            DONE (anv, hasvk, kk, lvp, nvk, panvk, radv, tu, vn)
+   VK_EXT_shader_atomic_float2                           DONE (anv, lvp, radv, vn)
+   VK_EXT_shader_float8                                  DONE (radv/gfx12+, vn)
+-  VK_EXT_shader_image_atomic_int64                      DONE (anv, lvp, nvk, panvk/v9+, radv, tu/a740+, vn)
++  VK_EXT_shader_image_atomic_int64                      DONE (anv, kk, lvp, nvk, panvk/v9+, radv, tu/a740+, vn)
+   VK_EXT_shader_module_identifier                       DONE (anv, hasvk, hk, nvk, panvk, radv, tu, v3dv)
+   VK_EXT_shader_object                                  DONE (anv, lvp, hk, nvk, radv)
+   VK_EXT_shader_replicated_composites                   DONE (anv, dzn, hasvk, hk, kk, lvp, nvk, panvk, pvr, radv, tu, vn)
+diff --git a/docs/relnotes/new_features.txt b/docs/relnotes/new_features.txt
+index ddfcaae..85ded20 100644
+--- a/docs/relnotes/new_features.txt
++++ b/docs/relnotes/new_features.txt
+@@ -81,3 +81,4 @@ VK_QCOM_rotated_copy_commands on Turnip
+ VK_KHR_maintenance10 on panvk
+ VK_KHR_map_memory2 on v3dv
+ VK_KHR_shader_atomic_int64 on KosmicKrisp
++VK_EXT_shader_image_atomic_int64 on KosmicKrisp
+diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
+index b19dd19..da6623b 100644
+--- a/src/kosmickrisp/compiler/nir_to_msl.c
++++ b/src/kosmickrisp/compiler/nir_to_msl.c
+@@ -716,6 +716,11 @@ tex_type_name(nir_alu_type ty)
+       return "ushort";
+    case nir_type_uint32:
+       return "uint";
++   case nir_type_int64:
++   case nir_type_uint64:
++      /* Metal's 64-bit textures are ulong only (R32G32_UINT storage), including
++       * the signed R64 formats, so signed and unsigned share the type. */
++      return "ulong";
+    case nir_type_float16:
+       return "half";
+    case nir_type_float32:
+@@ -985,9 +990,11 @@ atomic_is_64bit_unsigned_minmax(nir_intrinsic_instr *instr)
+ /* The one 64-bit atomic operation MSL has is the void min/max above, so a shader that uses any
+  * other one - the signed min/max OpAtomicSMax/SMin lowers to with no atomic_long to lower it to,
+  * add/and/or/xor/exchange, compare-exchange, an atomic load or store, or any of them in threadgroup
+- * memory - cannot be expressed at all. Saying it here, before the MSL is built, is what lets a
+- * caller that compiles programs in the background (kk_compile_pool_init) reject the pipeline while
+- * creation can still return the error to the application. */
++ * memory - cannot be expressed at all. The same holds for 64-bit image atomics: only umax/umin on
++ * a storage image lowers to the void texture form, so a 64-bit bindless_image_atomic with any other
++ * op, and any 64-bit bindless_image_atomic_swap, are unsupported. Saying it here, before the MSL is
++ * built, is what lets a caller that compiles programs in the background (kk_compile_pool_init)
++ * reject the pipeline while creation can still return the error to the application. */
+ bool
+ nir_uses_unsupported_64bit_atomics(nir_shader *shader)
+ {
+@@ -1008,7 +1015,16 @@ nir_uses_unsupported_64bit_atomics(nir_shader *shader)
+                return true;
+             break;
+          }
++         case nir_intrinsic_bindless_image_atomic: {
++            if (intrin->def.bit_size != 64)
++               break;
++            nir_atomic_op op = nir_intrinsic_atomic_op(intrin);
++            if (op != nir_atomic_op_umax && op != nir_atomic_op_umin)
++               return true;
++            break;
++         }
+          case nir_intrinsic_global_atomic_swap:
++         case nir_intrinsic_bindless_image_atomic_swap:
+          case nir_intrinsic_shared_atomic:
+          case nir_intrinsic_shared_atomic_swap:
+             if (intrin->def.bit_size == 64)
+@@ -1055,6 +1071,52 @@ atomic_64bit_minmax_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *inst
+    P(ctx, ", memory_order_relaxed);\n");
+ }
+ 
++/* The 64-bit image case is the same shape as the buffer case above: Metal's texture template
++ * declares the same void atomic_max/atomic_min taking a ulong4 on a texture2d<ulong> (and the
++ * other dims), with no fetch form, so OpAtomicUMax/UMin on an R64_UINT storage image lower to a
++ * level-0 texel read (storage images have one level) followed by the void atomic. The returned
++ * value has the same caveat: it is the texel read just before the operation. Signed R64 images
++ * share the unsigned ulong texture type (nir_to_msl's tex_type_name), and signed min/max is
++ * rejected before this point (nir_uses_unsupported_64bit_atomics). */
++static bool
++atomic_is_64bit_unsigned_image_minmax(nir_intrinsic_instr *instr)
++{
++   if (instr->intrinsic != nir_intrinsic_bindless_image_atomic ||
++       instr->def.bit_size != 64)
++      return false;
++
++   nir_atomic_op op = nir_intrinsic_atomic_op(instr);
++   return op == nir_atomic_op_umax || op == nir_atomic_op_umin;
++}
++
++static void
++atomic_64bit_image_minmax_to_msl(struct nir_to_msl_ctx *ctx,
++                                 nir_intrinsic_instr *instr)
++{
++   const bool is_max = nir_intrinsic_atomic_op(instr) == nir_atomic_op_umax;
++
++   /* Only read the texel when the result is used: the read exists to give the fetch form something
++    * to return, and skipping it keeps an unused atomic a pure store. */
++   if (!nir_def_is_unused(&instr->def)) {
++      P_IND(ctx, "t%d = ", instr->def.index);
++      src_to_msl(ctx, &instr->src[0]);
++      P(ctx, ".read(");
++      image_coord_swizzle(ctx, instr);
++      /* The atomic has no LOD source; a storage image only has level 0. */
++      if (nir_intrinsic_image_dim(instr) != GLSL_SAMPLER_DIM_BUF)
++         P(ctx, ", 0");
++      P(ctx, ").x;\n");
++   }
++
++   P_INDENT(ctx);
++   src_to_msl(ctx, &instr->src[0]);
++   P(ctx, ".atomic_%s(", is_max ? "max" : "min");
++   image_coord_swizzle(ctx, instr);
++   P(ctx, ", ulong4(");
++   src_to_msl(ctx, &instr->src[3]);
++   P(ctx, "));\n");
++}
++
+ static void
+ atomic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr,
+               const char *scope, bool shared)
+@@ -1231,6 +1293,11 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+       return;
+    }
+ 
++   if (atomic_is_64bit_unsigned_image_minmax(instr)) {
++      atomic_64bit_image_minmax_to_msl(ctx, instr);
++      return;
++   }
++
+    const nir_intrinsic_info *info = &nir_intrinsic_infos[instr->intrinsic];
+    if (instrinsic_needs_dest_type(instr)) {
+       P_IND(ctx, "t%d = ", instr->def.index);
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+index 0c6eedd..e002fd7 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -19,6 +19,7 @@ const struct debug_named_value debug_flags[] = {
+    {"compiles", KK_DEBUG_COMPILES},
+    {"noint64atomics", KK_DEBUG_NO_INT64_ATOMICS},
+    {"novertexsubgroups", KK_DEBUG_NO_VERTEX_SUBGROUPS},
++   {"noimageint64atomics", KK_DEBUG_NO_IMAGE_INT64_ATOMICS},
+    {NULL, 0},
+ };
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
+index 6df4591..a716b5e 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.h
++++ b/src/kosmickrisp/vulkan/kk_debug.h
+@@ -31,6 +31,10 @@ enum kk_debug {
+    /* Do not advertise subgroups in the vertex stage (the lane id is recovered
+     * there in msl_emit_vertex_subgroup_helpers): A/B for the recovery */
+    KK_DEBUG_NO_VERTEX_SUBGROUPS = 1ull << 8,
++   /* Do not advertise VK_EXT_shader_image_atomic_int64 (64-bit storage-image
++    * atomics, lowered in nir_to_msl.c): A/B and a fallback if a title trips
++    * over the lowering's racy fetch result */
++   KK_DEBUG_NO_IMAGE_INT64_ATOMICS = 1ull << 9,
+ };
+ 
+ extern enum kk_debug kk_mesa_debug_flags;
+diff --git a/src/kosmickrisp/vulkan/kk_format.c b/src/kosmickrisp/vulkan/kk_format.c
+index a13f541..7193b38 100644
+--- a/src/kosmickrisp/vulkan/kk_format.c
++++ b/src/kosmickrisp/vulkan/kk_format.c
+@@ -8,6 +8,7 @@
+ #include "kk_format.h"
+ 
+ #include "kk_buffer_view.h"
++#include "kk_debug.h"
+ #include "kk_entrypoints.h"
+ #include "kk_image.h"
+ #include "kk_physical_device.h"
+@@ -213,6 +214,14 @@ static const struct kk_va_format kk_vf_formats[] = {
+    MTL_FMT_NATIVE(R16G16B16A16_SINT, MTL_FMT_WCMS(64), MTL_FMT_TB_ALL),
+    MTL_FMT_NATIVE(R16G16B16A16_FLOAT, MTL_FMT_ALL_NO_ATOMIC(64),
+                   MTL_FMT_TB_ALL),
++   /* Vulkan's R64 formats are R32G32_UINT to Metal: 64-bit texture atomics
++    * operate on exactly that storage. They are storage-image (atomic) only:
++    * kk_get_image_plane_format_features() keeps sampling, color attachment and
++    * blending off for them. */
++   MTL_FMT(R64_UINT, R32G32_UINT, MTL_SWIZZLE_IDENTITY, MTL_FMT_WCSA(64),
++           MTL_FMT_TB_NONE, false),
++   MTL_FMT(R64_SINT, R32G32_UINT, MTL_SWIZZLE_IDENTITY, MTL_FMT_WCSA(64),
++           MTL_FMT_TB_NONE, false),
+ 
+    // 128-bit formats
+    MTL_FMT_NATIVE(R32G32B32A32_UINT, MTL_FMT_WCS(128), MTL_FMT_TB_ALL),
+@@ -369,6 +378,12 @@ kk_get_va_format(enum pipe_format format)
+    if (format >= ARRAY_SIZE(kk_vf_formats))
+       return NULL;
+ 
++   /* VK_EXT_shader_image_atomic_int64 can be turned off for A/B testing and as
++    * a fallback (kk_debug.h): R64 then stays unsupported exactly as before. */
++   if ((format == PIPE_FORMAT_R64_UINT || format == PIPE_FORMAT_R64_SINT) &&
++       KK_DEBUG(NO_IMAGE_INT64_ATOMICS))
++      return NULL;
++
+    if (kk_vf_formats[format].bit_widths == 0)
+       return NULL;
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
+index 74c7c0c..797fe83 100644
+--- a/src/kosmickrisp/vulkan/kk_image.c
++++ b/src/kosmickrisp/vulkan/kk_image.c
+@@ -47,6 +47,20 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
+    if (va_format == NULL)
+       return 0;
+ 
++   /* R64 formats are R32G32_UINT to Metal (kk_format.c) and exist only for
++    * VK_EXT_shader_image_atomic_int64's 64-bit storage-image atomics: expose
++    * storage (atomic) and transfer, but not sampling, filtering, color
++    * attachment or blending. Linear tiling stays unsupported. */
++   if (p_format == PIPE_FORMAT_R64_UINT || p_format == PIPE_FORMAT_R64_SINT) {
++      if (tiling != VK_IMAGE_TILING_OPTIMAL)
++         return 0;
++
++      return VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT |
++             VK_FORMAT_FEATURE_2_STORAGE_IMAGE_ATOMIC_BIT |
++             VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
++             VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
++   }
++
+    // Textures can at least be sampled
+    features |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT;
+    features |= VK_FORMAT_FEATURE_2_BLIT_SRC_BIT;
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+index 266e295..ce9b646 100644
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -203,6 +203,12 @@ kk_get_device_extensions(const struct kk_instance *instance,
+       .EXT_robustness2 = true,
+       .EXT_sample_locations = true,
+       .EXT_shader_atomic_float = true,
++      /* 64-bit storage-image atomics: Metal has the same void atomic_max/min
++       * texture operations that the buffer path uses, which nir_to_msl.c lowers
++       * OpAtomicUMax/OpAtomicUMin on R64_UINT storage images to. Signed 64-bit
++       * image atomics and all other 64-bit image atomics stay unsupported, as
++       * does sparseImageInt64Atomics. */
++      .EXT_shader_image_atomic_int64 = !KK_DEBUG(NO_IMAGE_INT64_ATOMICS),
+       .EXT_shader_replicated_composites = true,
+       .EXT_shader_subgroup_ballot = true,
+       .EXT_shader_subgroup_vote = true,
+@@ -314,6 +320,11 @@ kk_get_device_features(
+       .scalarBlockLayout = true,
+       .separateDepthStencilLayouts = true,
+       .shaderBufferInt64Atomics = !KK_DEBUG(NO_INT64_ATOMICS),
++      /* VK_EXT_shader_image_atomic_int64: 64-bit storage-image min/max with the
++       * same lowering and the same racy fetch result as the buffer path. Sparse
++       * 64-bit image atomics (sparseImageInt64Atomics) stay unsupported. */
++      .shaderImageInt64Atomics = !KK_DEBUG(NO_IMAGE_INT64_ATOMICS),
++      .sparseImageInt64Atomics = false,
+       .shaderFloat16 = true,
+       .shaderInputAttachmentArrayDynamicIndexing = true,
+       .shaderInputAttachmentArrayNonUniformIndexing = true,

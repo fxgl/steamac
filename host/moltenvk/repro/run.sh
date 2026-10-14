@@ -153,7 +153,12 @@
 #    with a full and a partial-SIMD-group draw, plus the same ops in the fragment stage as a control.
 #    Dragon's Dogma 2's second gap: Metal rejects the [[thread_index_in_simdgroup]] attribute in a
 #    vertex function while allowing every SIMD-group function there.
-# Both print the capability they need and skip when the driver does not advertise it, so an honest
+# 27. image_atomic64.c: the storage-image counterpart of 25 (VK_EXT_shader_image_atomic_int64):
+#    512 workgroups x 64 invocations race 64-bit imageAtomicMax/imageAtomicMin over two 16x16
+#    R64_UINT storage images, with the CPU recomputing every texel from the same mix() and the same
+#    coordinate mapping, plus a single-invocation pipeline that checks the returned (fetch) value
+#    exactly when uncontended.
+# All three print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
@@ -302,15 +307,21 @@ fi
 build device_address
 "$work/device_address" "$gspv"
 
-# 25./26.: Dragon's Dogma 2's two shader gaps. shaders/dd2_wave/ is compiled here because subgroup
-# ops need SPIR-V 1.3 (the generic .vert/.frag loop above targets SPIR-V 1.0).
+# 25./26./27.: Dragon's Dogma 2's shader gaps and 64-bit image atomics. shaders/dd2_wave/ is
+# compiled here because subgroup ops need SPIR-V 1.3 (the generic .vert/.frag loop above targets
+# SPIR-V 1.0); shaders/image_atomic64/ needs Vulkan 1.3 for the 64-bit image atomics.
 for s in "$here"/shaders/dd2_wave/*.vert "$here"/shaders/dd2_wave/*.frag; do
+	glslangValidator -V --quiet --target-env vulkan1.3 "$s" -o "$gspv/$(basename "$s").spv"
+done
+for s in "$here"/shaders/image_atomic64/*.comp; do
 	glslangValidator -V --quiet --target-env vulkan1.3 "$s" -o "$gspv/$(basename "$s").spv"
 done
 build atomic64
 "$work/atomic64" "$gspv"
 build wave_vertex
 "$work/wave_vertex" "$gspv"
+build image_atomic64
+"$work/image_atomic64" "$gspv"
 
 build queries
 "$work/queries" "$gspv"

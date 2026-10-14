@@ -1,0 +1,31 @@
+#version 460
+// 512 workgroups x 64 invocations race 64-bit imageAtomicMax on one R64_UINT storage image and
+// imageAtomicMin on another. image_atomic64.c recomputes every texel's expectation on the CPU
+// from the same mix(), so a lowering that truncates to 32 bits (Metal's texture atomics that
+// return a value) or drops an atomic fails on the values even though it compiles.
+#extension GL_EXT_shader_image_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64) in;
+
+layout(r64ui, binding = 0) uniform u64image2D img_max;
+layout(r64ui, binding = 1) uniform u64image2D img_min;
+
+uint64_t mix(uint64_t x)
+{
+	x ^= x >> 33;
+	x *= 0xff51afd7ed558ccdUL;
+	x ^= x >> 29;
+	return x;
+}
+
+void main()
+{
+	uint i = gl_GlobalInvocationID.x;
+	uint64_t a = mix(uint64_t(i));
+	// 16x16 texels: 128 invocations per texel.
+	ivec2 coord = ivec2(i & 15u, (i >> 4u) & 15u);
+
+	imageAtomicMax(img_max, coord, a);
+	imageAtomicMin(img_min, coord, a);
+}

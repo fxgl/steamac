@@ -214,6 +214,11 @@
 #              0053 + 0057, Dragon's Dogma 2 first launch, every cache cleared, M5 Max: the game's compile screen
 #              takes ~8.5 min and gameplay renders at ~9 min, with ~7.5-9 Metal compiles in flight (62 min before
 #              0051; 0052 alone reached 16% of the compile screen in 6 min).
+#   0058       steamac: 64-bit image atomics (VK_EXT_shader_image_atomic_int64, shaderImageInt64Atomics): R64_UINT/
+#              R64_SINT storage images as R32G32_UINT, image umax/umin lowered to Metal's void texture atomic_max/min
+#              on ulong4, every other 64-bit image atomic rejected at pipeline creation (the buffer case is 0049).
+#              Needed by UE5's D3D12 SM6 path (Nanite) through vkd3d-proton; MESA_KK_DEBUG=noimageint64atomics
+#              turns it off. Repro case 27 (image_atomic64.c).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
