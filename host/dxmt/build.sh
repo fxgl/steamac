@@ -21,13 +21,21 @@
 # Host lifetime boundary (STEAMAC-5W/5X, 58/59): virtual autorelease pools and fallback retains belong
 # to one guest context, never to process-global reply-slot numbers. Typed object-field metadata
 # (wmtr/gen/gen_objects.py) validates receivers, embedded command resources and pipeline inputs before
-# Objective-C dispatch; worker calls lease live objects. Invalid handles fail the call, late encoders
-# on committed command buffers and Objective-C exceptions lose only that context. `make test` includes
-# a strict real-object multi-context regression; the marshalling loopback still uses fake handles.
+# Objective-C dispatch; worker calls lease live objects. A handle the registry does not know is refused
+# only if it is not a live heap block (garbage, freed): objects from calls the metadata does not cover
+# go through, as refusing them handed DXMT nil libraries and Metal aborted on a nil vertex function
+# (1.9.6, STEAMAC-6S/6W/3/6T). A render pipeline without a vertex function is refused (nil pipeline,
+# draws dropped). Encoders still open when a context is destroyed are ended before release (Metal
+# aborted the VM, STEAMAC-6Z/70). Late encoders on committed command buffers and Objective-C exceptions
+# lose only that context. `make test` includes a real-object multi-context regression; the marshalling
+# loopback still uses fake handles.
 # wmtr_dxmt_test drives DXMT's own guest API (winemetal_thunks.c) over the wmtr client into the
 # production libwmtr_host (DXMT's winemetal_unix.c, validation on, real Metal): blit, compute and
-# render lists headed by a Nop like dxmt_context.cpp's, checked on the GPU's results. 1.9.5 refused
-# every blit and compute list (Death's Door: black frame, magenta menu arrows); this test fails there.
+# render lists headed by a Nop like dxmt_context.cpp's, a library from metallib bytes through
+# DispatchData_alloc_init + MTLDevice_newLibrary drawing a triangle, MTLBuffer_updateContents on a
+# buffer made outside the remoted calls, and a context destroyed with a render encoder open, all
+# checked on the GPU's results. 1.9.5 refused every blit and compute list (Death's Door: black frame,
+# magenta menu arrows); 1.9.6 aborts on the nil vertex function and the open encoder.
 # WMTR_PRESENT_TRACE=1 logs actual drawable presentedTime/submit time/minimum duration for display
 # pacing investigations; the launcher's display-pacing diagnostics distinguish physical and guest Hz.
 #

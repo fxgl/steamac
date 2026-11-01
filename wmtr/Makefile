@@ -48,14 +48,14 @@ $(OUT)/libwmtr_host.dylib: $(OUT)/wmtr_host.o $(OUT)/wmtr_vr.o $(OUT)/winemetal_
 	$(CC) -dynamiclib -install_name @rpath/libwmtr_host.dylib -o $@ $^ $(LLVM_LIBS) $(FRAMEWORKS) -lsqlite3
 	codesign -s - -f $@
 
-test: $(OUT)/wmtr_loopback $(OUT)/wmtr_present_test $(OUT)/wmtr_spin_test $(OUT)/wmtr_lifetime_test $(OUT)/wmtr_dxmt_test
+test: $(OUT)/wmtr_loopback $(OUT)/wmtr_present_test $(OUT)/wmtr_spin_test $(OUT)/wmtr_lifetime_test $(OUT)/wmtr_dxmt_test $(OUT)/dxmt_test.metallib
 	./$(OUT)/wmtr_loopback
 	WMTR_TEST_TRIGGER=1 ./$(OUT)/wmtr_loopback
 	WMTR_CLIENT_HANDLES=0 ./$(OUT)/wmtr_loopback
 	./$(OUT)/wmtr_present_test
 	./$(OUT)/wmtr_spin_test
 	./$(OUT)/wmtr_lifetime_test
-	./$(OUT)/wmtr_dxmt_test
+	./$(OUT)/wmtr_dxmt_test $(OUT)/dxmt_test.metallib
 $(OUT)/wmtr_lifetime_test: tests/wmtr_lifetime_test.m src/wmtr_host.m src/wmtr_objects.h src/wmtr_objects.inc src/wmtr_object_cmds.inc src/wmtr_vr.m include/*.h | $(OUT)
 	$(CC) $(CFLAGS) -o $@ tests/wmtr_lifetime_test.m src/wmtr_vr.m -framework Foundation -framework Metal -framework Cocoa -framework QuartzCore -framework IOSurface
 $(OUT)/wmtr_spin_test: tests/wmtr_spin_test.c include/wmtr_spin.h | $(OUT)
@@ -66,6 +66,8 @@ $(OUT)/wmtr_present_test: tests/wmtr_present_test.m $(OUT)/libwmtr_host.dylib
 $(OUT)/wmtr_dxmt_test: tests/wmtr_dxmt_test.m tests/dxmt-shim/wineunixlib.h src/wmtr_client.c include/*.h src/*.inc $(OUT)/libwmtr_host.dylib
 	$(CC) -Itests/dxmt-shim $(CFLAGS) -DNDEBUG -o $@ tests/wmtr_dxmt_test.m src/wmtr_client.c $(DXMT)/src/winemetal/winemetal_thunks.c \
 	  -L$(OUT) -lwmtr_host -Wl,-rpath,@executable_path -framework Foundation -framework Metal
+$(OUT)/dxmt_test.metallib: tests/dxmt_test.metal | $(OUT)
+	xcrun -sdk macosx metal -o $@ $<
 $(OUT)/wmtr_loopback: tests/wmtr_loopback.m src/wmtr_host.m src/wmtr_objects.h src/wmtr_objects.inc src/wmtr_object_cmds.inc src/wmtr_vr.m src/wmtr_client.c include/*.h | $(OUT)
 	$(CC) $(CFLAGS) -DWMTR_TESTING -o $@ tests/wmtr_loopback.m src/wmtr_host.m src/wmtr_vr.m src/wmtr_client.c -framework Foundation -framework Metal -framework Cocoa -framework QuartzCore -framework IOSurface
 

@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc/malloc.h>
 
 #define WINEMETAL_API
 #include "winemetal_thunks.h"
@@ -81,7 +82,8 @@ extern void wmtr_test_present_release_view(void *, uint64_t);
 #endif
 
 struct pool_state;
-struct object_entry { uint64_t value; uint32_t refs, pool_refs; uint8_t plain; };
+/* open_encoder: an encoder (calls 30/31/32/129) whose endEncoding (33) has not run yet */
+struct object_entry { uint64_t value; uint32_t refs, pool_refs; uint8_t plain, open_encoder; };
 struct wmtr_host {
   struct wmtr_ring *ring;
   uint8_t *data;
@@ -1055,6 +1057,7 @@ execute(struct wmtr_host *h, uint8_t *rec, uint32_t len) {
                 if (r->h.call == 0 && !is_vpool(h, *(uint64_t *)payload))
                   object_field(&walk, (void *)payload);
                 else if (r->h.call == 1 || r->h.call == 73) object_drop(h, *(uint64_t *)payload, 0);
+                else if (r->h.call == 33) object_encoder_ended(h, *(uint64_t *)payload);
                 else if (!objects_walk(&walk, payload, 1)) st = STATUS_UNSUCCESSFUL;
                 pthread_mutex_unlock(&h->object_lock);
               }
@@ -1344,6 +1347,11 @@ wmtr_host_destroy(struct wmtr_host *h) {
   [h->callbacks release]; /* pending Metal blocks keep only the retired gate alive */
   dispatch_release(h->compile_q);
   dispatch_release(h->block_q);
+  if (object_checks(h)) {
+    pthread_mutex_lock(&h->object_lock);
+    objects_end_open_encoders(h);
+    pthread_mutex_unlock(&h->object_lock);
+  }
   for (uint32_t slot = 0; slot < WMTR_SLOTS; slot++) {
     while (h->pools->top[slot]) vpool_pop(h, h->pools->top[slot]);
     for (uint32_t i = 0; i < VPOOL_LOOSE; i++) {

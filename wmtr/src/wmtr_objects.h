@@ -30,18 +30,37 @@ static void object_drop(struct wmtr_host *h, uint64_t obj, int pool) {
 }
 struct object_walk { struct wmtr_host *h; uint8_t *base; uint32_t size; int mode; uint16_t call; };
 enum { OBJECT_VALIDATE, OBJECT_LEASE, OBJECT_UNLEASE, OBJECT_EXPORT };
+/* listener handles of calls 104 (field), 109 and 110 are plain C structs: never retained or released */
+static int object_plain_field(struct object_walk *w, obj_handle_t *field) {
+  return (w->call == 104 && field == &((struct unixcall_mtlsharedevent_setevent *)w->base)->shared_event_listener) ||
+         w->call == 110 || w->call == 109;
+}
+/* A handle the registry does not know is refused only if it is not a live heap block: garbage
+ * (STEAMAC-5W's 0x365a41f3321aa8) and freed objects are, while objects from paths the metadata does
+ * not cover go through as before 1.9.5 (refusing them gave DXMT nil libraries: dispatch data from
+ * call 114 refused in MTLDevice_newLibrary, then Metal aborted on a nil vertex function, STEAMAC-6S). */
+static _Atomic uint32_t object_unknown_logged;
+static int object_unknown_ok(struct object_walk *w, uint64_t value) {
+  int live = value > 0xffff && malloc_size((const void *)(uintptr_t)value) > 0;
+  if (atomic_fetch_add_explicit(&object_unknown_logged, 1, memory_order_relaxed) < 32)
+    LOG(0, "call %u: object handle %llx unknown to the registry: %s\n", w->call, (unsigned long long)value,
+        live ? "live object, call proceeds" : "not a live object, refusing call");
+  return live;
+}
 static int object_field(struct object_walk *w, obj_handle_t *field) {
   uint64_t value = *field;
   if (!value) return 1;
   if (w->mode == OBJECT_UNLEASE) {
-    if (!(w->call == 104 && field == &((struct unixcall_mtlsharedevent_setevent *)w->base)->shared_event_listener) &&
-        w->call != 110 && w->call != 109) [(id)value release];
+    if (!object_plain_field(w, field)) [(id)value release];
     return 1;
   }
   struct object_entry *e = object_find(w->h, value, w->mode == OBJECT_EXPORT);
   if (w->mode == OBJECT_EXPORT) {
-    if (!e) return 0;
-    if (e->value != value) { e->value = value; e->refs = e->pool_refs = 0; e->plain = w->call == 108; }
+    if (!e) return 1; /* registry full: the object stays usable, only untracked */
+    if (e->value != value) {
+      e->value = value; e->refs = e->pool_refs = 0; e->plain = w->call == 108;
+      e->open_encoder = w->call == 30 || w->call == 31 || w->call == 32 || w->call == 129;
+    }
     e->refs++;
     switch (w->call) {
     case 2: case 7: case 11: case 28: case 30: case 31: case 32: case 53: case 60: case 62:
@@ -51,8 +70,10 @@ static int object_field(struct object_walk *w, obj_handle_t *field) {
     return 1;
   }
   if (!e || !e->refs) {
-    LOG(0, "call %u: unknown/released object handle %llx; refusing call\n", w->call, (unsigned long long)value);
-    return 0;
+    if (w->mode == OBJECT_VALIDATE) return object_unknown_ok(w, value);
+    /* lease what validation let through: UNLEASE releases every non-plain field */
+    if (!object_plain_field(w, field)) [(id)value retain];
+    return 1;
   }
   if (w->mode == OBJECT_VALIDATE && w->call == 1 && e->refs == e->pool_refs) {
     LOG(0, "call 1: release of borrowed object %llx without retain; refusing call\n", (unsigned long long)value);
@@ -60,6 +81,21 @@ static int object_field(struct object_walk *w, obj_handle_t *field) {
   }
   if (w->mode == OBJECT_LEASE && !e->plain) [(id)value retain];
   return 1;
+}
+/* endEncoding (call 33) ran: the encoder may be released (object_lock held) */
+static void object_encoder_ended(struct wmtr_host *h, uint64_t value) {
+  struct object_entry *e = value ? object_find(h, value, 0) : NULL;
+  if (e) e->open_encoder = 0;
+}
+/* The client is gone (destroy): Metal aborts the process when an encoder is released without
+ * endEncoding (STEAMAC-6Z/70, VRChat quitting on DXMT), so end every encoder still open first. */
+static void objects_end_open_encoders(struct wmtr_host *h) {
+  for (uint32_t i = 0; i < WMTR_HANDLE_SLOTS; i++) {
+    struct object_entry *e = &h->objects[i];
+    if (!e->open_encoder || !e->value || e->value == UINT64_MAX) continue;
+    e->open_encoder = 0;
+    @try { [(id<MTLCommandEncoder>)(uintptr_t)e->value endEncoding]; } @catch (NSException *exception) {}
+  }
 }
 #define WMTR_OBJECT_STRUCTS
 #include "wmtr_objects.inc"
@@ -84,7 +120,16 @@ static int objects_walk(struct object_walk *w, uint8_t *payload, int output) {
   }
   if (!output) switch (call) {
   case 29: PIPELINE(WMTComputePipelineInfo); break;
-  case 34: PIPELINE(WMTRenderPipelineInfo); break;
+  case 34: {
+    PIPELINE(WMTRenderPipelineInfo);
+    /* Metal aborts the process on a nil vertex function; a nil pipeline only drops draws */
+    struct WMTRenderPipelineInfo *ri = (void *)((struct unixcall_mtldevice_newrenderpso *)payload)->info.ptr;
+    if (w->mode == OBJECT_VALIDATE && !ri->vertex_function) {
+      LOG(0, "call 34: render pipeline without a vertex function; refusing call\n");
+      return 0;
+    }
+    break;
+  }
   case 35: PIPELINE(WMTMeshRenderPipelineInfo); break;
   case 131: PIPELINE(WMTTileRenderPipelineInfo); break;
   case 32: OBJECT_INFO(WMTRenderPassInfo, (void *)(uintptr_t)((struct unixcall_generic_obj_uint64_obj_ret *)payload)->arg); break;

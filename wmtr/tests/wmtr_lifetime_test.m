@@ -52,10 +52,15 @@ int main(void) { @autoreleasepool {
   uint64_t pool=pa.ret; CHECK(call(a,1,&pool,8)==0);
   CHECK(alive==1); /* old globals drain b's slot-0 pool as well */
   struct unixcall_generic_obj_uint64_ret q={ob.ret,0}; CHECK(call(b,5,&q,sizeof q)==0 && q.ret==42);
-  q.handle=oa.ret; CHECK(call(a,5,&q,sizeof q)==STATUS_INVALID_HANDLE);
+  q.handle=oa.ret; CHECK(call(a,5,&q,sizeof q)==STATUS_INVALID_HANDLE); /* freed with a's pool */
   q.handle=0x365a41f3321aa8ull; int before=dispatched;
-  CHECK(call(a,5,&q,sizeof q)==STATUS_INVALID_HANDLE && dispatched==before);
-  q.handle=ob.ret; CHECK(call(a,5,&q,sizeof q)==STATUS_INVALID_HANDLE); /* other context */
+  CHECK(call(a,5,&q,sizeof q)==STATUS_INVALID_HANDLE && dispatched==before); /* garbage (STEAMAC-5W) */
+  /* A live object the registry does not know (another context's, or made by a call the metadata does
+   * not cover, like DispatchData_alloc_init) goes through: refusing it gave DXMT nil libraries. */
+  q.handle=ob.ret; before=dispatched; CHECK(call(a,5,&q,sizeof q)==0 && q.ret==42 && dispatched==before+1);
+  LifetimeProbe *uncovered=[[LifetimeProbe alloc] init];
+  q.handle=(uint64_t)uncovered; CHECK(call(a,5,&q,sizeof q)==0 && q.ret==42);
+  [uncovered release];
   pool=pb.ret; CHECK(call(b,1,&pool,8)==0); CHECK(alive==0);
   /* Deterministic worker-versus-pool-drain interleaving: the call's lease survives its owner. */
   CHECK(call(b,10,&pb,sizeof pb)==0); CHECK(call(b,53,&ob,sizeof ob)==0);
