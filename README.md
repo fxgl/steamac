@@ -535,8 +535,10 @@ does not say which HID device a controller is: with several DualSenses connected
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
 **Steam Controller passthrough.** With **Appears in SteamOS as** Automatic or Steam Controller, a
-Steam Controller (2026) goes to player 1 as itself through the same uhid path, so Steam drives its
-trackpads, gyro, back buttons and haptics with its own driver:
+Steam Controller (2026) goes to SteamOS as itself through the same uhid path, so Steam drives its
+trackpads, gyro, back buttons and haptics with its own driver. Alone it is player 1; with
+**Additional controllers** on, a Steam Controller next to another controller (for example a
+DualSense on player 1) becomes the next free player instead of being dropped:
 - connected to the Mac over Bluetooth LE (`28de:1303`): passed through with its own IDs and the
   Bluetooth bus. GameController does not show it, so it does not need a GameController controller,
   and it cannot wake a sleeping guest (HID input is dropped while the VM is paused);
@@ -545,7 +547,8 @@ trackpads, gyro, back buttons and haptics with its own driver:
   number, which a uhid device does not have, so the slot that carries controller state goes to
   SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
   2 s is removed again (controller off, moved to another slot or to Bluetooth), and the
-  GameController pad of the Puck takes over.
+  GameController pad of the Puck takes over. The Puck's GameController controller is the player
+  that receives that slot.
 
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
@@ -565,9 +568,11 @@ their controller until it disconnects (the others do not move up), and a reconne
 takes the first free player. **Appears in SteamOS as**, swap A/B and dead zone apply to every pad (with
 Automatic each pad is the kind of its own controller). Only player 1's
 DualSense is passed through, and not while another player's controller is a DualSense too
-(GameController does not say which HID device is whose): both get uinput pads then. While the VM
+(GameController does not say which HID device is whose): both get uinput pads then. A Steam
+Controller is passed through on any free usable player (see above). While the VM
 runs, the live input test in Settings → Controller badges each controller with its player
-(**Player 2**). Off: one controller drives the one pad, as before.
+(**Player 2**). Off: one controller drives the one pad, as before (a Bluetooth LE Steam Controller
+with another controller connected is not passed through then).
 
 `--control-fifo` test commands: `pad on` (a pad without a controller, as `--input-selftest` uses),
 `pad off`, `pad test` (A + left stick) — each takes a player number (`pad on 2`; 1 if not given) —
