@@ -1,0 +1,67 @@
+From: steamac <steamac@fxgam.es>
+Subject: [PATCH] kk: reject unsupported buffer-backed images before Metal
+
+STEAMAC-3F/6Y (appid 1174180, Apple M3): binding an image aborts in
+mtl_new_texture_with_descriptor_linear with "Linear texture: cannot be
+mipmapped, mipmapLevelCount (7) disallowed". The format query already
+advertises maxMipLevels=1, maxArrayLayers=1 and sampleCounts=1 for LINEAR;
+it is not an over-advertised mip limit. kk_image_init nevertheless accepts
+seven levels, kk_image_layout_calc_linear only allocates level zero, and
+binding forwards all seven levels to Metal's buffer texture constructor.
+
+The layout is linear exactly when VkImageTiling is not OPTIMAL. Host
+pointer import does not turn an optimal image into a linear one: 0016
+creates a private heap for that case. Keep that path unrestricted. The
+event lacks original VkImageCreateInfo arguments, so it cannot distinguish
+LINEAR from the non-optimal DRM modifier path, which has the same limits.
+
+Reject mipmapped, multi-layer, 3D and multisample non-optimal images with
+VK_ERROR_FORMAT_NOT_SUPPORTED in image initialization, before any layout
+size query or Metal texture allocation. Preserve one-layer input
+attachments (0020's 2D-array view), explicit linear row pitches (0019),
+and seven-level optimal images, including imported host memory (0016).
+
+Regression: host/moltenvk/repro/linear_images.c checks both image format
+query entry points and binds deliberately invalid images if creation was
+accepted. Before this patch all five invalid cases abort in Metal; four
+valid controls pass, including an optimal host import viewed at mip six.
+Run each case in a child process, following image_views.c, so one Metal
+abort does not hide the remaining cases.
+
+Generated-by: LLM
+---
+--- a/src/kosmickrisp/vulkan/kk_image.c
++++ b/src/kosmickrisp/vulkan/kk_image.c
+@@ -381,6 +381,8 @@
+    default:
+       UNREACHABLE("Invalid image type");
+    }
++   /* Buffer-backed Metal textures cannot have mipmaps or array layers. These
++    * limits also apply to the LINEAR layout used for DRM modifier images. */
+    if (pImageFormatInfo->tiling == VK_IMAGE_TILING_LINEAR)
+       maxArraySize = 1;
+ 
+@@ -592,6 +594,23 @@
+ {
+    vk_image_init(&dev->vk, &image->vk, pCreateInfo);
+ 
++   /* Match the non-optimal limits advertised by the image format query before
++    * calculating a linear layout (which only allocates level 0). Metal aborts,
++    * rather than returning nil, on a buffer-backed mipmapped/array/3D/MSAA
++    * descriptor. Optimal host imports still use tiled textures and a private
++    * heap; importing memory must not impose these restrictions on them. */
++   if (image->vk.tiling != VK_IMAGE_TILING_OPTIMAL &&
++       (image->vk.mip_levels != 1 || image->vk.array_layers != 1 ||
++        image->vk.image_type == VK_IMAGE_TYPE_3D ||
++        image->vk.samples != VK_SAMPLE_COUNT_1_BIT)) {
++      return vk_errorf(dev, VK_ERROR_FORMAT_NOT_SUPPORTED,
++                       "unsupported buffer-backed image: tiling %u, type %u, "
++                       "mips %u, layers %u, samples %u",
++                       image->vk.tiling, image->vk.image_type,
++                       image->vk.mip_levels, image->vk.array_layers,
++                       image->vk.samples);
++   }
++
+    if ((image->vk.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) &&
+        image->vk.samples > 1) {
