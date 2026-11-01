@@ -453,6 +453,9 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         source 1 and distinct fixups (STEAMAC-75); four validated shaders render expected blend pixels"
 	echo "  0055 = steamac: aligned scalar object/mesh payload slots avoid Apple's partial-vector-store"
 	echo "         compiler crash (STEAMAC-41/R); point-to-quad scalar varying checks pipeline and GPU pixels"
+	echo "  0056 = steamac: vertex outputs for tessellation are not packed by component, like the tessellation control"
+	echo "         shader's inputs (Rift Apart's POSITION/TEXCOORD in one location: 16-byte packed vertices were read"
+	echo "         as 32-byte ones, so the pipelines drew nothing, #49)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

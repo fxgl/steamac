@@ -53,7 +53,9 @@
 #    packed vertex formats (10-10-10-2, RG11B10F, RGB9E5, BGRA8) through geometry shader emulation read their values
 #    (American Truck Simulator's 2_10_10_10 normals failed pipeline creation under zink's provoking-vertex geometry shader).
 # 11. device_address.c: atomics on vector components behind buffer device addresses (vkd3d-proton's
-#    scalar-layout uvec3 counter, std430 uvec4 with a dynamic component, ivec2), values read back.
+#    scalar-layout uvec3 counter, std430 uvec4 with a dynamic component, ivec2), values read back; an atomic
+#    through an address held as a uvec2 and bitcast to a pointer in a helper (dxil-spirv's
+#    RobustPhysicalAtomicCounter, Ratchet & Clank: Rift Apart, #49: the MSL took the address of the cast).
 # 12. queries.c: occlusion query results copied from a later command buffer, one copy per query with
 #    availability and wait (Venus' query feedback): availability of queries other than 0; a timestamp pool of 8192;
 #    48 one-query timestamp pools on two devices (more than Metal's 32 counter heaps per process, which every guest
@@ -179,7 +181,12 @@
 #    R64_UINT storage images, with the CPU recomputing every texel from the same mix() and the same
 #    coordinate mapping, plus a single-invocation pipeline that checks the returned (fetch) value
 #    exactly when uncontended.
-# All three print the capability they need and skip when the driver does not advertise it, so an honest
+# 28. tess_components.c: a tessellation pipeline whose vertex shader writes POSITION (float3) one component at a
+#    time next to TEXCOORD in the same location (dxil-spirv's packing, Ratchet & Clank: Rift Apart, #49). The
+#    pipeline must compile (component stores to the captured outputs, SPIRV-Cross 0042) and draw: the vertex stage
+#    packed both into one 16-byte vector while the control stage read them as two members (32 bytes), so patches
+#    took their corners from the wrong vertices and nothing was drawn (SPIRV-Cross 0056); every pixel checked.
+# 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
 # image_views.c (KosmicKrisp only; STEAMAC-62/64/3): empty and out-of-bounds
@@ -396,6 +403,15 @@ fi
 
 build device_address
 "$work/device_address" "$gspv"
+
+tspv=$work/tess-spv
+rm -rf "$tspv"
+mkdir -p "$tspv"
+for s in "$here"/shaders/tess_components/*; do
+	glslangValidator -V --quiet "$s" -o "$tspv/$(basename "$s").spv"
+done
+build tess_components
+"$work/tess_components" "$tspv"
 
 # 25./26./27.: Dragon's Dogma 2's shader gaps and 64-bit image atomics. shaders/dd2_wave/ is
 # compiled here because subgroup ops need SPIR-V 1.3 (the generic .vert/.frag loop above targets

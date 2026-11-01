@@ -1,0 +1,80 @@
+; Atomic through a buffer device address held as a uvec2 (device_address.c), dxil-spirv's
+; RobustPhysicalAtomicCounter as vkd3d-proton emits it for Ratchet & Clank: Rift Apart (steamac #49):
+; the uvec2 is bitcast straight to a uint pointer inside a helper, and the atomic takes that pointer.
+; The MSL took the address of the cast, an rvalue:
+;   atomic_fetch_add_explicit((device atomic_uint*)&(reinterpret_cast<device uint*>(as_type<ulong>(_va))), ...)
+; Invocations 0..127 count through the address, 128..255 pass a zero address (the helper returns 0).
+; Results are stored through results_va, also a uvec2 bitcast to a pointer.
+               OpCapability Shader
+               OpCapability PhysicalStorageBufferAddresses
+               OpExtension "SPV_KHR_physical_storage_buffer"
+               OpMemoryModel PhysicalStorageBuffer64 GLSL450
+               OpEntryPoint GLCompute %main "main" %gid
+               OpExecutionMode %main LocalSize 32 1 1
+               OpName %ctr "RobustPhysicalAtomicCounter"
+               OpDecorate %gid BuiltIn GlobalInvocationId
+               OpDecorate %PC Block
+               OpMemberDecorate %PC 0 Offset 0
+               OpMemberDecorate %PC 1 Offset 8
+               OpDecorate %uarr ArrayStride 4
+               OpDecorate %Results Block
+               OpMemberDecorate %Results 0 Offset 0
+       %void = OpTypeVoid
+       %bool = OpTypeBool
+     %v2bool = OpTypeVector %bool 2
+       %uint = OpTypeInt 32 0
+     %v2uint = OpTypeVector %uint 2
+     %v3uint = OpTypeVector %uint 3
+        %fnv = OpTypeFunction %void
+      %fnctr = OpTypeFunction %uint %v2uint %uint %uint
+%ptr_psb_uint = OpTypePointer PhysicalStorageBuffer %uint
+       %uarr = OpTypeRuntimeArray %uint
+    %Results = OpTypeStruct %uarr
+%ptr_psb_Results = OpTypePointer PhysicalStorageBuffer %Results
+         %PC = OpTypeStruct %v2uint %v2uint
+     %ptr_pc = OpTypePointer PushConstant %PC
+%ptr_pc_v2uint = OpTypePointer PushConstant %v2uint
+ %ptr_in_v3uint = OpTypePointer Input %v3uint
+ %ptr_in_uint = OpTypePointer Input %uint
+         %pc = OpVariable %ptr_pc PushConstant
+        %gid = OpVariable %ptr_in_v3uint Input
+     %uint_0 = OpConstant %uint 0
+     %uint_1 = OpConstant %uint 1
+   %uint_128 = OpConstant %uint 128
+  %uint_1000 = OpConstant %uint 1000
+   %v2uint_0 = OpConstantComposite %v2uint %uint_0 %uint_0
+       %main = OpFunction %void None %fnv
+         %m0 = OpLabel
+        %gx0 = OpAccessChain %ptr_in_uint %gid %uint_0
+         %id = OpLoad %uint %gx0
+        %ca0 = OpAccessChain %ptr_pc_v2uint %pc %uint_0
+     %ctr_va = OpLoad %v2uint %ca0
+        %ra0 = OpAccessChain %ptr_pc_v2uint %pc %uint_1
+     %res_va = OpLoad %v2uint %ra0
+         %lo = OpULessThan %bool %id %uint_128
+       %lo2 = OpCompositeConstruct %v2bool %lo %lo
+        %sel = OpSelect %v2uint %lo2 %ctr_va %v2uint_0
+          %r = OpFunctionCall %uint %ctr %sel %uint_1 %uint_1000
+         %rp = OpBitcast %ptr_psb_Results %res_va
+         %ra = OpAccessChain %ptr_psb_uint %rp %uint_0 %id
+               OpStore %ra %r Aligned 4
+               OpReturn
+               OpFunctionEnd
+        %ctr = OpFunction %uint None %fnctr
+         %va = OpFunctionParameter %v2uint
+        %add = OpFunctionParameter %uint
+       %base = OpFunctionParameter %uint
+         %c0 = OpLabel
+         %ne = OpINotEqual %v2bool %va %v2uint_0
+         %an = OpAny %bool %ne
+               OpSelectionMerge %cm None
+               OpBranchConditional %an %ct %cm
+         %ct = OpLabel
+        %ptr = OpBitcast %ptr_psb_uint %va
+        %old = OpAtomicIAdd %uint %ptr %uint_1 %uint_0 %add
+        %sum = OpIAdd %uint %old %base
+               OpBranch %cm
+         %cm = OpLabel
+        %res = OpPhi %uint %sum %ct %uint_0 %c0
+               OpReturnValue %res
+               OpFunctionEnd
