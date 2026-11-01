@@ -1,0 +1,144 @@
+From: steamac <steamac@local>
+Subject: [PATCH] vk: verify precompiled NIR cache integrity before deserialization
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
+--- a/src/kosmickrisp/vulkan/kk_physical_device.c
++++ b/src/kosmickrisp/vulkan/kk_physical_device.c
+@@ -1031,5 +1031,8 @@ kk_physical_device_init_pipeline_cache(struct kk_physical_device *pdev)
+    _mesa_blake3_update(&blake3_ctx, instance->driver_build_sha,
+                        sizeof(instance->driver_build_sha));
++   const uint32_t cache_format_version = 2;
++   _mesa_blake3_update(&blake3_ctx, &cache_format_version,
++                       sizeof(cache_format_version));
+ 
+    /* The MSL a shader translates to depends on the GPU family, the MSL
+     * version and the workarounds in effect (MESA_KK_DISABLE_WORKAROUNDS and
+diff --git a/src/vulkan/runtime/vk_pipeline.c b/src/vulkan/runtime/vk_pipeline.c
+index d134e22..4cc5c60 100644
+--- a/src/vulkan/runtime/vk_pipeline.c
++++ b/src/vulkan/runtime/vk_pipeline.c
+@@ -28,6 +28,7 @@
+ #include "vk_command_buffer.h"
+ #include "vk_descriptor_set_layout.h"
+ #include "vk_device.h"
++#include "vk_instance.h"
+ #include "vk_graphics_state.h"
+ #include "vk_log.h"
+ #include "vk_nir.h"
+@@ -46,6 +47,7 @@
+ #include "shader_enums.h"
+ 
+ #include "util/mesa-blake3.h"
++#include "util/log.h"
+ 
+ struct vk_pipeline_binary {
+    struct vk_object_base base;
+@@ -646,6 +648,8 @@ vk_pipeline_tess_info_merge(struct vk_pipeline_tess_info *dst,
+    dst->point_mode |= src->point_mode;
+ }
+ 
++#define VK_PIPELINE_PRECOMP_SHADER_CACHE_VERSION 0x4e495201u
++
+ struct vk_pipeline_precomp_shader {
+    struct vk_pipeline_cache_object cache_obj;
+ 
+@@ -664,6 +668,7 @@ struct vk_pipeline_precomp_shader {
+    struct vk_sampler_state *embedded_samplers;
+ 
+    struct blob nir_blob;
++   blake3_hash nir_hash;
+ };
+ 
+ static struct vk_pipeline_precomp_shader *
+@@ -732,6 +737,7 @@ vk_pipeline_precomp_shader_create(struct vk_device *device,
+       shader->embedded_samplers[i] = embedded_samplers[i];
+ 
+    shader->nir_blob = blob;
++   _mesa_blake3_compute(blob.data, blob.size, shader->nir_hash);
+ 
+    return shader;
+ 
+@@ -748,6 +754,7 @@ vk_pipeline_precomp_shader_serialize(struct vk_pipeline_cache_object *obj,
+    struct vk_pipeline_precomp_shader *shader =
+       vk_pipeline_precomp_shader_from_cache_obj(obj);
+ 
++   blob_write_uint32(blob, VK_PIPELINE_PRECOMP_SHADER_CACHE_VERSION);
+    blob_write_uint32(blob, shader->stage);
+    blob_write_bytes(blob, &shader->rs, sizeof(shader->rs));
+    blob_write_bytes(blob, &shader->tess, sizeof(shader->tess));
+@@ -756,6 +763,7 @@ vk_pipeline_precomp_shader_serialize(struct vk_pipeline_cache_object *obj,
+                     shader->embedded_sampler_count *
+                     sizeof(*shader->embedded_samplers));
+    blob_write_uint64(blob, shader->nir_blob.size);
++   blob_write_bytes(blob, shader->nir_hash, sizeof(shader->nir_hash));
+    blob_write_bytes(blob, shader->nir_blob.data, shader->nir_blob.size);
+ 
+    return !blob->out_of_memory;
+@@ -766,6 +774,10 @@ vk_pipeline_precomp_shader_deserialize(struct vk_device *device,
+                                        const void *key_data, size_t key_size,
+                                        struct blob_reader *blob)
+ {
++   const char *reason = "missing or incompatible integrity header";
++   if (blob_read_uint32(blob) != VK_PIPELINE_PRECOMP_SHADER_CACHE_VERSION)
++      goto reject;
++
+    const mesa_shader_stage stage = blob_read_uint32(blob);
+ 
+    struct vk_pipeline_robustness_state rs;
+@@ -779,12 +791,25 @@ vk_pipeline_precomp_shader_deserialize(struct vk_device *device,
+       blob_read_bytes(blob, embedded_sampler_count * sizeof(*embedded_samplers));
+ 
+    uint64_t nir_size = blob_read_uint64(blob);
++   blake3_hash expected_hash;
++   blob_copy_bytes(blob, expected_hash, sizeof(expected_hash));
++   reason = "truncated precompiled NIR";
+    if (blob->overrun || nir_size > SIZE_MAX)
+-      return NULL;
++      goto reject;
+ 
+    const void *nir_data = blob_read_bytes(blob, nir_size);
+    if (blob->overrun)
+-      return NULL;
++      goto reject;
++
++   blake3_hash nir_hash;
++   _mesa_blake3_compute(nir_data, nir_size, nir_hash);
++   reason = "precompiled NIR BLAKE3 mismatch";
++   if (memcmp(nir_hash, expected_hash, sizeof(nir_hash)) != 0)
++      goto reject;
++
++   reason = "invalid precompiled NIR stage";
++   if (stage >= MESA_SHADER_STAGES)
++      goto reject;
+ 
+    VK_MULTIALLOC(ma);
+    VK_MULTIALLOC_DECL(&ma, struct vk_pipeline_precomp_shader, shader, 1);
+@@ -813,6 +838,7 @@ vk_pipeline_precomp_shader_deserialize(struct vk_device *device,
+ 
+    blob_init(&shader->nir_blob);
+    blob_write_bytes(&shader->nir_blob, nir_data, nir_size);
++   memcpy(shader->nir_hash, nir_hash, sizeof(shader->nir_hash));
+    if (shader->nir_blob.out_of_memory)
+       goto fail_cache_obj;
+ 
+@@ -823,6 +849,18 @@ fail_cache_obj:
+    vk_free(&device->alloc, shader);
+ 
+    return NULL;
++
++reject: {
++   blake3_hash key_hash;
++   char hex[BLAKE3_HEX_LEN];
++   _mesa_blake3_compute(key_data, key_size, key_hash);
++   _mesa_blake3_format(hex, key_hash);
++   const char *app = device->physical->instance->app_info.app_name;
++   mesa_loge("vk: rejecting cached precompiled NIR app=%s entry=%s: %s; "
++             "cache miss, recompiling SPIR-V",
++             app ? app : "(unnamed)", hex, reason);
++   return NULL;
++}
+ }
+ 
+ static struct vk_pipeline_cache_object *

@@ -175,6 +175,10 @@
 # image-view slice ranges (explicit, REMAINING_ARRAY_LAYERS, 3D slices, narrowed
 # counts) and incompatible RGBA8 -> R8 views fail cleanly before Metal; valid
 # remaining-layer and 3D-slice controls still create.
+# nir_cache.c (KosmicKrisp only; STEAMAC-6M/6K): corrupted precompiled NIR,
+# checksum corruption, missing checksum and legacy entries must be cache misses
+# before nir_deserialize; an unmodified control and every rebuilt pipeline dispatch
+# and read back 42. Each rejected entry logs once, not on the second lookup.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -431,6 +435,24 @@ build d3d12_caps
 if [ "$driver" = kosmickrisp ]; then
 	build image_views
 	"$work/image_views"
+
+	# Private cache robustness, not valid Vulkan input. Never let the disk cache
+	# or a translated MSL entry hide the damaged precompiled NIR.
+	build nir_cache
+	for case_id in 0 1 2 3 4 5 6; do
+		nir_log=$work/nir-cache-$case_id.log
+		MESA_SHADER_CACHE_DISABLE=true "$work/nir_cache" "$gspv/nir_cache.comp.spv" "$case_id" > "$nir_log" 2>&1 ||
+			{ cat "$nir_log"; exit 1; }
+		expected=1
+		[ "$case_id" != 0 ] || expected=0
+		actual=$(grep -c 'rejecting cached precompiled NIR' "$nir_log" || true)
+		if [ "$actual" != "$expected" ]; then
+			cat "$nir_log"
+			echo "FAIL nir_cache $case_id: $actual integrity rejection logs, expected $expected"
+			exit 1
+		fi
+		grep '^OK nir_cache' "$nir_log"
+	done
 
 	# STEAMAC-5E/5F: block-edge and volume scratch copies with Metal validation.
 	build sentry-image-copy

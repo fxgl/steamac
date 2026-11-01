@@ -300,6 +300,14 @@
 #              shape is provable on M1 Max. Existing residency.c exercises descriptor logging.
 #   0074       steamac: prioritize fault feedback and shader excerpts before innocent victims and successful
 #              compositor records in bounded GPU-failure diagnostics (STEAMAC-G); no submission changes.
+#   0076       steamac: BLAKE3 integrity for precompiled NIR in pipeline/device/disk caches
+#              before nir_deserialize, with a versioned entry format and a new KK cache identity.
+#              A missing hash or mismatch is a cache miss, logged once when the rejected entry is
+#              removed; SPIR-V is translated again. STEAMAC-6M/6K fault in glsl_get_struct_field
+#              while loading cached NIR; the reports do not identify the corruption source.
+#              KK's translated-shader objects store MSL, not NIR, and keep their existing format.
+#              Repro: nir_cache.c (unmodified, three dereference corruptions, bad/missing hash,
+#              legacy entry; pipeline creation, dispatch and readback; no repeat rejection log).
 #   0077       steamac: Mesa's util_barrier fallback (macOS has no pthread barriers) returned true to every
 #              thread and util_queue_finish_execute destroys the barrier on true: the first thread out
 #              destroyed the mutex/condvar under the other waiters and util_queue_finish hung
@@ -512,6 +520,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0072 = steamac: include every depth slice in image-copy fallback scratch storage"
 	echo "  0073 = steamac: retain copy/render encoder descriptor shapes before entering AGX on Apple9+ (cbs on any GPU)"
 	echo "  0074 = steamac: prioritize GPU fault feedback before victims and successful compositor records"
+	echo "  0076 = steamac: verify versioned precompiled NIR BLAKE3 before deserialization; reject bad entries as cache misses"
 	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
