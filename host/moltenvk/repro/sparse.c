@@ -843,10 +843,12 @@ static void grad_test(uint32_t base)
  * render pass Apple GPUs keep depth in tile memory, so the second draw tests against the first one's 0.25 (200): D3D12
  * Tiled Resources Tier 2 allows it ("writes to non-mapped tiles can end up in a cache that subsequent reads could pick
  * up"), vkd3d-proton's test expects the ideal behavior (todo on RADV); printed, not failed. After the passes, depth reads
- * 0 in the unbound tiles and 0.5 in the bound one. */
+ * 0 in the unbound tiles and 0.5 in the bound one. Run plain and with MUTABLE_FORMAT, which KosmicKrisp maps to
+ * MTLTextureUsagePixelFormatView (#51: Apple10 dropped these stores with MTLTextureUsageShaderWrite). */
 struct DepthPush { float depth, value; };
-static void depth_test(void)
+static void depth_test(VkImageCreateFlags extra_flags)
 {
+	const char *variant = extra_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT ? ", mutable format" : "";
 	const VkFormat format = VK_FORMAT_D32_SFLOAT;
 	VkPhysicalDeviceSparseImageFormatInfo2 fi = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,
 		.format = format, .type = VK_IMAGE_TYPE_2D, .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
@@ -858,7 +860,7 @@ static void depth_test(void)
 		return;
 	}
 	VkImageCreateInfo ici = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.flags = VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT, .imageType = VK_IMAGE_TYPE_2D,
+		.flags = VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT | extra_flags, .imageType = VK_IMAGE_TYPE_2D,
 		.format = format, .extent = {256, 256, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = VK_IMAGE_TILING_OPTIMAL, .usage = fi.usage, .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
@@ -995,8 +997,8 @@ static void depth_test(void)
 			if (d != want_depth && bad_depth++ < 3)
 				printf("     (%u,%u) depth after the passes: expected %g, got %g\n", x, y, want_depth, d);
 		}
-		check(!bad && !bad_depth, "D32 sparse depth test/write in %s: 65536 pixels, %u wrong colors, %u wrong depths after the passes",
-			one_pass ? "one render pass" : "two render passes", bad, bad_depth);
+		check(!bad && !bad_depth, "D32 sparse depth test/write in %s%s: 65536 pixels, %u wrong colors, %u wrong depths after the passes",
+			one_pass ? "one render pass" : "two render passes", variant, bad, bad_depth);
 		if (cached)
 			printf("INFO D32 sparse depth in one render pass: %u pixels of unbound tiles tested against the first draw's depth "
 				"(tile memory; Tiled Resources Tier 2 allows it)\n", cached);
@@ -1011,6 +1013,71 @@ static void depth_test(void)
 	vkDestroyImage(dev, color, NULL);
 	vkDestroyImage(dev, depth, NULL);
 	vkFreeMemory(dev, color_mem, NULL);
+	vkFreeMemory(dev, mem, NULL);
+}
+
+/* TRANSFER_DST on a sparse D32 image: vkCmdCopyBufferToImage writes a 256x256 ramp with tile (0,0) bound, and the read-back
+ * holds the ramp in the bound tile and 0 in the unbound ones (#51; KosmicKrisp's copies to depth are blits). */
+static void depth_copy_test(void)
+{
+	const VkFormat format = VK_FORMAT_D32_SFLOAT;
+	VkPhysicalDeviceSparseImageFormatInfo2 fi = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,
+		.format = format, .type = VK_IMAGE_TYPE_2D, .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT };
+	uint32_t count = 0;
+	vkGetPhysicalDeviceSparseImageFormatProperties2(pd, &fi, &count, NULL);
+	if (!count) {
+		check(1, "D32 sparse images not supported: sparse depth copy not tested");
+		return;
+	}
+	VkImageCreateInfo ici = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT, .imageType = VK_IMAGE_TYPE_2D,
+		.format = format, .extent = {256, 256, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL, .usage = fi.usage, .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+	VkImage depth;
+	CK(vkCreateImage(dev, &ici, NULL, &depth));
+	VkMemoryRequirements mr;
+	vkGetImageMemoryRequirements(dev, depth, &mr);
+	VkDeviceMemory mem = allocate(PAGE, memory_type(mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+	VkSparseImageMemoryBind tile = { .subresource = {VK_IMAGE_ASPECT_DEPTH_BIT,0,0}, .extent = {128,128,1}, .memory = mem };
+	VkSparseImageMemoryBindInfo binds = {depth, 1, &tile};
+	VkBindSparseInfo bi = { VK_STRUCTURE_TYPE_BIND_SPARSE_INFO, .imageBindCount = 1, .pImageBinds = &binds };
+	CK(vkQueueBindSparse(sparse_queue, 1, &bi, VK_NULL_HANDLE));
+	CK(vkQueueWaitIdle(sparse_queue));
+	struct Buffer upload = host_buffer(256 * 256 * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	struct Buffer out = host_buffer(256 * 256 * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+	float *ramp = upload.map;
+	for (uint32_t i = 0; i < 256 * 256; i++) ramp[i] = (i + 1) / 65537.0f;
+	host_sync(&upload, 0);
+	VkCommandBuffer cmd = begin();
+	VkImageMemoryBarrier layout = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .image = depth,
+		.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 } };
+	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &layout);
+	VkBufferImageCopy copy = { .imageSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 }, .imageExtent = {256, 256, 1} };
+	vkCmdCopyBufferToImage(cmd, upload.buffer, depth, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+	layout.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	layout.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	layout.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	layout.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &layout);
+	vkCmdCopyImageToBuffer(cmd, depth, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out.buffer, 1, &copy);
+	barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+	submit(cmd, VK_NULL_HANDLE, 0, 0);
+	host_sync(&out, 1);
+	const float *depths = out.map;
+	uint32_t bad = 0;
+	for (uint32_t y = 0; y < 256; y++) for (uint32_t x = 0; x < 256; x++) {
+		float d = depths[y * 256 + x], want = x < 128 && y < 128 ? ramp[y * 256 + x] : 0.0f;
+		if (d != want && bad++ < 3)
+			printf("     (%u,%u) depth copied from a buffer: expected %g, got %g\n", x, y, want, d);
+	}
+	check(!bad, "D32 sparse depth buffer-to-image copy: 65536 pixels, %u wrong depths", bad);
+	buffer_destroy(&upload);
+	buffer_destroy(&out);
+	vkDestroyImage(dev, depth, NULL);
 	vkFreeMemory(dev, mem, NULL);
 }
 
@@ -1894,7 +1961,9 @@ int main(int argc, char **argv)
 			if (!setjmp(recovery)) image_test(VK_FORMAT_R32_SFLOAT);
 			if (!setjmp(recovery)) grad_test(0);
 			if (!setjmp(recovery)) grad_test(1);
-			if (!setjmp(recovery)) depth_test();
+			if (!setjmp(recovery)) depth_test(0);
+			if (!setjmp(recovery)) depth_test(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
+			if (!setjmp(recovery)) depth_copy_test();
 		}
 	}
 	if (do_buffer) {
