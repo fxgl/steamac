@@ -102,14 +102,60 @@ static void check_captured_components(id<MTLDevice> device, NSString *source)
     puts("PASS: flattened vertex output components and helper writes GPU readback");
 }
 
+static void check_interpolant_components(id<MTLDevice> device, NSString *source)
+{
+    source = [source stringByAppendingString:
+        @"\nstruct sentry_vertex_out { float4 position [[position]]; float4 color [[user(locn3)]]; };\n"
+         "vertex sentry_vertex_out sentry_vertex(uint v [[vertex_id]]) { "
+         "sentry_vertex_out out; "
+         "out.position = float4(float2((v << 1) & 2u, v & 2u) * 2.0 - 1.0, 0.0, 1.0); "
+         "out.color = float4(0.125, 0.25, 0.5, 1.0); return out; }\n"];
+    NSError *error = nil;
+    MTLCompileOptions *options = [MTLCompileOptions new];
+    options.languageVersion = MTLLanguageVersion3_2;
+    id<MTLLibrary> library = [device newLibraryWithSource:source options:options error:&error];
+    if (!library) fail(error.description);
+    MTLRenderPipelineDescriptor *descriptor = [MTLRenderPipelineDescriptor new];
+    descriptor.vertexFunction = [library newFunctionWithName:@"sentry_vertex"];
+    descriptor.fragmentFunction = [library newFunctionWithName:@"main0"];
+    descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA32Float;
+    id<MTLRenderPipelineState> pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline) fail(error.description);
+    MTLTextureDescriptor *texture = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float width:1 height:1 mipmapped:NO];
+    texture.usage = MTLTextureUsageRenderTarget;
+    texture.storageMode = MTLStorageModeShared;
+    id<MTLTexture> output = [device newTextureWithDescriptor:texture];
+    if (!output) fail(@"interpolant render target allocation failed");
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = output;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    id<MTLCommandBuffer> command = [queue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+    [encoder setRenderPipelineState:pipeline];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+    [command commit];
+    [command waitUntilCompleted];
+    if (command.status != MTLCommandBufferStatusCompleted) fail(command.error.description);
+    float actual[4];
+    const float expected[4] = {0.125f, 0.5f, 1.0f, 0.125f};
+    [output getBytes:actual bytesPerRow:sizeof(actual) fromRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0];
+    if (memcmp(actual, expected, sizeof(expected)))
+        fail(@"centroid/sample/offset interpolant component readback mismatch");
+    puts("PASS: centroid/sample/offset interpolant components GPU readback");
+}
+
 int main(int argc, const char **argv)
 {
     @autoreleasepool {
-        if (argc != 3) fail(@"usage: sentry_msl_runtime <bda|fence|ms-levels|components> <generated.metal>");
+        if (argc != 3) fail(@"usage: sentry_msl_runtime <bda|fence|ms-levels|components|interpolant> <generated.metal>");
         BOOL bda = strcmp(argv[1], "bda") == 0;
         BOOL levels = strcmp(argv[1], "ms-levels") == 0;
         BOOL components = strcmp(argv[1], "components") == 0;
-        if (!bda && !levels && !components && strcmp(argv[1], "fence") != 0) fail(@"unknown test");
+        BOOL interpolant = strcmp(argv[1], "interpolant") == 0;
+        if (!bda && !levels && !components && !interpolant && strcmp(argv[1], "fence") != 0) fail(@"unknown test");
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) fail(@"no Metal device");
         NSError *error = nil;
@@ -121,6 +167,10 @@ int main(int argc, const char **argv)
         }
         if (components) {
             check_captured_components(device, source);
+            return 0;
+        }
+        if (interpolant) {
+            check_interpolant_components(device, source);
             return 0;
         }
         MTLCompileOptions *options = [MTLCompileOptions new];

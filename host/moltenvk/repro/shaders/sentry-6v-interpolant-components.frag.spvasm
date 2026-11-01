@@ -1,0 +1,45 @@
+; STEAMAC-6V: DXVK-style scalar EvaluateAttributeAtCentroid(input.COLOR3.x).
+; OpCopyObject must retain the interface index and post-interpolation component.
+; Cover centroid, sample, and offset interpolation, including nonzero components.
+OpCapability Shader
+OpCapability InterpolationFunction
+%glsl = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %COLOR3 %out_color
+OpExecutionMode %main OriginUpperLeft
+OpName %COLOR3 "COLOR3"
+OpName %value "_377"
+OpDecorate %COLOR3 Location 3
+OpDecorate %out_color Location 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%v4 = OpTypeVector %float 4
+%uint = OpTypeInt 32 0
+%zero = OpConstant %uint 0
+%two = OpConstant %uint 2
+%three = OpConstant %uint 3
+%v2 = OpTypeVector %float 2
+%fzero = OpConstant %float 0
+%offset = OpConstantComposite %v2 %fzero %fzero
+%one = OpConstant %float 1
+%in_v4 = OpTypePointer Input %v4
+%in_f = OpTypePointer Input %float
+%out_v4 = OpTypePointer Output %v4
+%COLOR3 = OpVariable %in_v4 Input
+%out_color = OpVariable %out_v4 Output
+%main = OpFunction %void None %fn
+%entry = OpLabel
+%component = OpAccessChain %in_f %COLOR3 %zero
+%alias = OpCopyObject %in_f %component
+%value = OpExtInst %float %glsl InterpolateAtCentroid %alias
+%z = OpAccessChain %in_f %COLOR3 %two
+%z_alias = OpCopyObject %in_f %z
+%sample = OpExtInst %float %glsl InterpolateAtSample %z_alias %zero
+%w = OpAccessChain %in_f %COLOR3 %three
+%w_alias = OpCopyObject %in_f %w
+%at_offset = OpExtInst %float %glsl InterpolateAtOffset %w_alias %offset
+%color = OpCompositeConstruct %v4 %value %sample %at_offset %value
+OpStore %out_color %color
+OpReturn
+OpFunctionEnd

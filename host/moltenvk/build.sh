@@ -378,6 +378,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         passed by value for masked expressions (STEAMAC-2N)"
 	echo "  0049 = steamac: subgroup memory fences use Metal thread_scope_simdgroup (not SPIR-V"
 	echo "         thread_scope_subgroup), fixing MSL 3.2 shader compilation (STEAMAC-5C)"
+	echo "  0050 = steamac: pull-model interpolation retains component swizzles and interface members through"
+	echo "         pointer copies and split access chains (STEAMAC-6V: float initialized from float4 centroid result)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

@@ -95,6 +95,23 @@ done
 cli cull-tesc 30100 metal3.1 --msl-multi-patch-workgroup
 cli cull-tese 30100 metal3.1 --msl-raw-buffer-tese-input
 
+# 6V: component pointers retain the post-interpolation swizzle through copies and
+# split access chains; test all pull-model methods, then check rendered values.
+for shape in components chained; do
+    assemble "sentry-6v-interpolant-$shape.frag.spvasm" "interpolant-$shape"
+    for version in 20300 30200 40000; do
+        case "$version" in
+            20300) standard=macos-metal2.3 ;;
+            30200) standard=metal3.2 ;;
+            40000) standard=metal4.0 ;;
+        esac
+        cli "interpolant-$shape" "$version" "$standard"
+        if [ "$version" = 30200 ]; then
+            cp "$work/interpolant-$shape.metal" "$work/interpolant-$shape-runtime.metal"
+        fi
+    done
+done
+
 # 6A needs the remap reflection API; 5K exercises the null-descriptor option
 # passed by MoltenVK (not exposed by the standalone SPIRV-Cross CLI).
 xcrun -sdk macosx clang++ -std=c++14 -I"$src" "$here/sentry_msl_compile.cpp" \
@@ -128,4 +145,6 @@ xcrun -sdk macosx clang -fobjc-arc -framework Foundation -framework Metal \
 "$work/runtime" fence "$work/fence-runtime.metal"
 "$work/runtime" ms-levels "$work/ms-levels-runtime.metal"
 "$work/runtime" components "$work/components-runtime.metal"
+"$work/runtime" interpolant "$work/interpolant-components-runtime.metal"
+"$work/runtime" interpolant "$work/interpolant-chained-runtime.metal"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'

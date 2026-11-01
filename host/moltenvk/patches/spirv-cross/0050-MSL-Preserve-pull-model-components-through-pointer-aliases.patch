@@ -1,0 +1,45 @@
+From 9db6e531064e8752ee5cf758ad9dbaaf15bf4db8 Mon Sep 17 00:00:00 2001
+From: georgii pl <gp@fx.gl>
+Date: Sun, 1 Nov 2026 22:37:49 +0300
+Subject: [PATCH] MSL: Preserve pull-model components through pointer aliases
+
+STEAMAC-6V reconstructs scalar EvaluateAttributeAtCentroid(COLOR3.x) through an OpCopyObject: dropping its interpolation metadata emits float = float4. Preserve the interface member and component on pointer copies, and walk chained accesses from their operand type instead of the backing struct. Centroid, sample and offset interpolation then apply the swizzle after interpolation. The mismatch reproduces with and without steamac patch 0042.
+---
+ spirv_msl.cpp | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index d8c405b..a2fc36f 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -11185,7 +11185,8 @@ void CompilerMSL::fix_up_interpolant_access_chain(const uint32_t *ops, uint32_t
+ 		return;
+ 	// Get the base index.
+ 	uint32_t interface_index;
+-	auto &var_type = get_variable_data_type(*var);
++	// A chained access starts at the pointer operand, not the original interface variable.
++	auto &var_type = get_pointee_type(expression_type_id(ops[2]));
+ 	auto &result_type = get<SPIRType>(ops[0]);
+ 	auto *type = &var_type;
+ 	if (has_extended_decoration(ops[2], SPIRVCrossDecorationInterfaceMemberIndex))
+@@ -12101,6 +12102,17 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
+ 	}
+ 
+ 
++	case OpCopyObject:
++		CompilerGLSL::emit_instruction(instruction);
++		// Pointer aliases must retain both the interpolant and its post-interpolation component.
++		if (has_extended_decoration(ops[2], SPIRVCrossDecorationInterfaceMemberIndex))
++			set_extended_decoration(ops[1], SPIRVCrossDecorationInterfaceMemberIndex,
++			                        get_extended_decoration(ops[2], SPIRVCrossDecorationInterfaceMemberIndex));
++		if (has_extended_decoration(ops[2], SPIRVCrossDecorationInterpolantComponentExpr))
++			set_extended_decoration(ops[1], SPIRVCrossDecorationInterpolantComponentExpr,
++			                        get_extended_decoration(ops[2], SPIRVCrossDecorationInterpolantComponentExpr));
++		break;
++
+ 	case OpInBoundsAccessChain:
+ 	case OpAccessChain:
+ 	case OpPtrAccessChain:
+-- 
+2.54.0 (Apple Git-157)
+

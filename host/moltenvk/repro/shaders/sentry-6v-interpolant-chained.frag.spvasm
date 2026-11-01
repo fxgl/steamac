@@ -1,0 +1,42 @@
+; STEAMAC-6V: split access chains must walk the operand's type, not the backing struct.
+OpCapability Shader
+OpCapability InterpolationFunction
+%glsl = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %input %out_color
+OpExecutionMode %main OriginUpperLeft
+OpName %input "input"
+OpMemberName %block 0 "COLOR3"
+OpDecorate %input Location 3
+OpDecorate %out_color Location 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%v4 = OpTypeVector %float 4
+%uint = OpTypeInt 32 0
+%zero = OpConstant %uint 0
+%two = OpConstant %uint 2
+%three = OpConstant %uint 3
+%v2 = OpTypeVector %float 2
+%fzero = OpConstant %float 0
+%offset = OpConstantComposite %v2 %fzero %fzero
+%block = OpTypeStruct %v4
+%in_block = OpTypePointer Input %block
+%in_v4 = OpTypePointer Input %v4
+%in_f = OpTypePointer Input %float
+%out_v4 = OpTypePointer Output %v4
+%input = OpVariable %in_block Input
+%out_color = OpVariable %out_v4 Output
+%main = OpFunction %void None %fn
+%entry = OpLabel
+%vector = OpAccessChain %in_v4 %input %zero
+%x = OpAccessChain %in_f %vector %zero
+%value = OpExtInst %float %glsl InterpolateAtCentroid %x
+%z = OpAccessChain %in_f %vector %two
+%sample = OpExtInst %float %glsl InterpolateAtSample %z %zero
+%w = OpAccessChain %in_f %vector %three
+%at_offset = OpExtInst %float %glsl InterpolateAtOffset %w %offset
+%color = OpCompositeConstruct %v4 %value %sample %at_offset %value
+OpStore %out_color %color
+OpReturn
+OpFunctionEnd
