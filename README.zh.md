@@ -587,6 +587,10 @@ scripts/build-image.sh layer                               # 纳入客户机载�
 host/launcher/build.sh                                     # 捆绑执行器与更新后的层
 ```
 
+**实验性，仅限开发构建：** `DXMT_D3D12=1 host/dxmt/build.sh` 会同时构建 DXMT 的 `d3d12.dll`；默认关闭，不影响发布版本。
+载荷中包含它时，`steam-gfx-path` 会在 DXMT 启动时替换 vkd3d-proton 的 `d3d12.dll`，使用 DXMT 配置的 D3D12 游戏便会加载它。
+它尚不能用于游戏：锁定版本的 DXMT 拒绝 DXIL（SM 6）着色器，功能级别最高报告 11_1，且放置在堆中的缓冲区尚无法通过 wmtr 进行 CPU 访问（`Map` 返回 NULL）。
+
 `fetch` 校验锁定的 DXMT/DirectX 头文件压缩包并应用 `host/dxmt/patches`；
 `llvm` 构建静态 LLVM 15.0.7（M2 上约 10 分钟，锁定版本未变时复用）。
 `native` 在 `work/build/dxmt-native` 构建 airconv；`host` 构建/测试执行器并安装到

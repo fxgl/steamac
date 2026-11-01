@@ -796,6 +796,12 @@ scripts/build-image.sh layer                               # include the guest p
 host/launcher/build.sh                                     # bundle executor + refreshed layer
 ```
 
+**Experimental, dev builds only:** `DXMT_D3D12=1 host/dxmt/build.sh` also builds DXMT's `d3d12.dll`; the default
+is off and release builds are unaffected. With it in the payload, `steam-gfx-path` replaces vkd3d-proton's `d3d12.dll`
+on a DXMT boot, so D3D12 games with a DXMT profile use it. It is not ready for games: the pinned DXMT rejects DXIL
+(SM 6) shaders, reports feature level 11_1 at most, and CPU access to buffers placed in a heap is not remoted yet
+(`Map` returns NULL).
+
 `fetch` verifies the pinned DXMT/DirectX-header tarballs and applies `host/dxmt/patches`;
 `llvm` builds static LLVM 15.0.7 (about 10 minutes on an M2, reused while the pin matches).
 `native` builds airconv in `work/build/dxmt-native`; `host` builds/tests/installs the executor to

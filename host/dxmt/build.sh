@@ -60,6 +60,9 @@ pebuild=$root/work/build/dxmt-pe
 pe=$root/work/out/dxmt-pe
 toolchains=$root/work/cache/toolchains
 jobs=${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}
+# DXMT_D3D12=1: the pe step also builds DXMT's d3d12.dll (experimental, dev builds only, default off).
+DXMT_D3D12=${DXMT_D3D12:-0}
+case $DXMT_D3D12 in 0|1) ;; *) echo "host/dxmt/build.sh: DXMT_D3D12 must be 0 or 1" >&2; exit 1 ;; esac
 
 log() { printf '\n=== %s\n' "$*"; }
 die() { echo "host/dxmt/build.sh: $*" >&2; exit 1; }
@@ -149,11 +152,14 @@ step_pe() {
     # shellcheck disable=SC2046
     PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson setup --wipe "$pebuild" "$src" --cross-file "$src/build-win64.txt" \
         --buildtype release --strip --prefix "$pebuild/install" -Dwine_install_path="$toolchains/wine" \
-        -Dbuild_unixlib=false $(metal_opts) >/dev/null
+        -Dbuild_unixlib=false -Denable_d3d12="$([ "$DXMT_D3D12" = 1 ] && echo true || echo false)" \
+        $(metal_opts) >/dev/null
     PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson compile -C "$pebuild" -j "$jobs"
     PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson install -C "$pebuild" >/dev/null
     rm -rf "$pe"; mkdir -p "$pe"
-    for f in d3d11 dxgi d3d10core winemetal; do
+    local dlls="d3d11 dxgi d3d10core winemetal"
+    [ "$DXMT_D3D12" = 1 ] && dlls="$dlls d3d12"
+    for f in $dlls; do
         dll=$pebuild/install/x86_64-windows/$f.dll
         # winebuild --builtin stamps "Wine builtin DLL" into the DOS stub; Wine treats it as a builtin only then
         grep -q 'Wine builtin DLL' "$dll" || die "$f.dll is not marked as a Wine builtin"
