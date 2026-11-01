@@ -1,0 +1,49 @@
+From 766ea2ee12b85de46e95fbd52a78f9796faed6e4 Mon Sep 17 00:00:00 2001
+From: steamac <jvilla.scv@gmail.com>
+Date: Sun, 1 Nov 2026 00:11:37 -0700
+Subject: [PATCH] kk: Clear ShaderWrite on sparse depth textures to fix dropped
+ stores
+
+Fixes Issue #51, where sparse depth tests fail on M5 Pro (Apple10) because a bound 128x128 tile behaves as if unbound (depth reads back 0 instead of 0.5).
+
+KosmicKrisp maps VK_IMAGE_USAGE_TRANSFER_DST_BIT to MTLTextureUsageShaderWrite. A standalone Metal 4 probe confirms that on Apple10, placement-sparse depth textures mapped onto a heap silently lose all render-pass stores (clears and depth writes) if MTLTextureUsageShaderWrite is present. Blits, sparse color textures, and dense depth textures are unaffected.
+
+This patch works around the hardware bug by clearing MTL_TEXTURE_USAGE_SHADER_WRITE in kk_image_layout_init for images with both a depth format and the SPARSE_BINDING flag. PixelFormatView is retained as it does not trigger the bug.
+
+This is safe because:
+- Depth formats lack a storage-image feature in kk_format.c, meaning shaders cannot write to them via storage.
+- Clears use a render pass.
+- vk_meta operations use graphics pipelines.
+- All kk_cmd_copy.c paths are blits, which continue to work.
+- Host image copies run on the CPU.
+- kk_sparse_image_supported rejects stencil formats, so only D16 and D32 are affected in practice.
+
+Repro: host/moltenvk/repro/sparse.c
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_image_layout.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
+index f4f26e1..78f0b55 100644
+--- a/src/kosmickrisp/vulkan/kk_image_layout.c
++++ b/src/kosmickrisp/vulkan/kk_image_layout.c
+@@ -254,6 +254,14 @@ kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
+       layout->usage |= MTL_TEXTURE_USAGE_PIXEL_FORMAT_VIEW;
+    }
+ 
++   /* Work around an M5 hardware bug where placement-sparse depth textures
++    * silently drop render-pass stores if ShaderWrite is enabled. This is safe
++    * to clear because depth formats lack storage-image support anyway.
++    */
++   if ((image->create_flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT) &&
++       util_format_is_depth_or_stencil(format))
++      layout->usage &= ~MTL_TEXTURE_USAGE_SHADER_WRITE;
++
+    if (layout->linear) {
+       kk_image_layout_calc_linear(dev, layout);
+    } else {
+-- 
+2.54.0 (Apple Git-157)
+

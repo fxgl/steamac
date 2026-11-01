@@ -330,6 +330,16 @@
 #              once, at most 256 per thread, then one note. MESA_KK_DEBUG=shapes logs new shapes on any
 #              GPU. host/moltenvk/repro/encoder_shapes.c: 100 shapes x 30 frames logged 2275 render shape
 #              lines with 0073's cache, 100 with 0078; 300 shapes log 256 and the note.
+#   0079       steamac: sparse depth images (D16/D32) are placement sparse textures without MTLTextureUsageShaderWrite
+#              (TRANSFER_DST's; nothing writes depth from a shader: no storage image feature, clears render, copies blit).
+#              On Apple10 (M5 Pro, macOS 27.2) such a texture with shader write usage drops render pass stores to its
+#              mapped tiles: depth clears and depth writes never reach the heap while blits read it, so the bound tile
+#              read like an unbound one (a plain Metal 4 probe shows the same: Depth32Float and Depth16Unorm lose the
+#              clear with ShaderWrite, with or without PixelFormatView, and keep it without; R32Float and dense textures
+#              keep it either way). #51: the D32 cases of sparse.c failed on M5, so the repro step never installed.
+#              Repro: host/moltenvk/repro/sparse.c (D32 sparse depth test/write, one and two render passes, plain and
+#              MUTABLE_FORMAT: 4 of 4 fail on 0001-0078, pass with 0079; a buffer-to-image copy into the bound tile passes
+#              on both).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -538,6 +548,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0076 = steamac: verify versioned precompiled NIR BLAKE3 before deserialization; reject bad entries as cache misses"
 	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
 	echo "  0078 = steamac: log each encoder descriptor shape once per thread, at most 256 (STEAMAC-74/73 log flood)"
+	echo "  0079 = steamac: sparse depth images without MTLTextureUsageShaderWrite (Apple10 drops render-pass stores)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
