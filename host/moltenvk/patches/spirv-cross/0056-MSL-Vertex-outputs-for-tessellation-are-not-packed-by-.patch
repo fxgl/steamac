@@ -1,0 +1,36 @@
+From: steamac <steamac@localhost>
+Date: Sun, 1 Nov 2026 01:00:00 -0700
+Subject: [PATCH] MSL: Vertex outputs for tessellation are not packed by component
+
+Outputs sharing a location (Component decorations) were packed into one m_location_N vector when the
+vertex shader captures them to a buffer, also for tessellation, where that buffer is the tessellation
+control shader's input. The tessellation control shader does not pack its inputs (component packing in
+tessellation shaders is not supported, 'HACK 20542' lets the decorations through): it reads one member
+per variable, ordered by location and component. The two layouts disagreed: dxil-spirv's POSITION (float3,
+location 0) and TEXCOORD (float, location 0 component 3) of Ratchet & Clank: Rift Apart's tessellation
+pipelines (steamac #49) were written as 'float4 m_location_0' (16 bytes a vertex) and read as
+'float3 POSITION; float TEXCOORD;' (32 bytes), so control points came from the wrong vertices and nothing
+was drawn. Vertex outputs for tessellation are declared like the control shader's inputs now.
+---
+ spirv_msl.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index dcaf1866..1511e6b4 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -5702,10 +5702,13 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
+ 	// Varying interfaces between stages which use "user()" attribute can be dealt with
+ 	// without explicit packing and unpacking of components. For any variables which link against the runtime
+ 	// in some way (vertex attributes, fragment output, etc), we'll need to deal with it somehow.
++	// The outputs of a vertex shader for tessellation are read by the tessellation control shader, whose inputs
++	// are not packed (one member per variable, ordered by location and component): pack neither side.
+ 	bool pack_components =
+ 	    (storage == StorageClassInput && get_execution_model() == ExecutionModelVertex) ||
+ 	    (storage == StorageClassOutput && get_execution_model() == ExecutionModelFragment) ||
+-	    (storage == StorageClassOutput && get_execution_model() == ExecutionModelVertex && capture_output_to_buffer);
++	    (storage == StorageClassOutput && get_execution_model() == ExecutionModelVertex && capture_output_to_buffer &&
++	     !msl_options.vertex_for_tessellation);
+ 
+ 	ir.for_each_typed_id<SPIRVariable>([&](uint32_t var_id, SPIRVariable &var) {
+ 		if (var.storage != storage)
