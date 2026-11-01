@@ -999,18 +999,18 @@
         }
       }
     },
-    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360). Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)." : {
+    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360). Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую)."
+            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую)."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。"
+            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。"
           }
         }
       }
@@ -5771,6 +5771,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "能启动但无法游玩"
+          }
+        }
+      }
+    },
+    "Steam Controller" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam Controller"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam Controller"
           }
         }
       }

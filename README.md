@@ -487,15 +487,18 @@ device: the launcher sends it over the virtio-console port `fx.pad` to the guest
 `fx-pad.service` (`fx-progress-agent pad`, started by udev when the port appears), which creates it
 with uinput. So it follows the Mac while the VM runs: it appears when a controller connects (Steam
 shows “Controller Connected”), disappears when its controller goes, and changes kind with it.
-Settings → Controller → **Appears in SteamOS as** (`--pad auto|xbox360|dualsense|dualshock4` for
-one run):
+Settings → Controller → **Appears in SteamOS as** (`--pad auto|xbox360|dualsense|dualshock4|steamcontroller`
+for one run):
 
 - **Automatic** (default): the same kind as the controller that drives it — DualSense (or Edge) →
-  DualSense, DualShock 4 → DualShock 4, anything else → Xbox 360 controller;
+  DualSense, DualShock 4 → DualShock 4, anything else → Xbox 360 controller; a Steam Controller
+  goes to SteamOS as itself (“Steam Controller passthrough” below);
 - **Xbox 360 controller**: what the kernel's `xpad` driver exposes (`045e:028e`);
 - **DualSense** / **DualShock 4**: what `hid-playstation` / `hid-sony` expose for a USB pad
   (`054c:0ce6` / `054c:09cc`, version `0x8111`, face buttons by position, digital L2/R2 besides the
-  analog triggers). Steam's SDL maps it as a PS5 / PS4 controller and shows PlayStation glyphs.
+  analog triggers). Steam's SDL maps it as a PS5 / PS4 controller and shows PlayStation glyphs;
+- **Steam Controller**: a Steam Controller goes to SteamOS as itself, any other controller drives an
+  Xbox 360 controller.
 
 **Home / PS button diagnostics.** The launcher requests that macOS leave this button to SteamOS,
 but macOS can override that preference. If it works over USB but not Bluetooth, compare
@@ -531,6 +534,25 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
+**Steam Controller passthrough.** With **Appears in SteamOS as** Automatic or Steam Controller, a
+Steam Controller (2026) goes to player 1 as itself through the same uhid path, so Steam drives its
+trackpads, gyro, back buttons and haptics with its own driver:
+- connected to the Mac over Bluetooth LE (`28de:1303`): passed through with its own IDs and the
+  Bluetooth bus. GameController does not show it, so it does not need a GameController controller,
+  and it cannot wake a sleeping guest (HID input is dropped while the VM is paused);
+- through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
+  controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
+  number, which a uhid device does not have, so the slot that carries controller state goes to
+  SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
+  2 s is removed again (controller off, moved to another slot or to Bluetooth), and the
+  GameController pad of the Puck takes over.
+
+Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
+opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
+for it and opens the device as soon as it is granted (`hid passthrough: Input Monitoring granted, reopening the HID manager`).
+macOS returns a Bluetooth LE controller's 64-byte feature report 1 (Steam's command channel) as
+65 bytes, so GET_REPORT buffers have headroom over the descriptor's sizes.
+
 **Several controllers.** With Settings → Controller → **Additional controllers** (on by default,
 applies now) further connected controllers are players 2–4, each with a gamepad of its own in
 SteamOS, for local co-op. Every player has a virtio-console port: `fx.pad` for player 1, as above,
@@ -550,7 +572,7 @@ runs, the live input test in Settings → Controller badges each controller with
 `--control-fifo` test commands: `pad on` (a pad without a controller, as `--input-selftest` uses),
 `pad off`, `pad test` (A + left stick) — each takes a player number (`pad on 2`; 1 if not given) —
 and `pad state` (the guest's pads, their last rumble level, whether the guest takes HID devices,
-connected DualSenses and input reports passed through).
+connected DualSenses and Steam Controllers, and input reports passed through).
 
 ## FX Steam Launcher.app
 

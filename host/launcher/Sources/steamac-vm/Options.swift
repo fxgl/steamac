@@ -123,7 +123,7 @@ struct Options {
                       [--cpus N] [--mem MiB] [--display WxH] [--refresh HZ] [--headless]
                       [--log FILE] [--no-net] [--no-sound] [--ssh-port PORT | --no-ssh] [--shm-mib MiB]
                       [--gpu-flags HEX] [--gvproxy PATH] [--frame-dump PNG]
-                      [--mouse auto|tablet|capture] [--no-gamepad] [--pad auto|xbox360|dualsense|dualshock4]
+                      [--mouse auto|tablet|capture] [--no-gamepad] [--pad auto|xbox360|dualsense|dualshock4|steamcontroller]
                       [--krun-log-level 0-5] [--perf-stats]
                       [--no-crash-reports] [--steam-client frame|deck|deckbeta]
                       [--vulkan-driver moltenvk|kosmickrisp] [--lan-remote-play | --no-lan-remote-play]
@@ -195,10 +195,12 @@ struct Options {
                            controller", which applies while the VM runs)
       --pad TYPE           what the virtual gamepad is in SteamOS this run (default: Settings >
                            Controller): auto: the same kind as the controller that drives it
-                           (DualSense, DualShock 4, else Xbox 360); xbox360: Microsoft X-Box 360 pad
-                           (xpad); dualsense, dualshock4: Sony pad as the Linux hid-playstation /
-                           hid-sony drivers expose it (PlayStation button glyphs in Steam). Any
-                           connected controller drives it; its rumble plays on that controller.
+                           (DualSense, DualShock 4, else Xbox 360); steamcontroller: a Steam
+                           Controller goes to SteamOS as itself, any other controller drives an
+                           Xbox 360 pad; xbox360: Microsoft X-Box 360 pad (xpad); dualsense,
+                           dualshock4: Sony pad as the Linux hid-playstation / hid-sony drivers
+                           expose it (PlayStation button glyphs in Steam). Any connected
+                           controller drives it; its rumble plays on that controller.
                            Further controllers are players 2-4 with a pad each (auto: of
                            its own controller's kind; Settings > Controller "Additional
                            controllers").
@@ -388,7 +390,7 @@ struct Options {
             case "--pad":
                 let v = try value(a)
                 guard let t = LauncherSettings.PadType(rawValue: v) else {
-                    throw OptionError("--pad: auto, xbox360, dualsense or dualshock4")
+                    throw OptionError("--pad: auto, xbox360, dualsense, dualshock4 or steamcontroller")
                 }
                 o.padType = t
             case "--krun-log-level": o.krunLogLevel = UInt32(clamping: try int(a))

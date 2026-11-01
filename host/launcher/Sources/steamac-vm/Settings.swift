@@ -83,6 +83,9 @@ final class LauncherSettings: ObservableObject {
         case xbox360
         case dualSense = "dualsense"
         case dualShock4 = "dualshock4"
+        /// A Steam Controller connected to the Mac goes to SteamOS as itself (HIDPassthrough);
+        /// any other controller drives an Xbox 360 controller.
+        case steamController = "steamcontroller"
         var id: String { rawValue }
     }
 
