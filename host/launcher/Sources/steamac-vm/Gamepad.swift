@@ -229,6 +229,8 @@ private final class PadSlot {
     var onHello: (() -> Void)?
     /// Whether a DualSense may be passed through now (GamepadBridge).
     var passthroughAllowed: () -> Bool = { true }
+    /// Whether a Steam Controller may be passed through now (GamepadBridge).
+    var steamControllerAllowed: () -> Bool = { true }
 
     /// What the guest has (or should have) as its gamepad.
     private enum GuestDevice: Equatable {
@@ -371,9 +373,22 @@ private final class PadSlot {
     /// is on (and the guest's service takes uhid devices); else a uinput pad of the kind from
     /// "Appears in SteamOS as" (`--pad`), Automatic = the controller's.
     private func wanted() -> (device: GuestDevice, why: String)? {
-        guard settings.virtualPad, controller != nil || testPad else { return nil }
+        guard settings.virtualPad else { return nil }
+        let type = typeOverride ?? settings.padType
+        // A Steam Controller connected to the Mac goes to SteamOS as itself (Automatic or "Steam
+        // Controller"), with or without a GameController controller (GameController does not show
+        // one on Bluetooth LE): Steam drives its trackpads, gyro, back buttons and haptics itself.
+        // `steamControllerAllowed` keeps it from taking player 1 when another controller is player
+        // 1 (GameController does not say which HID device a controller is: the device could be
+        // another player's — mirrors passthroughAllowed for DualSense).
+        if type == .auto || type == .steamController, hidCapable, steamControllerAllowed(),
+           let d = hid?.devices.first(where: HIDPassthrough.isLiveSteamController) {
+            return (.hid(d), type == .auto ? "automatic, Steam Controller" : (typeOverride == nil ? "setting" : "--pad"))
+        }
+        guard controller != nil || testPad else { return nil }
         let pad: GuestPad, why: String
-        switch typeOverride ?? settings.padType {
+        switch type {
+        case .steamController: (pad, why) = (.xbox360, "no Steam Controller, another controller")
         case .xbox360: (pad, why) = (.xbox360, typeOverride == nil ? "setting" : "--pad")
         case .dualSense: (pad, why) = (.dualSense, typeOverride == nil ? "setting" : "--pad")
         case .dualShock4: (pad, why) = (.dualShock4, typeOverride == nil ? "setting" : "--pad")
@@ -385,7 +400,7 @@ private final class PadSlot {
         // connected, the first one found is passed through, and none once two players have one
         // (`passthroughAllowed`: the device could be the other player's).
         if pad == .dualSense, settings.dualSensePassthrough, hidCapable, passthroughAllowed(),
-           controller?.extendedGamepad is GCDualSenseGamepad, let d = hid?.devices.first {
+           controller?.extendedGamepad is GCDualSenseGamepad, let d = hid?.devices.first(where: { !HIDPassthrough.isSteamController($0) }) {
             return (.hid(d), why)
         }
         return (.pad(pad), why)
@@ -499,7 +514,10 @@ private final class PadSlot {
         "pad \(index == 0 ? "" : "\(index + 1) ")\(current?.title ?? "none"), service \(serviceReady ? "ready" : "not ready")\(hidCapable ? " (hid)" : ""), "
             + "controller \(controller.map(GamepadBridge.logDisplayName(of:)) ?? "none"), rumble \(rumble.level.strong) \(rumble.level.weak)"
             + ", Home/PS \(GamepadBridge.homeDiagnostic(controller?.extendedGamepad?.buttonHome))"
-            + (hid.map { ", HID DualSenses \($0.devices.count), hid inputs \(hidInputs)" } ?? "")
+            + (hid.map { h in
+                let steam = h.devices.filter(HIDPassthrough.isSteamController).count
+                return ", HID DualSenses \(h.devices.count - steam), Steam Controllers \(steam), hid inputs \(hidInputs)"
+            } ?? "")
     }
 }
 
@@ -524,6 +542,7 @@ final class GamepadBridge {
 
     private let slots: [PadSlot]
     private let settings: LauncherSettings
+    private let typeOverride: LauncherSettings.PadType?
     private let hid: HIDPassthrough
     private var observers: [NSObjectProtocol] = []
     private var subscriptions: [AnyCancellable] = []
@@ -545,6 +564,7 @@ final class GamepadBridge {
         let hid = HIDPassthrough()
         self.hid = hid
         self.settings = settings
+        self.typeOverride = typeOverride
         slots = ports.enumerated().map { i, port in
             PadSlot(index: i, port: port, settings: settings, typeOverride: typeOverride, hid: i == 0 ? hid : nil)
         }
@@ -559,6 +579,14 @@ final class GamepadBridge {
     /// Settings identifier of a controller: "<vendorName>|<productCategory>".
     static func identifier(of c: GCController) -> String {
         "\(c.vendorName ?? "?")|\(c.productCategory)"
+    }
+
+    /// The Steam Controller as GameController shows it: the Puck is "Steam Controller Puck
+    /// (Steam Controller)" (all its slots are one GameController controller); a controller on
+    /// Bluetooth LE is not shown at all. GameController does not expose HID vendor/product, so
+    /// it is matched by vendorName / productCategory.
+    static func isSteamController(_ c: GCController) -> Bool {
+        c.vendorName == "Steam Controller Puck" || c.productCategory == "Steam Controller"
     }
 
     static func displayName(of c: GCController) -> String {
@@ -602,6 +630,10 @@ final class GamepadBridge {
         for p in [settings.$controllerID.map { _ in () }.eraseToAnyPublisher(), settings.$additionalPads.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in self?.assignControllers() })
         }
+        subscriptions.append(settings.$padType.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self else { return }
+            self.hid.matchSteamControllers = self.matchesValveControllers
+        })
         for p in [settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(), settings.$padType.map { _ in () }.eraseToAnyPublisher(),
                   settings.$dualSensePassthrough.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in
@@ -621,6 +653,16 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
+        // A Steam Controller goes to player 1 as itself only when player 1's GameController
+        // controller is the Steam Controller (or none — it is not shown on Bluetooth LE), and no
+        // other player's is (the HID device could be theirs).
+        slots[0].steamControllerAllowed = { [weak self] in
+            guard let self else { return false }
+            let otherPlayers = self.slots.dropFirst()
+            guard !otherPlayers.contains(where: { $0.controller.map(GamepadBridge.isSteamController) ?? false }) else { return false }
+            return self.slots[0].controller == nil || (self.slots[0].controller.map(GamepadBridge.isSteamController) ?? false)
+        }
+        hid.matchSteamControllers = matchesValveControllers
         hid.onChange = { [weak self] in self?.slots[0].reconcile() }
         hid.onInput = { [weak self] report in self?.slots[0].hidInput(report) }
         hid.start()
@@ -637,6 +679,12 @@ final class GamepadBridge {
     /// wakes it), the others with "Additional controllers" on and their guest service up.
     private func usable(_ i: Int) -> Bool {
         i == 0 || (settings.additionalPads && slots[i].serviceReady)
+    }
+
+    /// Whether Valve's Steam Controllers are matched (and passed through as themselves).
+    private var matchesValveControllers: Bool {
+        let t = typeOverride ?? settings.padType
+        return t == .auto || t == .steamController
     }
 
     /// Give the players their controllers. One player: the controller chosen in Settings, else
