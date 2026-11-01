@@ -300,6 +300,14 @@
 #              shape is provable on M1 Max. Existing residency.c exercises descriptor logging.
 #   0074       steamac: prioritize fault feedback and shader excerpts before innocent victims and successful
 #              compositor records in bounded GPU-failure diagnostics (STEAMAC-G); no submission changes.
+#   0077       steamac: Mesa's util_barrier fallback (macOS has no pthread barriers) returned true to every
+#              thread and util_queue_finish_execute destroys the barrier on true: the first thread out
+#              destroyed the mutex/condvar under the other waiters and util_queue_finish hung
+#              (disk_cache_destroy in kk_physical_device_destroy: the repro `compilers` test hung in about
+#              half of today's builds, a VM process tearing down a Vulkan instance could too). Only the last
+#              thread leaving returns true. test/util_queue_finish.c (10000 finishes of 4-thread queues
+#              against the build's libmesa_util.a, 60 s watchdog) runs after the driver build: it reports a
+#              job still pending after util_queue_finish without the patch.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -402,6 +410,13 @@ PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 meson setup "
 PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 ninja -C "$work/build"
 built=$work/build/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib
 
+# --- Mesa util regression on macOS: util_queue_finish over the mutex/condvar barrier fallback (0077)
+uqf=$work/util_queue_finish
+eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build") \
+	"$here/test/util_queue_finish.c" "$work/build/src/util/libmesa_util.a" \
+	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$uqf"
+"$uqf"
+
 # --- stage
 stage=$work/stage
 rm -rf "$stage"
@@ -497,6 +512,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0072 = steamac: include every depth slice in image-copy fallback scratch storage"
 	echo "  0073 = steamac: retain copy/render encoder descriptor shapes before entering AGX on Apple9+ (cbs on any GPU)"
 	echo "  0074 = steamac: prioritize GPU fault feedback before victims and successful compositor records"
+	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

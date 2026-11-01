@@ -1,0 +1,68 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] util: only the last thread leaving the fallback barrier returns true
+
+On platforms without pthread barriers (macOS) util_barrier_wait returned true
+to every thread, and util_queue_finish_execute destroys the barrier on true:
+the first thread out destroyed the mutex and condvar under the waiters still
+re-acquiring it, and util_queue_finish waited forever (disk_cache_destroy in
+kk_physical_device_destroy). Return true only to the last thread to leave,
+like PTHREAD_BARRIER_SERIAL_THREAD, so the barrier is destroyed after every
+waiter is done with it.
+---
+--- a/src/util/u_thread.c
++++ b/src/util/u_thread.c
+@@ -219,6 +219,7 @@
+ {
+    barrier->count = count;
+    barrier->waiters = 0;
++   barrier->leaving = 0;
+    barrier->sequence = 0;
+    (void) mtx_init(&barrier->mutex, mtx_plain);
+    cnd_init(&barrier->condvar);
+@@ -226,11 +227,17 @@
+ 
+ void util_barrier_destroy(util_barrier *barrier)
+ {
+-   assert(barrier->waiters == 0);
++   assert(barrier->waiters == 0 && barrier->leaving == 0);
+    mtx_destroy(&barrier->mutex);
+    cnd_destroy(&barrier->condvar);
+ }
+ 
++/* Returns true for exactly one thread per round, like PTHREAD_BARRIER_SERIAL_THREAD: the last one to
++ * leave. util_queue_finish_execute destroys the barrier on true, so it must not be returned before
++ * every waiter has re-acquired and released the mutex: returning true everywhere let the first thread
++ * out destroy the mutex and condvar under the others, which then never left cnd_wait (macOS, no
++ * pthread barriers: util_queue_finish of disk_cache_destroy hung in kk_physical_device_destroy).
++ */
+ bool util_barrier_wait(util_barrier *barrier)
+ {
+    mtx_lock(&barrier->mutex);
+@@ -246,13 +253,15 @@
+       } while (sequence == barrier->sequence);
+    } else {
+       barrier->waiters = 0;
++      barrier->leaving = barrier->count;
+       barrier->sequence++;
+       cnd_broadcast(&barrier->condvar);
+    }
+ 
++   bool last = --barrier->leaving == 0;
+    mtx_unlock(&barrier->mutex);
+ 
+-   return true;
++   return last;
+ }
+ 
+ #endif
+--- a/src/util/u_thread.h
++++ b/src/util/u_thread.h
+@@ -125,6 +125,8 @@
+ typedef struct {
+    unsigned count;
+    unsigned waiters;
++   /* threads of the released round that have not returned yet */
++   unsigned leaving;
+    uint64_t sequence;
+    mtx_t mutex;
+    cnd_t condvar;
