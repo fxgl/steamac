@@ -1,0 +1,157 @@
+From 0a7a37d49149fcd871147d8c205247dc744bd29e Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Sat, 31 Oct 2026 23:34:56 -0700
+Subject: [PATCH] kk: Split large timestamp write batches to avoid Metal 4
+ capacity limits
+
+Fixes VK_ERROR_DEVICE_LOST and MTL_COMMAND_QUEUE_ERROR_TIMEOUT in apps that
+record massive numbers of timestamp queries in a single Vulkan command buffer
+(e.g., Ratchet & Clank: Rift Apart, which records ~790k vkCmdWriteTimestamp2
+calls in a one-time-submit command buffer).
+
+Probing on M5 Pro (macOS 27.2) reveals a strict capacity limit per
+MTLCommandBuffer. A single Metal command buffer is rejected with an explicit
+MTL4CommandQueueErrorDomain code 1 past 61,680 single sample+dispatch+resolves
+(or 123,330 with range resolves). On the host, KosmicKrisp swallows this as a
+silent VkResult 0 at ~61.7k writes, but at game volumes (~790k), it cascades
+into queue timeouts and OutOfMemory / VK_ERROR_DEVICE_LOST.
+
+This commit addresses the limit by:
+1. Coalescing contiguous timestamp resolves into a single range resolve.
+2. Tracking timestamp writes outside render encoders and automatically
+   cycling to a new Metal command buffer on the same allocator every
+   16,384 writes (a ~4x safety margin under the M5 Pro 61k limit to
+   accommodate other chips).
+
+Note: The 131,072-entry counter heap ceiling is unchanged. Timestamps beyond
+this limit still fall back to reading 0, but no longer crash the queue.
+
+Repro: queries.c
+Assisted-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c | 30 +++++++++++++++++++++++++-
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h |  3 +++
+ src/kosmickrisp/vulkan/kk_query_pool.c | 14 +++++++++++-
+ 3 files changed, 45 insertions(+), 2 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index 237a15f..95c841c 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -262,6 +262,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+    kk_cmd_release_cmd_bufs(cmd);
+    util_dynarray_append(&cmd->metal.cmd_bufs, cmd->metal.cmd_buf);
+    cmd->metal.cmd_buf_used = false;
++   cmd->metal.ts_writes = 0;
+    mtl_begin_command_buffer(cmd->metal.cmd_buf, cmd->metal.allocator);
+ 
+    return VK_SUCCESS;
+@@ -339,6 +340,33 @@ kk_cmd_next_cmd_buf_after_pre_gfx(struct kk_cmd_buffer *cmd)
+    util_dynarray_append(&cmd->metal.cmd_bufs, next);
+    cmd->metal.cmd_buf = next;
+    cmd->metal.cmd_buf_used = false;
++   cmd->metal.ts_writes = 0;
++}
++
++#define KK_TS_WRITES_PER_CMD_BUF 16384u
++
++void
++kk_cmd_count_ts_writes(struct kk_cmd_buffer *cmd, uint32_t writes)
++{
++   assert(cmd->metal.render == NULL && cmd->metal.pre_gfx.cmd_buf == NULL);
++
++   cmd->metal.ts_writes += writes;
++   if (cmd->metal.ts_writes < KK_TS_WRITES_PER_CMD_BUF)
++      return;
++
++   mtl_command_buffer *next = kk_cmd_pool_get_cmd_buf(kk_cmd_buffer_pool(cmd));
++   if (next == NULL)
++      return;
++
++   cs_end(cmd);
++   mtl_end_command_buffer(cmd->metal.cmd_buf);
++   mtl_begin_command_buffer(next, cmd->metal.allocator);
++   if (cmd->vk.base.object_name)
++      mtl_command_buffer_set_label(next, cmd->vk.base.object_name);
++   util_dynarray_append(&cmd->metal.cmd_bufs, next);
++   cmd->metal.cmd_buf = next;
++   cmd->metal.cmd_buf_used = false;
++   cmd->metal.ts_writes = 0;
+ }
+ 
+ /* A Metal command buffer of its own for the pre_gfx pass of the open render
+@@ -541,7 +569,7 @@ end_encoder(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
+    /* Fold the pending timestamp counter-heap resolves into `cmd_buf` */
+    util_dynarray_foreach(&cmd->ts_resolves, struct kk_ts_resolve, r) {
+       mtl_command_resolve_counter_heap(cmd->metal.cmd_buf, r->heap, r->index,
+-                                       1u, r->dst_addr);
++                                       r->count, r->dst_addr);
+    }
+ 
+    util_dynarray_clear(&cmd->ts_resolves);
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+index 8857110..db811ee 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+@@ -257,6 +257,7 @@ struct kk_uploader {
+ struct kk_ts_resolve {
+    mtl_counter_heap *heap;
+    uint32_t index;
++   uint32_t count;
+    uint64_t dst_addr;
+ };
+ 
+@@ -279,6 +280,7 @@ struct kk_cmd_buffer {
+       struct util_dynarray cmd_bufs;
+       /* cmd_buf has an encoder */
+       bool cmd_buf_used;
++      uint32_t ts_writes;
+       /* The open render encoder is the first encoder of cmd_buf */
+       bool render_first;
+       mtl_render_encoder *render;
+@@ -385,6 +387,7 @@ void cs_start_render(struct kk_cmd_buffer *cmd);
+ mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
+ mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd);
+ mtl_compute_encoder *cs_get_pre_gfx(struct kk_cmd_buffer *cmd);
++void kk_cmd_count_ts_writes(struct kk_cmd_buffer *cmd, uint32_t writes);
+ void cs_end(struct kk_cmd_buffer *cmd);
+ void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
+                                         uint64_t addr);
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
+index d27e80a..addf1d9 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.c
++++ b/src/kosmickrisp/vulkan/kk_query_pool.c
+@@ -503,6 +503,7 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+          }
+       }
+    } else {
++      kk_cmd_count_ts_writes(cmd, count);
+       heap = kk_cmd_ts_entry(cmd, &heap_index);
+       if (heap != NULL) {
+          /* compute encoder active or nothing active. If the latter, the write
+@@ -539,10 +540,21 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+    /* Resolve the Metal timestamp value to all multiview query indices so that
+     * they all become available. */
+    for (uint32_t i = 0; i < count; i++) {
++      const uint64_t dst_addr = kk_query_report_addr(dev, pool, query + i);
++      if (util_dynarray_num_elements(&cmd->ts_resolves, struct kk_ts_resolve)) {
++         struct kk_ts_resolve *last =
++            util_dynarray_top_ptr(&cmd->ts_resolves, struct kk_ts_resolve);
++         if (last->heap == heap && last->index + last->count == heap_index &&
++             last->dst_addr + last->count * sizeof(uint64_t) == dst_addr) {
++            last->count++;
++            continue;
++         }
++      }
+       struct kk_ts_resolve resolve = {
+          .heap = heap,
+          .index = heap_index,
+-         .dst_addr = kk_query_report_addr(dev, pool, query + i),
++         .count = 1,
++         .dst_addr = dst_addr,
+       };
+       util_dynarray_append(&cmd->ts_resolves, resolve);
+    }
+-- 
+2.54.0 (Apple Git-157)
+

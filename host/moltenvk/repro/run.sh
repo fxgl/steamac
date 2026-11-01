@@ -60,6 +60,9 @@
 #    and 3 rounds of 4096 command buffers writing one timestamp each (counter heap entries return at reset), 16 timestamps
 #    written back to back (Metal's relaxed granularity sampled only 4 of a compute encoder)
 #    (STEAMAC-2X: Path of Exile 2's GPU context died on "vkCmdResetQueryPool resulted in CS error").
+#    1 and 12 timestamp pools of 65536 with every query reset and written in one one-time-submit command buffer
+#    (#45: Ratchet & Clank: Rift Apart's ~790k; past Metal 4's per-command-buffer capacity 65536 read 0 with VkResult
+#    0 and 786432 lost the device): completed, every query available, the first pool non-zero.
 # 13. texel_buffer.c: texel buffer views at offsets that are not 16-byte aligned (single texel alignment, required by
 #    vkd3d-proton): uniform/storage texel buffers, arrays, variable-count arrays, copies and push descriptors, values
 #    read back; storage buffer array sizes written one element per update; R32G32B32 uniform texel buffers (vkd3d-proton's

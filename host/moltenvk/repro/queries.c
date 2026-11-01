@@ -543,6 +543,62 @@ int main(int argc, char **argv)
 		fails += good != NT;
 		vkDestroyQueryPool(dev, tp3, NULL);
 	}
+	/* #45: Ratchet & Clank: Rift Apart's vkd3d-proton resets and writes ~790k timestamps in one one-time-submit command
+	 * buffer. KosmicKrisp encoded a counter sample, a write_u32 dispatch and a single-entry resolve per timestamp into
+	 * one Metal command buffer, which Metal 4 rejects past a capacity (61680 such timestamps on an M5 Pro): 65536 read 0
+	 * with VkResult 0, 786432 lost the device. One pool of 65536, then 12 (past the 131072 counter heap entries, whose
+	 * extra queries read 0): the submission completes, every query is available and the first pool's are non-zero. */
+	{
+		enum { NQ = 65536, NP = 12 };
+		static VkQueryPool bp[NP];
+		VkQueryPoolCreateInfo t64k = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP,
+			.queryCount = NQ };
+		for (int p = 0; p < NP; p++)
+			CK(vkCreateQueryPool(dev, &t64k, NULL, &bp[p]));
+		VkCommandPoolCreateInfo bcp = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+		VkCommandPool bpool;
+		CK(vkCreateCommandPool(dev, &bcp, NULL, &bpool));
+		VkCommandBufferBeginInfo once = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+		static uint64_t res[NQ][2];
+		const int npools[2] = { 1, NP };
+		for (int round = 0; round < 2; round++) {
+			VkCommandBufferAllocateInfo bai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = bpool,
+				.commandBufferCount = 1 };
+			VkCommandBuffer bc;
+			CK(vkAllocateCommandBuffers(dev, &bai, &bc));
+			CK(vkBeginCommandBuffer(bc, &once));
+			for (int p = 0; p < npools[round]; p++) {
+				vkCmdResetQueryPool(bc, bp[p], 0, NQ);
+				for (uint32_t q = 0; q < NQ; q++)
+					vkCmdWriteTimestamp2(bc, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, bp[p], q);
+			}
+			CK(vkEndCommandBuffer(bc));
+			VkSubmitInfo s = { VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &bc };
+			VkResult r = vkQueueSubmit(queue, 1, &s, VK_NULL_HANDLE);
+			if (r == VK_SUCCESS)
+				r = vkQueueWaitIdle(queue);
+			uint64_t unavailable = 0, zero = 0;
+			for (int p = 0; p < npools[round] && r == VK_SUCCESS; p++) {
+				memset(res, 0, sizeof(res));
+				r = vkGetQueryPoolResults(dev, bp[p], 0, NQ, sizeof(res), res, 16,
+				                          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+				for (uint32_t q = 0; q < NQ; q++) {
+					unavailable += res[q][1] != 1;
+					zero += res[q][1] == 1 && res[q][0] == 0 && p == 0;
+				}
+			}
+			const int ok = r == VK_SUCCESS && !unavailable && !zero;
+			printf("%-4s %d timestamp pool(s) of %d, every query written in one one-time command buffer (%d timestamps): "
+			       "VkResult %d, %llu unavailable, %llu of the first pool zero\n", ok ? "OK" : "FAIL", npools[round], NQ,
+			       npools[round] * NQ, r, (unsigned long long)unavailable, (unsigned long long)zero);
+			fails += !ok;
+			vkFreeCommandBuffers(dev, bpool, 1, &bc);
+		}
+		vkDestroyCommandPool(dev, bpool, NULL);
+		for (int p = 0; p < NP; p++)
+			vkDestroyQueryPool(dev, bp[p], NULL);
+	}
 	if (fails) { printf("queries: %d failure(s)\n", fails); return 1; }
 	return 0;
 }
