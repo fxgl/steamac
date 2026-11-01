@@ -543,7 +543,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 切换改变 Venus 驱动身份（管线缓存 UUID），Steam 与游戏重建着色器缓存。宿主驱动建不出的管线在 virglrenderer 中是占位：其绘制与派发被丢弃，驱动永远见不到 `VK_NULL_HANDLE`。
 
-宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C 的 MSL 错误（`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器）。
+宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃（STEAMAC-6M/6K）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误（`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器）。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器，并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。

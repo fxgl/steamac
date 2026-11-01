@@ -776,10 +776,18 @@ whole VM, and log the Vulkan arguments. KosmicKrisp: an image view with an empty
 range, or between color formats of different block sizes, fails with `VK_ERROR_FORMAT_NOT_SUPPORTED`
 (STEAMAC-62/3); a descriptor a shader uses but the pipeline layout lacks reads zero and drops writes
 (STEAMAC-6H); image copies through a scratch buffer stay inside the mip and cover every volume slice
-(STEAMAC-5E/5F). MoltenVK: a pipeline blending an attachment Metal cannot blend (R32_UINT) fails
-(STEAMAC-3A); vertex-stage auxiliary buffers are packed into Metal's 31 buffer slots (STEAMAC-67);
-full 32-bit specialization constant IDs work (STEAMAC-6A). SPIRV-Cross fixes the MSL errors of
-STEAMAC-33/6D/6E/5M/5K/2N/5C (`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader).
+(STEAMAC-5E/5F); LINEAR images with more mips, layers, depth or samples than the format query
+advertises fail in `vkCreateImage` (STEAMAC-3F/6Y); a cached precompiled NIR shader carries a BLAKE3
+checked before it is deserialized, so a damaged entry is a cache miss instead of a crash (STEAMAC-6M/6K).
+Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
+`host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
+an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
+packed into Metal's 31 buffer slots (STEAMAC-67); full 32-bit specialization constant IDs work
+(STEAMAC-6A). SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V
+(`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader). wmtr (DXMT) refuses only
+garbage or freed object handles, ends encoders a game left open when its context goes away, and refuses
+a render pipeline without a vertex function (STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives
+DXMT's own command lists through the shipped executor on the GPU.
 
 **Allow DXMT (D3D11 on the Mac's Metal), experimental.** Settings → Advanced → **Allow DXMT (D3D11 on
 the Mac's Metal)** is off by default and applies on next start (`--wmtr-lib PATH` or `--no-wmtr` for one launch).
