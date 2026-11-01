@@ -179,6 +179,10 @@
 # checksum corruption, missing checksum and legacy entries must be cache misses
 # before nir_deserialize; an unmodified control and every rebuilt pipeline dispatch
 # and read back 42. Each rejected entry logs once, not on the second lookup.
+# linear_images.c (KosmicKrisp only; STEAMAC-3F/6Y): LINEAR images with mips, layers, volume depth or
+# samples beyond what the format query advertises are refused by vkCreateImage (each case in its own
+# process: the old driver reached Metal's `Linear texture: cannot be mipmapped` abort on bind); valid
+# LINEAR and seven-mip OPTIMAL images, imported or not, still create, bind and view their last mip.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -435,6 +439,8 @@ build d3d12_caps
 if [ "$driver" = kosmickrisp ]; then
 	build image_views
 	"$work/image_views"
+	build linear_images
+	"$work/linear_images"
 
 	# Private cache robustness, not valid Vulkan input. Never let the disk cache
 	# or a translated MSL entry hide the damaged precompiled NIR.

@@ -300,6 +300,12 @@
 #              shape is provable on M1 Max. Existing residency.c exercises descriptor logging.
 #   0074       steamac: prioritize fault feedback and shader excerpts before innocent victims and successful
 #              compositor records in bounded GPU-failure diagnostics (STEAMAC-G); no submission changes.
+#   0075       steamac: vkCreateImage refuses LINEAR (buffer-backed) images with more mips, layers, volume
+#              depth or samples than the format query advertises (1 each). Binding forwarded all seven
+#              levels to Metal's buffer texture constructor: `Linear texture: cannot be mipmapped,
+#              mipmapLevelCount (7) disallowed` aborted the VM (STEAMAC-3F/6Y, appid 1174180, M3).
+#              host/moltenvk/repro/linear_images.c: the 1.9.6 driver aborts in Metal on all five invalid
+#              cases, with 0075 they are refused and the valid LINEAR/seven-mip OPTIMAL controls bind.
 #   0076       steamac: BLAKE3 integrity for precompiled NIR in pipeline/device/disk caches
 #              before nir_deserialize, with a versioned entry format and a new KK cache identity.
 #              A missing hash or mismatch is a cache miss, logged once when the rejected entry is
@@ -520,6 +526,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0072 = steamac: include every depth slice in image-copy fallback scratch storage"
 	echo "  0073 = steamac: retain copy/render encoder descriptor shapes before entering AGX on Apple9+ (cbs on any GPU)"
 	echo "  0074 = steamac: prioritize GPU fault feedback before victims and successful compositor records"
+	echo "  0075 = steamac: refuse LINEAR images beyond one mip/layer/sample before Metal's buffer texture (STEAMAC-3F/6Y)"
 	echo "  0076 = steamac: verify versioned precompiled NIR BLAKE3 before deserialization; reject bad entries as cache misses"
 	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
 	echo
