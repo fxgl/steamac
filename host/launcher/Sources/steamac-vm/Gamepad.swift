@@ -193,17 +193,17 @@ final class PadPort {
 
 /// One of the guest's gamepads: player `index` + 1, over its own PadPort. Fed from the
 /// GameController.framework extended gamepad GamepadBridge gave it (Xbox, DualSense, DualShock,
-/// MFi, ...), whose actuators play its rumble; player 1 can instead be a DualSense passed through
-/// as itself (HIDPassthrough): its raw reports both ways, so SteamOS drives touchpad, motion
-/// sensors, lights, rumble and triggers itself. The guest's pad comes and goes with the
-/// controller and changes kind with it. Main thread only.
+/// MFi, ...), whose actuators play its rumble; a DualSense (player 1) or a Steam Controller (any
+/// usable player) can instead be passed through as itself (HIDPassthrough): its raw reports both
+/// ways, so SteamOS drives touchpad, motion sensors, lights, rumble and triggers itself. The
+/// guest's pad comes and goes with the controller and changes kind with it. Main thread only.
 private final class PadSlot {
     let index: Int
     private let port: PadPort
     private let settings: LauncherSettings
     /// `--pad` for this run (wins over the setting).
     private let typeOverride: LauncherSettings.PadType?
-    /// The Mac's DualSenses as HID devices (player 1 only: see `wanted`).
+    /// The Mac's DualSenses and Steam Controllers as HID devices.
     private let hid: HIDPassthrough?
     private(set) var controller: GCController?
     /// The uinput pad the guest has (created over the port), nil = none.
@@ -229,8 +229,8 @@ private final class PadSlot {
     var onHello: (() -> Void)?
     /// Whether a DualSense may be passed through now (GamepadBridge).
     var passthroughAllowed: () -> Bool = { true }
-    /// Whether a Steam Controller may be passed through now (GamepadBridge).
-    var steamControllerAllowed: () -> Bool = { true }
+    /// The Steam Controller device this player passes through (computed by GamepadBridge), if any.
+    var steamControllerDevice: () -> HIDPassthrough.Device? = { nil }
 
     /// What the guest has (or should have) as its gamepad.
     private enum GuestDevice: Equatable {
@@ -290,9 +290,9 @@ private final class PadSlot {
             log("\(tag): the guest's pad service is ready")
             serviceReady = true
             hidCapable = false
+            if let d = guestHID { hid?.deactivate(d, owner: self) }
             guestPad = nil
             guestHID = nil
-            hid?.deactivate()
             rumble.set(strong: 0, weak: 0)
             onHello?()
             reconcile()
@@ -359,9 +359,9 @@ private final class PadSlot {
         } else {
             log("\(tag): none connected")
         }
-        let before = guestPad
-        reconcile()
-        if let pad = guestPad, pad == before {
+        // GamepadBridge.reconcileAll() after every assignment creates/releases pads: doing it
+        // here per slot would briefly put one Steam Controller on two players while it moves.
+        if let pad = guestPad {
             // Same pad, another controller: release what the previous one held.
             apply(GamepadBridge.rest(pad))
             refresh()
@@ -378,11 +378,11 @@ private final class PadSlot {
         // A Steam Controller connected to the Mac goes to SteamOS as itself (Automatic or "Steam
         // Controller"), with or without a GameController controller (GameController does not show
         // one on Bluetooth LE): Steam drives its trackpads, gyro, back buttons and haptics itself.
-        // `steamControllerAllowed` keeps it from taking player 1 when another controller is player
-        // 1 (GameController does not say which HID device a controller is: the device could be
-        // another player's — mirrors passthroughAllowed for DualSense).
-        if type == .auto || type == .steamController, hidCapable, steamControllerAllowed(),
-           let d = hid?.devices.first(where: HIDPassthrough.isLiveSteamController) {
+        // GamepadBridge assigns each live Steam Controller device to a player: a Puck slot to the
+        // player whose GameController controller is the Puck, a Bluetooth LE controller to the
+        // lowest player with no GameController controller.
+        if type == .auto || type == .steamController, hidCapable,
+           let d = steamControllerDevice() {
             return (.hid(d), type == .auto ? "automatic, Steam Controller" : (typeOverride == nil ? "setting" : "--pad"))
         }
         guard controller != nil || testPad else { return nil }
@@ -399,7 +399,7 @@ private final class PadSlot {
         // GameController does not say which HID device a controller is: with several DualSenses
         // connected, the first one found is passed through, and none once two players have one
         // (`passthroughAllowed`: the device could be the other player's).
-        if pad == .dualSense, settings.dualSensePassthrough, hidCapable, passthroughAllowed(),
+        if index == 0, pad == .dualSense, settings.dualSensePassthrough, hidCapable, passthroughAllowed(),
            controller?.extendedGamepad is GCDualSenseGamepad, let d = hid?.devices.first(where: { !HIDPassthrough.isSteamController($0) }) {
             return (.hid(d), why)
         }
@@ -410,8 +410,10 @@ private final class PadSlot {
         guestHID.map { .hid($0) } ?? guestPad.map { .pad($0) }
     }
 
-    /// Create, replace or remove the guest's pad to match `wanted()`.
-    func reconcile() {
+    /// Release the guest's current pad/device when it is no longer what `wanted()` asks for.
+    /// GamepadBridge runs this on every slot before `reconcile()` so a Steam Controller moving to
+    /// a lower player is removed once before the new slot creates it (no two uhid copies).
+    func releaseIfUnwanted() {
         guard serviceReady else { return }
         let want = wanted()
         guard want?.device != current else { return }
@@ -419,10 +421,19 @@ private final class PadSlot {
             port.send("remove")
             log("\(tag): removed the \(old.title) from SteamOS")
         }
+        if let d = guestHID { hid?.deactivate(d, owner: self) }
         guestPad = nil
         guestHID = nil
-        hid?.deactivate()
         rumble.set(strong: 0, weak: 0)
+    }
+
+    /// Create the guest's pad to match `wanted()` (call `releaseIfUnwanted()` first when several
+    /// slots may shuffle one HID device between them).
+    func reconcile() {
+        guard serviceReady else { return }
+        let want = wanted()
+        guard want?.device != current else { return }
+        releaseIfUnwanted()
         guard let want else { return }
         switch want.device {
         case .pad(let pad):
@@ -442,7 +453,7 @@ private final class PadSlot {
             }
             guestHID = d
             hidInputs = 0
-            hid?.activate(d)
+            hid?.activate(d, owner: self) { [weak self] report in self?.hidInput(report) }
             log("\(tag): SteamOS sees the \(d.identity.name) itself, passed through (\(want.why))")
         }
     }
@@ -522,17 +533,18 @@ private final class PadSlot {
 }
 
 /// Feeds the guest's gamepads (GuestPad over PadPort, one PadSlot per player) from the Mac's
-/// GameController.framework controllers, or passes a DualSense through as itself (player 1).
-/// Settings > Controller picks which controller is player 1 (first connected by default), whether
-/// SteamOS gets a pad and what kind ("Appears in SteamOS as"; Automatic = the controller's own
-/// kind), whether a DualSense is passed through, swaps A/B and X/Y for Nintendo-style layouts and
-/// applies a radial stick deadzone, all while the VM runs.
+/// GameController.framework controllers, or passes a DualSense (player 1) / Steam Controller
+/// (any usable player) through as itself. Settings > Controller picks which controller is player
+/// 1 (first connected by default), whether SteamOS gets a pad and what kind ("Appears in SteamOS
+/// as"; Automatic = the controller's own kind), whether a DualSense is passed through, swaps A/B
+/// and X/Y for Nintendo-style layouts and applies a radial stick deadzone, all while the VM runs.
 ///
 /// Further controllers are players 2…`maxPads` ("Additional controllers"), each on a port of its
 /// own (`fx.pad2`, …) once the guest's service of that port said `hello`: a guest layer without
 /// those services keeps the one pad, driven as before. A player keeps their controller until it
 /// disconnects (the others do not move up), and a reconnected controller takes the first free
-/// player.
+/// player. A Steam Controller on a free usable player is passed through the same way (Puck slot
+/// → that player's GameController controller; Bluetooth LE → lowest usable player without one).
 final class GamepadBridge {
     /// Players at most: one PadPort each.
     static let maxPads = 4
@@ -566,7 +578,7 @@ final class GamepadBridge {
         self.settings = settings
         self.typeOverride = typeOverride
         slots = ports.enumerated().map { i, port in
-            PadSlot(index: i, port: port, settings: settings, typeOverride: typeOverride, hid: i == 0 ? hid : nil)
+            PadSlot(index: i, port: port, settings: settings, typeOverride: typeOverride, hid: hid)
         }
     }
 
@@ -637,7 +649,7 @@ final class GamepadBridge {
         for p in [settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(), settings.$padType.map { _ in () }.eraseToAnyPublisher(),
                   settings.$dualSensePassthrough.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in
-                for s in self?.slots ?? [] { s.reconcile() }
+                self?.reconcileAll()
             })
         }
         for p in [settings.$swapABXY.map { _ in () }.eraseToAnyPublisher(), settings.$stickDeadzone.map { _ in () }.eraseToAnyPublisher()] {
@@ -653,18 +665,17 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // A Steam Controller goes to player 1 as itself only when player 1's GameController
-        // controller is the Steam Controller (or none — it is not shown on Bluetooth LE), and no
-        // other player's is (the HID device could be theirs).
-        slots[0].steamControllerAllowed = { [weak self] in
-            guard let self else { return false }
-            let otherPlayers = self.slots.dropFirst()
-            guard !otherPlayers.contains(where: { $0.controller.map(GamepadBridge.isSteamController) ?? false }) else { return false }
-            return self.slots[0].controller == nil || (self.slots[0].controller.map(GamepadBridge.isSteamController) ?? false)
+        // Each player's Steam Controller device is assigned by `assignedSCDevice`: a Puck slot to
+        // the player whose GameController controller is the Puck, a Bluetooth LE controller to the
+        // lowest usable player without a GameController controller.
+        for s in slots {
+            let playerIndex = s.index
+            s.steamControllerDevice = { [weak self] in self?.assignedSCDevice(for: playerIndex) }
         }
         hid.matchSteamControllers = matchesValveControllers
-        hid.onChange = { [weak self] in self?.slots[0].reconcile() }
-        hid.onInput = { [weak self] report in self?.slots[0].hidInput(report) }
+        hid.onChange = { [weak self] in
+            self?.reconcileAll()
+        }
         hid.start()
         GCController.startWirelessControllerDiscovery(completionHandler: nil)
         assignControllers()
@@ -685,6 +696,31 @@ final class GamepadBridge {
     private var matchesValveControllers: Bool {
         let t = typeOverride ?? settings.padType
         return t == .auto || t == .steamController
+    }
+
+    /// The Steam Controller HID device passed through to player `index`, if any. A Puck slot goes
+    /// to the player whose GameController controller is the Puck; a Bluetooth LE controller (which
+    /// GameController does not show) goes to the lowest usable player with no GameController
+    /// controller. Puck and BLE can be assigned at the same time to different players. Respects
+    /// `usable` so **Additional controllers** off keeps a BLE Steam Controller off players 2–4.
+    private func assignedSCDevice(for index: Int) -> HIDPassthrough.Device? {
+        guard matchesValveControllers, usable(index) else { return nil }
+        let live = hid.devices.filter(HIDPassthrough.isLiveSteamController)
+        guard !live.isEmpty else { return nil }
+        let puckPlayer = slots.firstIndex { $0.controller.map(GamepadBridge.isSteamController) ?? false }
+        if let puckSlot = live.first(where: { $0.puckSlot != nil }), index == puckPlayer {
+            return puckSlot
+        }
+        let empty = slots.indices.filter { usable($0) && slots[$0].controller == nil }
+        guard let target = empty.min() else { return nil }
+        return index == target ? live.first(where: { $0.puckSlot == nil }) : nil
+    }
+
+    /// Release then create across every slot so one Steam Controller moving between players never
+    /// briefly exists twice in the guest, and the old slot cannot clear the new slot's handler.
+    private func reconcileAll() {
+        for s in slots { s.releaseIfUnwanted() }
+        for s in slots { s.reconcile() }
     }
 
     /// Give the players their controllers. One player: the controller chosen in Settings, else
@@ -717,8 +753,9 @@ final class GamepadBridge {
             s.setController(nil)
         }
         for (i, s) in slots.enumerated() { s.setController(next[i]) }
-        // Whether player 1's DualSense is passed through depends on the others' controllers.
-        slots[0].reconcile()
+        // A passthrough (DualSense or Steam Controller) depends on every player's controller: the
+        // assignment may move a Bluetooth LE Steam Controller to the first usable player without one.
+        reconcileAll()
         let players = Dictionary(uniqueKeysWithValues: slots.compactMap { s in s.controller.map { (ObjectIdentifier($0), s.index + 1) } })
         if players != GamepadBridge.players {
             GamepadBridge.players = players

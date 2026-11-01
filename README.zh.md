@@ -403,13 +403,13 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
-**Steam Controller 直通。** **在 SteamOS 中显示为**为“自动”或“Steam Controller”时，Steam Controller（2026）经同一 uhid 路径以其本身交给玩家 1，Steam 用自己的驱动处理其触控板、陀螺仪、背键和振动：
+**Steam Controller 直通。** **在 SteamOS 中显示为**为“自动”或“Steam Controller”时，Steam Controller（2026）经同一 uhid 路径以其本身交给 SteamOS，Steam 用自己的驱动处理其触控板、陀螺仪、背键和振动。单独连接时为玩家 1；开启**更多控制器**时，若旁边还有其他控制器（例如玩家 1 的 DualSense），Steam Controller 会成为下一个空闲玩家，而不是被丢弃：
 - 通过蓝牙 LE 连接到 Mac（`28de:1303`）：以其自身 ID 和蓝牙总线直通。GameController 不显示它，因此不需要 GameController 控制器，也无法唤醒休眠中的客户机（虚拟机暂停时会丢弃 HID 输入）；
-- 通过其 Puck 接收器（`28de:1304`）：Puck 的接口 2–5 是控制器槽位，带有控制器本身的报告描述符。SDL 与 Steam 只按 USB 接口号识别 Puck 的控制器，而 uhid 设备没有接口号，因此传输控制器状态的槽位以有线 Steam Controller（`28de:1302`，USB 总线）交给 SteamOS；槽位超过 2 秒没有控制器状态即移除（控制器关闭、换到其他槽位或蓝牙），由 Puck 的 GameController 手柄接替。
+- 通过其 Puck 接收器（`28de:1304`）：Puck 的接口 2–5 是控制器槽位，带有控制器本身的报告描述符。SDL 与 Steam 只按 USB 接口号识别 Puck 的控制器，而 uhid 设备没有接口号，因此传输控制器状态的槽位以有线 Steam Controller（`28de:1302`，USB 总线）交给 SteamOS；槽位超过 2 秒没有控制器状态即移除（控制器关闭、换到其他槽位或蓝牙），由 Puck 的 GameController 手柄接替。拥有该 Puck GameController 控制器的玩家接收该槽位。
 
 其报告描述符含键盘和鼠标集合（控制器的桌面模式），因此 macOS 只有在系统设置 → 隐私与安全性 → **输入监控**允许后才打开它：启动器会请求该权限，授予后立即打开设备（`hid passthrough: Input Monitoring granted, reopening the HID manager`）。macOS 把蓝牙 LE 控制器 64 字节的 feature report 1（Steam 的命令通道）返回为 65 字节，因此 GET_REPORT 缓冲区在描述符尺寸之外留有余量。
 
-**多个控制器。** 开启设置 → 控制器 → **更多控制器**（默认开，立即生效）后，其余已连接的控制器成为玩家 2–4，在 SteamOS 中各有自己的手柄，用于本地合作。每个玩家一个 virtio-console 端口：玩家 1 用上述 `fx.pad`，其余用 `fx.pad2` … `fx.pad4`，各由以端口命名的 `fx-pad@.service` 实例服务（同一个 `fx-progress-agent pad`，以 `FX_PAD_PORT` 指定端口，由 udev 启动），因此各玩家端口上的协议相同，手柄的振动在驱动它的控制器上播放。客户机对应端口的服务发出 `hello` 后该玩家才获得控制器：没有 `fx-pad@.service` 的客户机层仍只有一个手柄。设置中选定的控制器是玩家 1；玩家的控制器在断开前保持不变（其他玩家不递补），重新连接的控制器占用第一个空位。**在 SteamOS 中显示为**、A/B 互换与死区对所有手柄生效（“自动”时每个手柄与各自的控制器同类）。只有玩家 1 的 DualSense 可直通，且另一玩家的控制器也是 DualSense 时不直通（GameController 不报告哪个 HID 设备属于谁）：此时两者都获得 uinput 手柄。虚拟机运行时，设置 → 控制器中的实时输入测试会标出每个控制器对应的玩家（**玩家 2**）。关闭：一个控制器驱动一个手柄，与之前相同。
+**多个控制器。** 开启设置 → 控制器 → **更多控制器**（默认开，立即生效）后，其余已连接的控制器成为玩家 2–4，在 SteamOS 中各有自己的手柄，用于本地合作。每个玩家一个 virtio-console 端口：玩家 1 用上述 `fx.pad`，其余用 `fx.pad2` … `fx.pad4`，各由以端口命名的 `fx-pad@.service` 实例服务（同一个 `fx-progress-agent pad`，以 `FX_PAD_PORT` 指定端口，由 udev 启动），因此各玩家端口上的协议相同，手柄的振动在驱动它的控制器上播放。客户机对应端口的服务发出 `hello` 后该玩家才获得控制器：没有 `fx-pad@.service` 的客户机层仍只有一个手柄。设置中选定的控制器是玩家 1；玩家的控制器在断开前保持不变（其他玩家不递补），重新连接的控制器占用第一个空位。**在 SteamOS 中显示为**、A/B 互换与死区对所有手柄生效（“自动”时每个手柄与各自的控制器同类）。只有玩家 1 的 DualSense 可直通，且另一玩家的控制器也是 DualSense 时不直通（GameController 不报告哪个 HID 设备属于谁）：此时两者都获得 uinput 手柄。Steam Controller 可直通给任意空闲可用玩家（见上文）。虚拟机运行时，设置 → 控制器中的实时输入测试会标出每个控制器对应的玩家（**玩家 2**）。关闭：一个控制器驱动一个手柄，与之前相同（此时若已连接其他控制器，蓝牙 LE Steam Controller 不会直通）。
 
 `--control-fifo` 测试命令：`pad on`（无控制器的手柄，如 `--input-selftest` 所用）、
 `pad off`、`pad test`（A + 左摇杆）——均可带玩家编号（`pad on 2`；不带则为 1）——以及 `pad state`（客户机手柄、上次振动等级、客户机是否接管 HID 设备、已连接 DualSense 与 Steam Controller 及直通输入报告数）。
