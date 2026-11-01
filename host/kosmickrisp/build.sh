@@ -314,8 +314,8 @@
 #              (disk_cache_destroy in kk_physical_device_destroy: the repro `compilers` test hung in about
 #              half of today's builds, a VM process tearing down a Vulkan instance could too). Only the last
 #              thread leaving returns true. test/util_queue_finish.c (10000 finishes of 4-thread queues
-#              against the build's libmesa_util.a, 60 s watchdog) runs after the driver build: it reports a
-#              job still pending after util_queue_finish without the patch.
+#              against the build's libmesa_util.a, 60 s watchdog) runs after the driver build: without the
+#              patch it hangs after 42-103 finishes (3 of 3 runs), with it 10000 finish in under a second.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
