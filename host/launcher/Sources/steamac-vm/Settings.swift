@@ -259,6 +259,10 @@ final class LauncherSettings: ObservableObject {
         .init(width: 1920, height: 1200, label: "16:10"), .init(width: 2560, height: 1440, label: "QHD, 16:9"),
         .init(width: 2560, height: 1600, label: "16:10"), .init(width: 3440, height: 1440, label: "21:9"),
         .init(width: 3840, height: 2160, label: "4K, 16:9"),
+        .init(width: 1440, height: 960, label: "3:2"), .init(width: 1920, height: 1280, label: "3:2"),
+        .init(width: 2160, height: 1440, label: "3:2"), .init(width: 2400, height: 1600, label: "3:2"),
+        .init(width: 2880, height: 1920, label: "3:2"), .init(width: 3240, height: 2160, label: "3:2"),
+        .init(width: 3840, height: 2560, label: "3:2"),
     ]
     /// `windowSizePreset` values besides "<W>x<H>": the largest size that fits the screen
     /// (re-evaluated at every start) and free W/H.
