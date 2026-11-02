@@ -37,7 +37,7 @@ for manager in ("system", "user"):
     expected = f"/usr/lib/systemd/{manager}.conf.d/50-steamac-vcpu-affinity.conf"
     check(f"# {expected}\n" in config, f"{expected} not loaded")
     assignments = [line.split("=", 1)[1].strip() for line in config.splitlines()
-                   if line.strip().startswith("CPUAffinity=")]
+                   if "=" in line and line.split("=", 1)[0].strip() == "CPUAffinity"]
     check(assignments and assignments[-1] == "", f"{manager} manager mask not reset")
     print(f"{manager}: loaded {expected}; final CPUAffinity is empty")
 
