@@ -32,15 +32,15 @@ final class LauncherSettings: ObservableObject {
         // Sound
         case soundEnabled, soundOutputUID, soundVolume, soundMute, soundLatency
         // Advanced
-        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, steamosBranch, steamClient, vulkanDriver,
-             wmtr, wmtrLibrary
+        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, steamosBranch, steamClient,
+             vulkanDriver, wmtr, wmtrLibrary
 
         var nextStart: Bool {
             switch self {
             case .openFullscreen, .dpiSource, .fixedDPI, .fixedWidthMM, .fixedHeightMM, .refreshRate,
                  .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .soundEnabled, .cpus, .memMiB, .sshEnabled,
                  .sshPort, .network, .lanRemotePlay,
-                 .diskImage, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
+                 .diskImage, .sharedFolder, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
                 return true
             default:
                 return false
@@ -377,6 +377,8 @@ final class LauncherSettings: ObservableObject {
     @Published var lanRemotePlay = false { didSet { save(.lanRemotePlay, lanRemotePlay) } }
     /// "" = default (see AppBundle.defaultDisk()).
     @Published var diskImage = "" { didSet { save(.diskImage, diskImage) } }
+    /// Mac folder exposed to the guest as the virtio-fs device "macshare" (Options.share); "" = none.
+    @Published var sharedFolder = "" { didSet { save(.sharedFolder, sharedFolder) } }
     /// SteamOS update branch "Create New Disk…" installs (atomupd vr/<branch>.json).
     @Published var steamosBranch = "stable" { didSet { save(.steamosBranch, steamosBranch) } }
     /// Steam client of the next start (`steamac.steam_client=`).
@@ -463,6 +465,7 @@ final class LauncherSettings: ObservableObject {
         bool(.network, &network)
         bool(.lanRemotePlay, &lanRemotePlay)
         string(.diskImage, &diskImage)
+        string(.sharedFolder, &sharedFolder)
         string(.steamosBranch, &steamosBranch)
         if !DiskCreator.branches.contains(steamosBranch) {
             log("settings: SteamOS branch \(steamosBranch) is not offered; falling back to stable")
@@ -544,6 +547,7 @@ final class LauncherSettings: ObservableObject {
         case .network: guard let b else { return false }; network = b
         case .lanRemotePlay: guard let b else { return false }; lanRemotePlay = b
         case .diskImage: diskImage = text == "default" ? "" : text
+        case .sharedFolder: sharedFolder = text == "none" ? "" : text
         case .steamosBranch: guard DiskCreator.branches.contains(text) else { return false }; steamosBranch = text
         case .steamClient: guard let v = SteamClient(rawValue: text) else { return false }; steamClient = v
         case .vulkanDriver: guard let v = VulkanDriver(rawValue: text) else { return false }; vulkanDriver = v
@@ -579,7 +583,7 @@ final class LauncherSettings: ObservableObject {
         soundVolume = fresh.soundVolume; soundMute = fresh.soundMute; soundLatency = fresh.soundLatency
         cpus = fresh.cpus; memMiB = fresh.memMiB; sshEnabled = fresh.sshEnabled; sshPort = fresh.sshPort; network = fresh.network
         lanRemotePlay = fresh.lanRemotePlay
-        diskImage = fresh.diskImage; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
+        diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
         reloadGames()
@@ -613,7 +617,7 @@ final class LauncherSettings: ObservableObject {
             .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution,
             .soundEnabled: soundEnabled, .cpus: cpus, .memMiB: memMiB, .sshEnabled: sshEnabled, .sshPort: sshPort,
             .network: network, .lanRemotePlay: lanRemotePlay,
-            .diskImage: diskImage, .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
+            .diskImage: diskImage, .sharedFolder: sharedFolder, .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
             .vulkanDriver: vulkanDriver.rawValue, .wmtr: wmtr, .wmtrLibrary: wmtrLibrary,
         ]
         var s: [Key: String] = [:]

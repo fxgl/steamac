@@ -86,6 +86,15 @@ final class VM {
             log("disk \(id): \(d.path)\(d.readOnly ? " (ro)" : "")")
         }
 
+        // Shared Mac folder → virtio-fs "macshare" (guest: mount -t virtiofs macshare DIR). Simplified
+        // semantics: the guest sees its own uid/gid on every file instead of the Mac's, so the
+        // steamos user reads and writes the folder without ownership mapping; no DAX window.
+        if let share = o.share {
+            try krun("krun_add_virtiofs4(\(share))",
+                     krun_add_virtiofs4(ctx, Options.shareTag, share, 0, false, UInt32(KRUN_SEMANTICS_LINUX_SIMPLIFIED)))
+            log("share: \(share) → virtio-fs tag \(Options.shareTag)")
+        }
+
         // virtio-snd → CoreAudio default output (and default input while the guest records).
         if o.sound {
             if krun_has_feature(UInt64(KRUN_FEATURE_SND)) == 1 {

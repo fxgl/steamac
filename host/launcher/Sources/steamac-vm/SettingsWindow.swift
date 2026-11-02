@@ -1051,6 +1051,19 @@ private struct AdvancedTab: View {
                         Button("Use Default") { settings.diskImage = "" }.disabled(settings.diskImage.isEmpty)
                     }
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label2(title: "Shared folder",
+                           detail: String(localized: "A Mac folder SteamOS can read and write in place (virtio-fs, no copy): mount -t virtiofs macshare DIR in SteamOS, or add it to /etc/fstab. Games stored there load at the Mac disk's speed."),
+                           now: false, key: .sharedFolder)
+                    HStack {
+                        Text(verbatim: settings.sharedFolder.isEmpty ? String(localized: "None") : (settings.sharedFolder as NSString).abbreviatingWithTildeInPath)
+                            .font(.callout).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        Spacer()
+                        Button("Choose Folder…") { chooseSharedFolder() }
+                        Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
+                    }
+                }
                 Picker(selection: $settings.steamClient) {
                     ForEach(LauncherSettings.SteamClient.allCases) { Text(verbatim: SteamClientPicker.itemTitle($0)).tag($0) }
                 } label: {
@@ -1160,6 +1173,16 @@ private struct AdvancedTab: View {
             panel.directoryURL = URL(fileURLWithPath: (settings.diskImage as NSString).deletingLastPathComponent)
         }
         if panel.runModal() == .OK, let url = panel.url { settings.diskImage = url.path }
+    }
+
+    private func chooseSharedFolder() {
+        let panel = NSOpenPanel()
+        panel.title = String(localized: "Choose a folder to share with SteamOS")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if !settings.sharedFolder.isEmpty { panel.directoryURL = URL(fileURLWithPath: settings.sharedFolder) }
+        if panel.runModal() == .OK, let url = panel.url { settings.sharedFolder = url.path }
     }
 
     private func chooseWmtrLibrary() {

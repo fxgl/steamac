@@ -23,6 +23,10 @@ struct Options {
     var initrd: String?
     var cmdline = "console=hvc0 loglevel=4 rootwait"
     var disks: [DiskSpec] = []
+    /// --share DIR / Settings > Advanced "Shared folder": a Mac folder exposed to the guest as the
+    /// virtio-fs device tagged `Options.shareTag` (VM.init). nil = no share.
+    var share: String?
+    static let shareTag = "macshare"
     /// Settings > Advanced, --cpus / --mem, else automatic for this Mac (VMSizing; applySettings).
     var cpus = VMSizing.autoCPUs(.current)
     var memMiB = VMSizing.autoMemMiB(.current)
@@ -119,7 +123,7 @@ struct Options {
     var explicit: Set<String> = []
 
     static let usage = """
-    usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ...
+    usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ... [--share DIR | --no-share]
                       [--cpus N] [--mem MiB] [--display WxH] [--refresh HZ] [--headless]
                       [--log FILE] [--no-net] [--no-sound] [--ssh-port PORT | --no-ssh] [--shm-mib MiB]
                       [--gpu-flags HEX] [--gvproxy PATH] [--frame-dump PNG]
@@ -153,6 +157,10 @@ struct Options {
       --cmdline STR        kernel command line (default: "console=hvc0 loglevel=4 rootwait"; fsck.repair=yes,
                            steamac.ssh/steam_client/tz are added unless STR sets them)
       --disk PATH[:ro]     raw virtio-blk disk; repeatable, order = vda, vdb, ...
+      --share DIR          expose the Mac folder DIR to SteamOS as the virtio-fs device tagged "macshare"
+                           (in the guest: mount -t virtiofs macshare /mnt; default: Settings > Advanced
+                           "Shared folder", none unless chosen)
+      --no-share           no shared folder this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
                            cores, 2..8)
       --mem MiB            guest RAM (default: Settings > Advanced, automatic = half this Mac's RAM,
@@ -326,6 +334,8 @@ struct Options {
                 if p.hasSuffix(":ro") { ro = true; p.removeLast(3) }
                 else if p.hasSuffix(":rw") { p.removeLast(3) }
                 o.disks.append(DiskSpec(path: p, readOnly: ro))
+            case "--share": o.share = try value(a)
+            case "--no-share": o.share = nil
             case "--cpus": o.cpus = try int(a)
             case "--mem": o.memMiB = try int(a)
             case "--display":
@@ -548,6 +558,11 @@ struct Options {
             wmtrLibrary = s.wmtr ? LauncherSettings.Wmtr.path(for: s.wmtrLibrary) : nil
         }
         if given("--no-sound") { ov[.soundEnabled] = "--no-sound" } else { sound = s.soundEnabled }
+        if given("--share") || given("--no-share") {
+            ov[.sharedFolder] = share.map { "--share \($0)" } ?? "--no-share"
+        } else {
+            share = s.sharedFolder.isEmpty ? nil : s.sharedFolder
+        }
         if given("--no-gamepad") { ov[.virtualPad] = "--no-gamepad" }
         if let padType { ov[.padType] = "--pad \(padType.rawValue)" }
         if given("--refresh") { ov[.refreshRate] = "--refresh \(refreshRate)" } else { refreshRate = min(240, max(24, s.refreshRate)) }
@@ -606,6 +621,13 @@ struct Options {
             }
         }
         if disks.count > 26 { throw OptionError("at most 26 disks") }
+        if let share {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: share, isDirectory: &isDir), isDir.boolValue,
+                  FileManager.default.isReadableFile(atPath: share) else {
+                throw OptionError("--share: not a readable folder: \(share)")
+            }
+        }
     }
 }
 
