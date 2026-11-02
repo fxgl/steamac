@@ -9,7 +9,7 @@ source /scripts/common.sh
 pacman -Sy --noconfirm --needed \
     meson ninja python-mako python-yaml python-packaging \
     libdrm wayland wayland-protocols libx11 libxcb libxshmfence libxrandr libxext libxfixes libxxf86vm \
-    libglvnd libdisplay-info xcb-proto xorgproto vulkan-headers systemd-libs zstd expat zlib
+    libglvnd xcb-proto xorgproto vulkan-headers systemd-libs zstd expat zlib
 
 build_venus /tmp/build-aarch64 lib /tmp/dest-aarch64
 
@@ -23,6 +23,6 @@ install_gl /tmp/dest-gl-aarch64 lib /out
 
 mkdir -p /work/bin
 gcc -O2 -Wall -o /work/bin/vkprobe-aarch64 /scripts/vkprobe.c -ldl
-pacman -Q glibc gcc-libs libdrm wayland libxcb libxshmfence libxext libxfixes libxxf86vm libglvnd libdisplay-info \
+pacman -Q glibc gcc-libs libdrm wayland libxcb libxshmfence libxext libxfixes libxxf86vm libglvnd \
     systemd-libs zstd expat zlib meson python-mako vulkan-headers > /work/packages-aarch64.txt
 gcc --version | head -1 > /work/toolchain-aarch64.txt

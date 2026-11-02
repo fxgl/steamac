@@ -1317,6 +1317,12 @@ The SteamOS root filesystem is not modified: all changes come from initramfs and
 official Valve updates (RAUC + atomupd) install into the other slot and roll back normally — verified
 with the 20260922 → 20260928 update and rollback.
 
+The layer's Venus ICDs link only sonames that SteamOS updates keep (`guest/mesa/container/verify.sh`
+`check_stable_needed`); they do not use libdisplay-info. SteamOS 0.6.0 (preview channel, 20261020)
+replaced `libdisplay-info.so.1` with `.so.3`: the 1.9.7 ICD no longer loaded, gamescope found no Vulkan
+device and the VM stayed at “Starting Steam client” (STEAMAC-72). Verified with the stable → preview
+update to 20261020 (0.6.0): Steam starts on the updated slot.
+
 ## Status
 
 Verified:

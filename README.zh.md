@@ -957,6 +957,11 @@ Metal 没有对应像素格式的 texel buffer view 返回 `VK_ERROR_FORMAT_NOT_
 SteamOS 根文件系统不动：所有改动来自 initramfs 与层。因此
 官方 Valve 更新（RAUC + atomupd）装进另一槽并正常回滚——已用 20260922 → 20260928 更新与回滚验证。
 
+层中的 Venus ICD 只链接 SteamOS 更新会保留的 soname（`guest/mesa/container/verify.sh` 的
+`check_stable_needed`），不使用 libdisplay-info。SteamOS 0.6.0（preview 频道，20261020）把
+`libdisplay-info.so.1` 换成了 `.so.3`：1.9.7 的 ICD 无法加载，gamescope 找不到 Vulkan 设备，虚拟机停在
+“Starting Steam client”（STEAMAC-72）。已用 stable → preview 更新到 20261020（0.6.0）验证：更新后的槽位能启动 Steam。
+
 ## 状态
 
 已验证：

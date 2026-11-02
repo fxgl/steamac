@@ -3,7 +3,8 @@
 # (/rootfs.img, mounted read-only, with a tmpfs overlay that receives /out/usr):
 #   1. ELF machine/class of every library, ICD json library_path/library_arch
 #   2. static resolution: every NEEDED soname exists in the target root and every required
-#      symbol version (GLIBC_*, ...) is defined by the library that provides it
+#      symbol version (GLIBC_*, ...) is defined by the library that provides it; the Venus ICDs
+#      link only sonames every SteamOS update keeps (check_stable_needed)
 #   3. runtime: ldd -r and vkprobe (dlopen + ICD entry points + loader instance) inside chroots
 #      of the stock rootfs (aarch64) and of the fex-mesa provider (x86_64 via Rosetta, i386 via qemu)
 #   4. the zink GL stack (libgallium, GLX/EGL/GBM frontends, dri stubs): 1, 2 and ldd -r per root,
@@ -96,6 +97,23 @@ check_deps() {
     done
 }
 
+# check_stable_needed <root> <lib (in-root path)>: the Venus ICDs may only link sonames that every
+# SteamOS update keeps. Resolving against the pinned rootfs (check_deps) is not enough: SteamOS 0.6.0
+# (preview, 20261020) replaced libdisplay-info.so.1 with .so.3, the ICD built against 0.4.x no longer
+# loaded, gamescope found no Vulkan device and Steam never started (STEAMAC-72).
+check_stable_needed() {
+    r=$1 f=$2
+    for so in $(readelf -d "$r$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+        case $so in
+            libc.so.6 | libm.so.6 | libgcc_s.so.1 | ld-linux-aarch64.so.1 | libz.so.1 | libzstd.so.1 | \
+                libexpat.so.1 | libdrm.so.2 | libudev.so.1 | libwayland-client.so.0 | libX11-xcb.so.1 | \
+                libxcb.so.1 | libxcb-*.so.0 | libxcb-sync.so.1 | libxshmfence.so.1)
+                pass "stable soname $f: $so" ;;
+            *) fail "stable soname $f (root ${r#/merged}): $so may change with a SteamOS update" ;;
+        esac
+    done
+}
+
 # in_chroot <root> <cmd...>
 in_chroot() {
     r=$1
@@ -155,6 +173,7 @@ echo "== aarch64 (stock rootfs)"
 check_elf /merged/usr/lib/libvulkan_virtio.so AArch64 ELF64
 check_json /merged /usr/share/vulkan/icd.d/virtio_icd.aarch64.json /usr/lib/libvulkan_virtio.so 64
 check_deps /merged /usr/lib/libvulkan_virtio.so /usr/lib
+check_stable_needed /merged /usr/lib/libvulkan_virtio.so
 check_runtime /merged /usr/lib/libvulkan_virtio.so vkprobe-aarch64
 check_gl /merged /usr/lib AArch64 ELF64
 
@@ -162,6 +181,7 @@ echo "== x86_64 (fex-mesa provider $FEX_PROVIDER)"
 check_elf "$PROV/usr/lib/libvulkan_virtio.so" "Advanced Micro Devices X86-64" ELF64
 check_json "$PROV" /usr/share/vulkan/icd.d/virtio_icd.x86_64.json /usr/lib/libvulkan_virtio.so 64
 check_deps "$PROV" /usr/lib/libvulkan_virtio.so /usr/lib
+check_stable_needed "$PROV" /usr/lib/libvulkan_virtio.so
 check_runtime "$PROV" /usr/lib/libvulkan_virtio.so vkprobe-x86_64
 check_gl "$PROV" /usr/lib "Advanced Micro Devices X86-64" ELF64
 
@@ -169,6 +189,7 @@ echo "== i386 (fex-mesa provider $FEX_PROVIDER)"
 check_elf "$PROV/usr/lib32/libvulkan_virtio.so" "Intel 80386" ELF32
 check_json "$PROV" /usr/share/vulkan/icd.d/virtio_icd.x86.json /usr/lib32/libvulkan_virtio.so 32
 check_deps "$PROV" /usr/lib32/libvulkan_virtio.so /usr/lib32
+check_stable_needed "$PROV" /usr/lib32/libvulkan_virtio.so
 check_runtime "$PROV" /usr/lib32/libvulkan_virtio.so vkprobe-i386
 check_gl "$PROV" /usr/lib32 "Intel 80386" ELF32
 

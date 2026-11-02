@@ -31,7 +31,10 @@ MESA_OPTS=(
     -Dzstd=enabled
     -Dzlib=enabled
     -Dexpat=enabled
-    -Ddisplay-info=enabled
+    # VK_KHR_display EDID metadata only (no display WSI in the VM); linking it tied the ICD to
+    # the image's soname: SteamOS 0.6.0 ships libdisplay-info.so.3 only, the 0.4.x build needed
+    # .so.1 and did not load (STEAMAC-72). verify.sh check_stable_needed.
+    -Ddisplay-info=disabled
     -Dshader-cache=enabled
 )
 

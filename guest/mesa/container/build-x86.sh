@@ -5,7 +5,6 @@
 # source fault-report.c).
 # Mounts: /src (mesa source, ro), /patches (ro), /scripts (ro), /out (guest tree), /work (test bins, logs).
 # Env: STEAMOS_X86_MIRROR STEAMOS_X86_BRANCH FEX_PROVIDER HOLO_KEYRING_PKG HOLO_KEYRING_SHA256
-#      LIBDISPLAY_INFO_PKG LIBDISPLAY_INFO_SHA256 LIB32_LIBDISPLAY_INFO_PKG LIB32_LIBDISPLAY_INFO_SHA256
 set -euo pipefail
 shopt -s inherit_errexit
 source /scripts/common.sh
@@ -51,11 +50,6 @@ pacman -S --noconfirm --needed \
     lib32-libxrandr lib32-libxext lib32-libxfixes lib32-libxxf86vm lib32-libglvnd \
     lib32-systemd lib32-zstd lib32-expat lib32-zlib
 
-# libdisplay-info 0.3.0 (soname .so.3, what the provider ships) is only in SteamOS 3.9.
-di64=$(fetch_pinned LIBDISPLAY_INFO)
-di32=$(fetch_pinned LIB32_LIBDISPLAY_INFO)
-pacman -U --noconfirm "$di64" "$di32"
-
 # Paths inside the provider root; pressure-vessel/FEX resolve them relative to it,
 # matching the provider's freedreno_icd.{x86_64,x86}.json.
 build_venus /tmp/build-x86_64 lib /tmp/dest-x86_64
@@ -85,6 +79,6 @@ gcc -m32 -O2 -Wall -o /work/bin/vkprobe-i386 /scripts/vkprobe.c -ldl
 gcc -O1 -g -Wall -o /work/bin/fault-report-test /scripts/fault-report-test.c
 pacman -Q glibc lib32-glibc gcc-libs lib32-gcc-libs libdrm lib32-libdrm wayland lib32-wayland libxcb lib32-libxcb \
     libxext lib32-libxext libxfixes lib32-libxfixes libxxf86vm lib32-libxxf86vm libglvnd lib32-libglvnd \
-    libdisplay-info lib32-libdisplay-info systemd-libs lib32-systemd zstd lib32-zstd expat lib32-expat \
+    systemd-libs lib32-systemd zstd lib32-zstd expat lib32-expat \
     meson python-mako vulkan-headers > /work/packages-x86.txt
 gcc --version | head -1 > /work/toolchain-x86.txt

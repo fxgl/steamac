@@ -1316,6 +1316,13 @@ Metal нет пиксельного формата, возвращает `VK_ERR
 официальные обновления Valve (RAUC + atomupd) ставятся в другой слот и откатываются штатно —
 проверено обновлением 20260922 → 20260928 и откатом.
 
+Venus ICD слоя линкуются только с sonames, которые обновления SteamOS сохраняют
+(`guest/mesa/container/verify.sh`, `check_stable_needed`); libdisplay-info не используется. SteamOS
+0.6.0 (канал preview, 20261020) заменила `libdisplay-info.so.1` на `.so.3`: ICD из 1.9.7 не
+загружался, gamescope не находил Vulkan-устройство и ВМ оставалась на «Starting Steam client»
+(STEAMAC-72). Проверено обновлением stable → preview до 20261020 (0.6.0): Steam запускается в
+обновлённом слоте.
+
 ## Статус
 
 Проверено:

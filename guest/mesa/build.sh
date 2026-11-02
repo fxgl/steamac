@@ -87,8 +87,6 @@ for step in "${steps[@]}"; do
         rm -rf "$OUT/usr/share/guestos" "$OUT/usr/lib/steamac"
         docker run --rm --platform linux/amd64 \
             -e STEAMOS_X86_MIRROR -e STEAMOS_X86_BRANCH -e FEX_PROVIDER -e HOLO_KEYRING_PKG -e HOLO_KEYRING_SHA256 \
-            -e LIBDISPLAY_INFO_PKG -e LIBDISPLAY_INFO_SHA256 \
-            -e LIB32_LIBDISPLAY_INFO_PKG -e LIB32_LIBDISPLAY_INFO_SHA256 \
             -v "$SRC_VOLUME:/src:ro" -v "$HERE/patches:/patches:ro" -v "$HERE/container:/scripts:ro" \
             -v "$OUT:/out" -v "$WORK:/work" \
             "$X86_IMAGE" bash /scripts/build-x86.sh > "$WORK/build-x86.log" 2>&1 \
