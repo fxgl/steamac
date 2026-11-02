@@ -219,15 +219,6 @@ it("lists distinct chips from sessions and ratings by session count then chip na
   expect(detail.chips).toEqual(expected);
   expect(detail).not.toHaveProperty("recent");
 });
-it("does not serve cached individual-session responses from the old API", async () => {
-  expect((await request("/v1/sessions", sample())).status).toBe(201);
-  await caches.default.put(new Request(`https://case${host}.example/v1/games/1091500`),
-    Response.json({ recent: [{ sid: "old private session" }] }, { headers: { "Cache-Control": "public, max-age=300" } }));
-  const game = await (await request("/v1/games/1091500")).json();
-  expect(game).not.toHaveProperty("recent");
-  expect(game.sessions).toBe(1);
-});
-
 async function seedHardwareReports() {
   for (const [chip, gpu, ram, pcores, fps, rating] of [
     ["Apple M1", 16, 16, 4, 20, "well"],
@@ -300,6 +291,14 @@ it("separates hardware caches and normalizes parameter order and leading zeroes"
   expect(detail.sessions).toBe(2);
   const detailUnfiltered = await (await request("/v1/games/1091500")).json();
   expect(detailUnfiltered.sessions).toBe(4);
+});
+it("recomputes a cached answer once it is older than five minutes", async () => {
+  expect((await request("/v1/sessions", sample())).status).toBe(201);
+  expect((await (await request("/v1/games")).json()).games[0].sessions).toBe(1);
+  expect((await request("/v1/sessions", sample())).status).toBe(201);
+  expect((await (await request("/v1/games")).json()).games[0].sessions).toBe(1);
+  await env.DB.prepare("UPDATE responses SET created = created - 300000").run();
+  expect((await (await request("/v1/games")).json()).games[0].sessions).toBe(2);
 });
 
 describe("per-game profile statistics", () => {
@@ -437,17 +436,5 @@ describe("per-game profile statistics", () => {
     await env.DB.prepare("UPDATE sessions SET mac_ram_gb = 64 WHERE gfx = 'vulkan' AND mac_chip = 'Apple M1'").run();
     await env.DB.prepare("UPDATE ratings SET mac_ram_gb = 64 WHERE gfx = 'vulkan' AND mac_chip = 'Apple M1'").run(); host++;
     expect((await (await request("/v1/games/1091500?max_ram_gb=16")).json()).recommended).toBeNull();
-  });
-  it("separates profile responses from v3 aggregate caches for list and detail", async () => {
-    await reports();
-    for (const path of ["/v1/games", "/v1/games/1091500"]) {
-      await caches.default.put(new Request(`https://case${host}.example${path}?aggregates=3`),
-        Response.json({ stale: true }, { headers: { "Cache-Control": "public, max-age=300" } }));
-      const result = await (await request(path)).json();
-      expect(result).not.toHaveProperty("stale");
-      const cached = await caches.default.match(new Request(`https://case${host}.example${path}?aggregates=4`));
-      expect(cached).toBeDefined();
-      if (path.endsWith("1091500")) expect(result.recommended).not.toBeNull();
-    }
   });
 });

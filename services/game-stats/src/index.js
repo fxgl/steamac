@@ -16,6 +16,11 @@ class HttpError extends Error {
 function json(value, status = 200, headers = {}) {
   return Response.json(value, { status, headers: { ...CORS, ...headers } });
 }
+/** Each public answer is recomputed at most once per key per TTL (see migrations/0003_responses.sql). */
+const CACHE_TTL_S = 300;
+function cachedJSON(body) {
+  return new Response(body, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": `public, max-age=${CACHE_TTL_S}` } });
+}
 function invalid(name) { throw new HttpError(400, `Invalid ${name}`); }
 function object(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) invalid(name);
@@ -191,12 +196,59 @@ const CONFIG_GROUP = "appid, mac_chip, mac_ram_gb, vm_driver, effective_gfx, env
 function normalizedReports(table, scope) {
   return `SELECT *, ${EFFECTIVE_GFX} AS effective_gfx FROM ${table} ${scope.where}`;
 }
-/** Window ranks produce exact medians, ignoring missing measurements, without transferring raw history. */
-async function summaries(db, scope, config = false) {
-  const group = config ? CONFIG_GROUP : "appid";
-  const metrics = config ? Object.entries(MEDIANS) : [["fps_avg", "fps_avg_median"]];
-  const ranks = metrics.map(([key]) => `row_number() OVER (PARTITION BY ${group} ORDER BY ${key} IS NULL, ${key}) AS ${key}_rank,
-    count(${key}) OVER (PARTITION BY ${group}) AS ${key}_count`).join(",");
+function emptyRatings() { return { well: 0, issues: 0, unplayable: 0, no_start: 0 }; }
+function byText(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+/** Mean of the middle one or two values, as the window-ranked SQL medians compute it. */
+function median(values) {
+  if (!values.length) return null;
+  values.sort((a, b) => a - b);
+  const mid = values.length >> 1;
+  return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+}
+/** Per-game totals read each scoped report row exactly once. D1 bills rows read, and window ranks
+ *  over the whole history cost about seven reads per session on every list recomputation. A game's
+ *  last_seen is its latest session, or its latest rating when it has no sessions. */
+async function gameSummaries(db, scope, appid) {
+  const [sessions, ratings, names] = (await db.batch([
+    db.prepare(`SELECT appid, install, launched, play_s, received, fps_avg, mac_chip FROM sessions ${scope.where}`).bind(...scope.bindings),
+    db.prepare(`SELECT appid, rating, received, mac_chip FROM ratings ${scope.where}`).bind(...scope.bindings),
+    appid === undefined ? db.prepare("SELECT appid, game FROM game_names") : db.prepare("SELECT appid, game FROM game_names WHERE appid = ?").bind(appid),
+  ])).map((result) => result.results);
+  const games = new Map();
+  function game(appid) {
+    if (!games.has(appid)) {
+      games.set(appid, { sessions: 0, installs: new Set(), launched: 0, play_s: 0, played: null, rated: null, fps: [], chips: new Map(), ratings: emptyRatings() });
+    }
+    return games.get(appid);
+  }
+  for (const s of sessions) {
+    const g = game(s.appid);
+    g.sessions++; g.installs.add(s.install); g.launched += s.launched; g.play_s += s.play_s;
+    if (g.played === null || s.received > g.played) g.played = s.received;
+    if (s.fps_avg !== null) g.fps.push(s.fps_avg);
+    g.chips.set(s.mac_chip, (g.chips.get(s.mac_chip) || 0) + 1);
+  }
+  for (const r of ratings) {
+    const g = game(r.appid);
+    g.ratings[r.rating]++;
+    if (g.rated === null || r.received > g.rated) g.rated = r.received;
+    if (!g.chips.has(r.mac_chip)) g.chips.set(r.mac_chip, 0);
+  }
+  const name = new Map(names.map((row) => [row.appid, row.game]));
+  return [...games].map(([appid, g]) => ({
+    appid, game: name.get(appid) ?? null, sessions: g.sessions, installs: g.installs.size,
+    launch_rate: g.sessions ? g.launched / g.sessions : null, play_hours: g.play_s / 3600,
+    last_seen: g.sessions ? g.played : g.rated, fps_avg_median: median(g.fps), ratings: g.ratings,
+    // Rating-only chips count zero sessions, so they follow every chip with sessions.
+    chips: [...g.chips].sort(([a, n], [b, m]) => m - n || byText(a, b)).map(([chip]) => chip),
+  })).sort((a, b) => b.sessions - a.sessions || a.appid - b.appid);
+}
+/** Window ranks produce exact medians, ignoring missing measurements, without transferring raw
+ *  history; only the detail page asks, so only one game's reports are ranked. */
+async function configSummaries(db, scope) {
+  const metrics = Object.entries(MEDIANS);
+  const ranks = metrics.map(([key]) => `row_number() OVER (PARTITION BY ${CONFIG_GROUP} ORDER BY ${key} IS NULL, ${key}) AS ${key}_rank,
+    count(${key}) OVER (PARTITION BY ${CONFIG_GROUP}) AS ${key}_count`).join(",");
   const medians = metrics.map(([key, name]) => `avg(CASE WHEN ${key}_rank IN ((${key}_count + 1) / 2, (${key}_count + 2) / 2) THEN ${key} END) AS ${name}`).join(",");
   const rows = await db.prepare(`WITH reports AS (
     ${normalizedReports("sessions", scope)}
@@ -204,37 +256,36 @@ async function summaries(db, scope, config = false) {
     SELECT *, ${ranks} FROM reports
   ) SELECT appid, (SELECT game FROM game_names WHERE game_names.appid = ranked.appid) AS game,
     count(*) AS sessions, count(DISTINCT install) AS installs, avg(launched) AS launch_rate,
-    sum(play_s) / 3600.0 AS play_hours, max(received) AS last_seen, ${medians}
-    ${config ? ", mac_chip AS chip, mac_ram_gb AS ram_gb, vm_driver AS driver, max(vm_wmtr) AS wmtr, effective_gfx AS gfx, env, 1.0 * sum(CASE WHEN launched = 1 AND end = 'exit' AND run_s < 60 THEN 1 ELSE 0 END) / nullif(sum(launched), 0) AS early_exit_rate" : ""}
-    FROM ranked GROUP BY ${group} ORDER BY sessions DESC, appid`).bind(...scope.bindings).all();
+    sum(play_s) / 3600.0 AS play_hours, max(received) AS last_seen, ${medians},
+    mac_chip AS chip, mac_ram_gb AS ram_gb, vm_driver AS driver, max(vm_wmtr) AS wmtr, effective_gfx AS gfx, env,
+    1.0 * sum(CASE WHEN launched = 1 AND end = 'exit' AND run_s < 60 THEN 1 ELSE 0 END) / nullif(sum(launched), 0) AS early_exit_rate
+    FROM ranked GROUP BY ${CONFIG_GROUP} ORDER BY sessions DESC, appid`).bind(...scope.bindings).all();
   return rows.results;
 }
-function emptyRatings() { return { well: 0, issues: 0, unplayable: 0, no_start: 0 }; }
 function configKey(row) { return JSON.stringify([row.chip, row.ram_gb, row.driver, row.gfx, row.env]); }
-async function ratingRows(db, scope, config = false) {
+async function configRatings(db, scope) {
   return (await db.prepare(`WITH reports AS (
     SELECT appid, game, rating, received, mac_chip, mac_ram_gb, vm_driver, vm_wmtr, ${EFFECTIVE_GFX} AS effective_gfx, env
     FROM ratings ${scope.where}
   ) SELECT appid, (SELECT game FROM game_names WHERE game_names.appid = ranked.appid) AS game,
-    ${RATING_KEYS.map((key) => `sum(rating = '${key}') AS ${key}`).join(",")}, max(received) AS last_seen
-    ${config ? ", mac_chip AS chip, mac_ram_gb AS ram_gb, vm_driver AS driver, max(vm_wmtr) AS wmtr, effective_gfx AS gfx, env" : ""}
+    ${RATING_KEYS.map((key) => `sum(rating = '${key}') AS ${key}`).join(",")}, max(received) AS last_seen,
+    mac_chip AS chip, mac_ram_gb AS ram_gb, vm_driver AS driver, max(vm_wmtr) AS wmtr, effective_gfx AS gfx, env
     FROM reports AS ranked
-    GROUP BY ${config ? CONFIG_GROUP : "appid"}`).bind(...scope.bindings).all()).results;
+    GROUP BY ${CONFIG_GROUP}`).bind(...scope.bindings).all()).results;
 }
-function mergeRatings(sessions, ratings, config = false) {
-  const key = config ? configKey : (row) => row.appid;
-  const rows = new Map(sessions.map((row) => [key(row), { ...row, ratings: emptyRatings() }]));
+function mergeConfigs(sessions, ratings) {
+  const rows = new Map(sessions.map((row) => [configKey(row), { ...row, ratings: emptyRatings() }]));
   for (const r of ratings) {
-    let row = rows.get(key(r));
+    let row = rows.get(configKey(r));
     if (!row) {
-      row = { appid: r.appid, game: r.game, sessions: 0, installs: 0, launch_rate: null, play_hours: 0, fps_avg_median: null, last_seen: r.last_seen, ratings: emptyRatings() };
-      if (config) Object.assign(row, { chip: r.chip, ram_gb: r.ram_gb, driver: r.driver, wmtr: r.wmtr, gfx: r.gfx, env: r.env, early_exit_rate: null, fps_low1_median: null, game_mib_median: null, host_mib_median: null });
-      rows.set(key(r), row);
+      row = { appid: r.appid, game: r.game, sessions: 0, installs: 0, launch_rate: null, play_hours: 0, fps_avg_median: null, last_seen: r.last_seen, ratings: emptyRatings(),
+        chip: r.chip, ram_gb: r.ram_gb, driver: r.driver, wmtr: r.wmtr, gfx: r.gfx, env: r.env, early_exit_rate: null, fps_low1_median: null, game_mib_median: null, host_mib_median: null };
+      rows.set(configKey(r), row);
     }
     for (const name of RATING_KEYS) row.ratings[name] = r[name];
-    if (config) row.wmtr = Number(row.wmtr) || Number(r.wmtr);
+    row.wmtr = Number(row.wmtr) || Number(r.wmtr);
   }
-  return [...rows.values()].map((row) => config ? { ...row, wmtr: Boolean(row.wmtr) } : row);
+  return [...rows.values()].map((row) => ({ ...row, wmtr: Boolean(row.wmtr) }));
 }
 /** Rank profiles across chips in the same hardware scope. Score = (well + 0.5 * issues) / ratings;
  *  no ratings score zero. Require two distinct installs across either source. Ties prefer launch
@@ -281,28 +332,12 @@ async function recommended(db, scope) {
   for (const key of RATING_KEYS) delete row[key];
   return { ...row, ratings };
 }
-/** Distinct tested chips include rating-only configurations, ranked by session sample size. */
-async function testedChips(db, scope) {
-  const rows = (await db.prepare(`SELECT appid, chip, sum(sessions) AS sessions FROM (
-    SELECT appid, mac_chip AS chip, count(*) AS sessions FROM sessions ${scope.where} GROUP BY appid, mac_chip
-    UNION ALL
-    SELECT appid, mac_chip AS chip, 0 AS sessions FROM ratings ${scope.where} GROUP BY appid, mac_chip
-  ) GROUP BY appid, chip ORDER BY appid, sessions DESC, chip`).bind(...scope.bindings, ...scope.bindings).all()).results;
-  const chips = new Map();
-  for (const row of rows) {
-    if (!chips.has(row.appid)) chips.set(row.appid, []);
-    chips.get(row.appid).push(row.chip);
-  }
-  return chips;
-}
 async function get(env, appid, filters) {
   const scope = reportScope(appid, filters);
-  const games = mergeRatings(await summaries(env.DB, scope), await ratingRows(env.DB, scope));
-  const chips = await testedChips(env.DB, scope);
-  for (const game of games) game.chips = chips.get(game.appid) || [];
+  const games = await gameSummaries(env.DB, scope, appid);
   if (appid === undefined) return { generated: new Date().toISOString(), games };
   if (!games.length) throw new HttpError(404, "Game not found");
-  const configs = mergeRatings(await summaries(env.DB, scope, true), await ratingRows(env.DB, scope, true), true);
+  const configs = mergeConfigs(await configSummaries(env.DB, scope), await configRatings(env.DB, scope));
   return { generated: new Date().toISOString(), ...games[0], configs, recommended: await recommended(env.DB, scope) };
 }
 export default {
@@ -316,15 +351,18 @@ export default {
       if (request.method === "OPTIONS") return json({ status: "ok" });
       if (isPost && request.method === "POST") return await post(request, env, path === "/v1/ratings");
       if (!isGet || request.method !== "GET") return json({ error: "Method not allowed" }, 405, { Allow: isGet ? "GET, OPTIONS" : "POST, OPTIONS" });
-      // Version every public aggregate shape so pre-profile answers cannot hide recommendations.
+      // Version every public aggregate shape so a deploy never serves a cached answer of the previous shape.
       const filters = hardwareFilters(url.searchParams);
-      const cacheParams = new URLSearchParams({ aggregates: "4", ...filters });
-      const cacheKey = new Request(`${url.origin}${path}?${cacheParams}`, { method: "GET" });
-      const cached = await caches.default.match(cacheKey);
-      if (cached) return cached;
-      const response = json(await get(env, detail ? Number(detail[1]) : undefined, filters), 200, { "Cache-Control": "public, max-age=300" });
-      ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
-      return response;
+      const key = `${url.origin}${path}?${new URLSearchParams({ aggregates: "4", ...filters })}`;
+      const now = Date.now(), expired = now - CACHE_TTL_S * 1000;
+      const hit = await env.DB.prepare("SELECT body FROM responses WHERE key = ? AND created > ?").bind(key, expired).first("body");
+      if (hit !== null) return cachedJSON(hit);
+      const body = JSON.stringify(await get(env, detail ? Number(detail[1]) : undefined, filters));
+      ctx.waitUntil(env.DB.batch([
+        env.DB.prepare("INSERT OR REPLACE INTO responses (key, body, created) VALUES (?, ?, ?)").bind(key, body, now),
+        env.DB.prepare("DELETE FROM responses WHERE created <= ?").bind(expired),
+      ]));
+      return cachedJSON(body);
     } catch (error) {
       return json({ error: error instanceof HttpError ? error.message : "Internal server error" }, error instanceof HttpError ? error.status : 500);
     }

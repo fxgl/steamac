@@ -1113,8 +1113,9 @@ install/session counts, ratings, median average FPS and launch rate. The site an
 the recommendation, but it is never applied automatically.
 
 Service: `services/game-stats` — a Cloudflare Worker with a D1 database (strict validation,
-idempotent session IDs, 30 POSTs per minute per address, a daily cap per install, 5-minute cached
-aggregates `GET /v1/games` and `GET /v1/games/<appid>`). Deploy once:
+idempotent session IDs, 30 POSTs per minute per address, a daily cap per install, aggregates
+`GET /v1/games` and `GET /v1/games/<appid>` cached for 5 minutes in D1, because the Cache API does
+nothing on `workers.dev`). Deploy once:
 
 ```sh
 cd services/game-stats && npm install
@@ -1124,8 +1125,9 @@ npx wrangler d1 migrations apply steamac-game-stats --remote
 npx wrangler deploy                            # prints https://steamac-game-stats.<account>.workers.dev
 ```
 For an existing deployment, migration `0002_profiles.sql` adds `gfx`/`env` to sessions and ratings
-and updates the grouping indexes while preserving v1 data. Run
-`npx wrangler d1 migrations apply steamac-game-stats --remote` **before** `npx wrangler deploy`.
+and updates the grouping indexes while preserving v1 data; `0003_responses.sql` adds the response
+cache table. Run `npx wrangler d1 migrations apply steamac-game-stats --remote` **before**
+`npx wrangler deploy`.
 
 The Worker URL goes into `host/launcher/Info.plist` (`SteamacGameStatsURL`) and `docs/assets/games.js`
 (`API`). Local: `npx wrangler d1 migrations apply steamac-game-stats --local && npx wrangler dev`,

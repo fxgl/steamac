@@ -1114,7 +1114,8 @@ HTTP 400/413 приводит к удалению отчёта, при оста�
 
 Сервис: `services/game-stats` — Cloudflare Worker с базой D1 (строгая валидация, идемпотентные
 идентификаторы сеансов, 30 POST в минуту с одного адреса, суточный лимит на установку, агрегаты
-`GET /v1/games` и `GET /v1/games/<appid>` с кешированием на 5 минут). Развернуть один раз:
+`GET /v1/games` и `GET /v1/games/<appid>` кешируются на 5 минут в D1, потому что Cache API на
+`workers.dev` ничего не делает). Развернуть один раз:
 
 ```sh
 cd services/game-stats && npm install
@@ -1124,8 +1125,9 @@ npx wrangler d1 migrations apply steamac-game-stats --remote
 npx wrangler deploy                            # prints https://steamac-game-stats.<account>.workers.dev
 ```
 При обновлении существующего сервиса миграция `0002_profiles.sql` добавляет `gfx`/`env` в сеансы
-и оценки и обновляет индексы группировки, сохраняя данные v1. Выполняйте
-`npx wrangler d1 migrations apply steamac-game-stats --remote` **перед** `npx wrangler deploy`.
+и оценки и обновляет индексы группировки, сохраняя данные v1; `0003_responses.sql` добавляет
+таблицу кеша ответов. Выполняйте `npx wrangler d1 migrations apply steamac-game-stats --remote`
+**перед** `npx wrangler deploy`.
 
 URL Worker указывается в `host/launcher/Info.plist` (`SteamacGameStatsURL`) и `docs/assets/games.js`
 (`API`). Локально: `npx wrangler d1 migrations apply steamac-game-stats --local && npx wrangler dev`,

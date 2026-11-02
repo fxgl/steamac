@@ -795,8 +795,8 @@ API 参数为 `max_gpu_cores`、`max_ram_gb`、`max_pcores`）：能在那里运
 网站与启动器显示推荐，但绝不自动应用。
 
 服务：`services/game-stats`——使用 D1 数据库的 Cloudflare Worker（严格校验、幂等会话 ID、
-每个地址每分钟 30 次 POST、每个安装的每日上限、缓存 5 分钟的聚合数据
-`GET /v1/games` 与 `GET /v1/games/<appid>`）。首次部署：
+每个地址每分钟 30 次 POST、每个安装的每日上限；聚合数据 `GET /v1/games` 与
+`GET /v1/games/<appid>` 在 D1 中缓存 5 分钟，因为 Cache API 在 `workers.dev` 上不起作用）。首次部署：
 
 ```sh
 cd services/game-stats && npm install
@@ -805,8 +805,8 @@ npx wrangler d1 create steamac-game-stats      # put the printed database_id int
 npx wrangler d1 migrations apply steamac-game-stats --remote
 npx wrangler deploy                            # prints https://steamac-game-stats.<account>.workers.dev
 ```
-更新已有部署时，迁移 `0002_profiles.sql` 为会话和评价添加 `gfx`/`env` 并更新分组索引，保留 v1 数据。
-务必**先**运行 `npx wrangler d1 migrations apply steamac-game-stats --remote`，
+更新已有部署时，迁移 `0002_profiles.sql` 为会话和评价添加 `gfx`/`env` 并更新分组索引，保留 v1 数据；
+`0003_responses.sql` 添加响应缓存表。务必**先**运行 `npx wrangler d1 migrations apply steamac-game-stats --remote`，
 **再**运行 `npx wrangler deploy`。
 
 Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs/assets/games.js`
