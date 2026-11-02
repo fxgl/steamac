@@ -1,4 +1,4 @@
-From: steamac <steamac@local>
+From: northbridgeforge <northbridgeforge@pm.me>
 Subject: [PATCH] virtio-gpu: advertise high-refresh modes with DisplayID
 
 Keep the existing 128-byte EDID for modes that fit its rounded 16-bit
