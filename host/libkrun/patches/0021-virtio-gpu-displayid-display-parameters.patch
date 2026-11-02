@@ -1,0 +1,273 @@
+From: northbridgeforge <northbridgeforge@pm.me>
+Subject: [PATCH] virtio-gpu: include DisplayID 1.3 display parameters
+
+A standalone DisplayID display needs a Display Parameters data block.
+Insert the revision-0, 12-byte block before the existing Type I timing.
+Describe the caller's virtual display in 0.1 mm units, not a host panel.
+Use checked direct native pixel counts and coherent unspecified pairs
+for zero or unrepresentable sizes. Normalize and round the aspect ratio,
+explicitly saturating it at 3.55 (lossy for more extreme ratios); there
+is no unspecified aspect sentinel. Use 1:1 only when neither ratio is
+usable. Keep the Type I timing bytes and the legacy EDID path unchanged.
+
+Applies after patch 0020 to SteaMac's libkrun v1.19.6 series. Extend the
+existing tests for units, bounds, portrait ratios, rounding and fallback.
+---
+diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs
+--- a/src/devices/src/virtio/gpu/display.rs
++++ b/src/devices/src/virtio/gpu/display.rs
+@@ -306,7 +306,7 @@
+         let width_mm = hi(dtd[12], dtd[14] >> 4) as u16;
+         let height_mm = hi(dtd[13], dtd[14] & 0xf) as u16;
+         let refresh = if edid.len() == 256 {
+-            let t = &edid[136..156];
++            let t = &edid[151..171];
+             let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
+             let dimension = |i| u32::from(u16::from_le_bytes([t[i], t[i + 1]])) + 1;
+             assert_eq!((dimension(4), dimension(12)), (width, height));
+diff --git a/src/devices/src/virtio/gpu/edid.rs b/src/devices/src/virtio/gpu/edid.rs
+--- a/src/devices/src/virtio/gpu/edid.rs
++++ b/src/devices/src/virtio/gpu/edid.rs
+@@ -144,11 +144,12 @@
+     assert_eq!(ext.len(), EDID_DATA_LENGTH);
+ 
+     ext[0] = DISPLAYID_EXTENSION_TAG;
+-    // Version, payload size, product type, extension count,
+-    // timing block tag, revision, timing payload length.
+-    ext[1..8].copy_from_slice(&[0x13, 23, 3, 0, 3, 0, 20]);
+-
+-    let timing = &mut ext[8..28];
++    // Version, payload size, standalone display product type, extension count.
++    ext[1..5].copy_from_slice(&[0x13, 38, 3, 0]);
++    populate_displayid_parameters(&mut ext[5..20], info);
++    // Type I timing block: tag, revision, payload length.
++    ext[20..23].copy_from_slice(&[3, 0, 20]);
++    let timing = &mut ext[23..43];
+ 
+     // Pixel clock in 10 kHz units minus one, stored as 24-bit little-endian.
+     let clock = info.wanted_pixel_clock().saturating_sub(1).min(0x00ff_ffff) as u32;
+@@ -169,13 +170,63 @@
+     timing[18..20].copy_from_slice(&encoded(info.vertical_sync as u32));
+ 
+     // DisplayID internal checksum, excluding extension tag.
+-    let sum = ext[1..28]
++    let sum = ext[1..43]
+         .iter()
+         .fold(0u8, |sum, &byte| sum.wrapping_add(byte));
+-    ext[28] = sum.wrapping_neg();
++    ext[43] = sum.wrapping_neg();
+ 
+     // Standard EDID extension block checksum.
+     calculate_checksum(ext);
++}
++
++// DisplayID 1.3 Display Parameters (tag 0x01, revision 0, 12-byte payload).
++// These dimensions are direct values, NOT the Type I timing's value-minus-one.
++fn populate_displayid_parameters(block: &mut [u8], info: &EdidInfo) {
++    assert_eq!(block.len(), 15);
++    block[..3].copy_from_slice(&[1, 0, 12]);
++
++    // EdidInfo holds whole millimetres supplied by the caller or derived from
++    // configured DPI. They describe the virtual display, not a measured host panel.
++    // Widen before converting to 0.1 mm; zero means unspecified in this block.
++    let (width_mm, height_mm) = displayid_dimensions(
++        u32::from(info.width_millimeters) * 10,
++        u32::from(info.height_millimeters) * 10,
++    );
++    block[3..5].copy_from_slice(&width_mm.to_le_bytes());
++    block[5..7].copy_from_slice(&height_mm.to_le_bytes());
++    let (width, height) = displayid_dimensions(info.width, info.height);
++    block[7..9].copy_from_slice(&width.to_le_bytes());
++    block[9..11].copy_from_slice(&height.to_le_bytes());
++    block[11] = 0; // No fixed format/timing, audio-on-video or power features claimed.
++    block[12] = 0xff; // Gamma unspecified.
++    block[13] = if width_mm != 0 {
++        displayid_aspect_ratio(u32::from(width_mm), u32::from(height_mm))
++    } else {
++        displayid_aspect_ratio(info.width, info.height)
++    };
++    block[14] = 0x77; // Virtual scanout: 8 bpc native and overall (stored minus one).
++}
++
++// Keep a dimension pair coherent. Do not wrap, clamp sizes or invent one axis
++// when either is zero or cannot fit: both fields become unspecified instead.
++fn displayid_dimensions(width: u32, height: u32) -> (u16, u16) {
++    match (u16::try_from(width), u16::try_from(height)) {
++        (Ok(w), Ok(h)) if w != 0 && h != 0 => (w, h),
++        _ => (0, 0),
++    }
++}
++
++// The aspect field has no unspecified sentinel: it encodes 1.00 + byte / 100.
++// Normalize portrait ratios to long/short, round to hundredths and explicitly
++// saturate at 3.55. This is lossy metadata for extreme ratios; timing is unchanged.
++// With no usable ratio, use the valid 1:1 fallback, not an invented sentinel.
++fn displayid_aspect_ratio(width: u32, height: u32) -> u8 {
++    let long = u64::from(width.max(height));
++    let short = u64::from(width.min(height));
++    if short == 0 {
++        return 0;
++    }
++    (((long - short) * 100 + short / 2) / short).min(u64::from(u8::MAX)) as u8
+ }
+ 
+ fn populate_display_name(edid_block: &mut [u8]) {
+@@ -406,10 +457,10 @@
+         }
+         if edid.len() > 128 {
+             let ext = &edid[128..];
+-            assert_eq!(&ext[..8], &[0x70, 0x13, 23, 3, 0, 3, 0, 20]);
++            assert_eq!(&ext[..8], &[0x70, 0x13, 38, 3, 0, 1, 0, 12]);
+             // Internal DisplayID checksum excludes the extension tag and padding.
+-            assert_eq!(ext[1..29].iter().fold(0u8, |s, &b| s.wrapping_add(b)), 0);
+-            assert!(ext[29..127].iter().all(|&b| b == 0));
++            assert_eq!(ext[1..44].iter().fold(0u8, |s, &b| s.wrapping_add(b)), 0);
++            assert!(ext[44..127].iter().all(|&b| b == 0));
+         }
+     }
+ 
+@@ -428,7 +479,7 @@
+             let edid = EdidInfo::new(width, height, &params).bytes();
+             assert_eq!(edid.len(), 256);
+             checksums(&edid);
+-            let t = &edid[136..156];
++            let t = &edid[151..171];
+             // Decode as Linux DRM does, including the pixel clock's +1.
+             let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
+             assert_eq!(clock, expected_clock);
+@@ -492,6 +543,132 @@
+         };
+         let edid = EdidInfo::new(3840, 2160, &params).bytes();
+         checksums(&edid);
+-        assert_eq!(&edid[136..139], &[0xff, 0xff, 0xff]);
+-    }
+-}
++        assert_eq!(&edid[151..154], &[0xff, 0xff, 0xff]);
++    }
++
++    #[test]
++    fn displayid_parameters_describe_the_virtual_display() {
++        let params = EdidParams {
++            refresh_rate: 240,
++            physical_size: PhysicalSize::DimensionsMillimeters(600, 340),
++        };
++        let edid = EdidInfo::new(3840, 2160, &params).bytes();
++        checksums(&edid);
++        assert_eq!(
++            &edid[133..148],
++            &[
++                1, 0, 12, 0x70, 0x17, 0x48, 0x0d, // 600.0 x 340.0 mm
++                0x00, 0x0f, 0x70, 0x08, // Direct native counts: 3840 x 2160
++                0, 0xff, 76, 0x77, // No features; unspecified gamma; 1.76 aspect; 8 bpc
++            ]
++        );
++        assert_eq!(&edid[148..151], &[3, 0, 20]);
++    }
++
++    #[test]
++    fn displayid_physical_size_preserves_existing_dpi_units() {
++        let params = EdidParams {
++            refresh_rate: 240,
++            ..Default::default()
++        };
++        let info = EdidInfo::new(3840, 2160, &params);
++        // Existing 300-DPI conversion truncates to whole millimetres. Do not
++        // reinterpret those values as centimetres or change legacy conversion.
++        assert_eq!(
++            (info.width_millimeters, info.height_millimeters),
++            (325, 182)
++        );
++        let edid = info.bytes();
++        assert_eq!(u16::from_le_bytes([edid[136], edid[137]]), 3250);
++        assert_eq!(u16::from_le_bytes([edid[138], edid[139]]), 1820);
++        checksums(&edid);
++    }
++
++    #[test]
++    fn displayid_physical_sizes_do_not_wrap_or_invent_dimensions() {
++        for (wmm, hmm, expected) in [
++            (6553, 6553, (65530u16, 65530u16)),
++            (6554, 340, (0, 0)),
++            (600, 6554, (0, 0)),
++            (u16::MAX, u16::MAX, (0, 0)),
++            (0, 340, (0, 0)),
++            (600, 0, (0, 0)),
++            (0, 0, (0, 0)),
++        ] {
++            let params = EdidParams {
++                refresh_rate: 240,
++                physical_size: PhysicalSize::DimensionsMillimeters(wmm, hmm),
++            };
++            let edid = EdidInfo::new(3840, 2160, &params).bytes();
++            assert_eq!(&edid[136..138], &expected.0.to_le_bytes());
++            assert_eq!(&edid[138..140], &expected.1.to_le_bytes());
++            assert_eq!(edid[146], if expected.0 == 0 { 78 } else { 0 });
++            checksums(&edid);
++        }
++        // Invalid/extreme configured DPI remains unchanged in the legacy path,
++        // but saturated/zero millimetres must not become misleading DisplayID sizes.
++        for dpi in [0, 1, u32::MAX] {
++            let params = EdidParams {
++                refresh_rate: 240,
++                physical_size: PhysicalSize::Dpi(dpi),
++            };
++            let edid = EdidInfo::new(3840, 2160, &params).bytes();
++            assert_eq!(&edid[136..140], &[0, 0, 0, 0]);
++            assert_eq!(edid[146], 78); // Fall back to native 16:9 ratio.
++            checksums(&edid);
++        }
++    }
++
++    #[test]
++    fn displayid_native_pixel_counts_use_checked_direct_values() {
++        let mut info = EdidInfo::new(3840, 2160, &EdidParams::default());
++        for (width, height, expected) in [
++            (1, 1, (1u16, 1u16)),
++            (65535, 65535, (65535, 65535)),
++            (65536, 2160, (0, 0)),
++            (3840, 65536, (0, 0)),
++            (u32::MAX, u32::MAX, (0, 0)),
++            (0, 2160, (0, 0)),
++            (3840, 0, (0, 0)),
++        ] {
++            info.width = width;
++            info.height = height;
++            let mut block = [0; 15];
++            populate_displayid_parameters(&mut block, &info);
++            assert_eq!(&block[7..9], &expected.0.to_le_bytes());
++            assert_eq!(&block[9..11], &expected.1.to_le_bytes());
++        }
++    }
++
++    #[test]
++    fn displayid_aspect_ratios_have_explicit_rounding_and_saturation() {
++        for (w, h, expected) in [
++            (1, 1, 0),
++            (16, 9, 78),
++            (9, 16, 78),
++            (600, 340, 76),
++            (340, 600, 76),
++            (355, 100, 255),
++            (356, 100, 255),
++            (100, 356, 255),
++            (u32::MAX, 1, 255),
++            (1, u32::MAX, 255),
++            (u32::MAX, u32::MAX, 0),
++            (0, 1, 0),
++            (1, 0, 0),
++            (0, 0, 0),
++        ] {
++            assert_eq!(displayid_aspect_ratio(w, h), expected, "{w}:{h}");
++        }
++        // Exercise the encoder, not just its ratio helper, at the upper boundary.
++        for (wmm, hmm, expected) in [(355, 100, 255), (356, 100, 255), (100, 356, 255)] {
++            let params = EdidParams {
++                refresh_rate: 240,
++                physical_size: PhysicalSize::DimensionsMillimeters(wmm, hmm),
++            };
++            let edid = EdidInfo::new(3840, 2160, &params).bytes();
++            assert_eq!(edid[146], expected);
++            checksums(&edid);
++        }
++    }
++}
