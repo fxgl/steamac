@@ -1,0 +1,159 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] kosmickrisp: log each encoder descriptor shape once per thread, at most 256
+
+0073 kept the shapes it had logged in a direct-mapped 64-slot per-thread
+cache. Steam's UI renders eleven framebuffers a frame and several of their
+hashes share a slot (b5b4c783/550bc183, 2b7122cf/0ac610cf/dc95db4f, ...), so
+they evicted each other and M3/M5 Macs logged every render encoder of every
+frame: ~1800 lines/s in STEAMAC-74 ("Steam UI feels very sluggish", M3 Pro)
+and STEAMAC-73 (M5 Pro), whose 10000-line report logs covered five seconds.
+
+Keep the logged hashes in an open-addressed per-thread set (512 slots) and
+stop after 256 shapes per thread with one note. MESA_KK_DEBUG=shapes logs new
+shapes on any GPU, not only Apple9+, for targeted capture and the
+host/moltenvk/repro/encoder_shapes.c regression (100 shapes x 30 frames: 2275
+render shape lines before, 100 after; 300 shapes: 256 and the note).
+---
+diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
+index 41c8e12..2e64574 100644
+--- a/src/kosmickrisp/bridge/mtl_encoder.h
++++ b/src/kosmickrisp/bridge/mtl_encoder.h
+@@ -12,9 +12,10 @@
+ #include <stdint.h>
+ 
+ /* Common encoder utils */
+-/* MESA_KK_DEBUG=cbs logs every copy/render descriptor; otherwise only new
+- * shapes on Apple9+ are logged (M4 encoder crashes, STEAMAC-5E/5F/5H). */
+-void mtl_encoder_set_log(bool enabled);
++/* MESA_KK_DEBUG=cbs logs every copy/render descriptor; otherwise each new
++ * shape is logged once per thread (at most 256) on Apple9+, or on any GPU with
++ * MESA_KK_DEBUG=shapes (M4 encoder crashes, STEAMAC-5E/5F/5H). */
++void mtl_encoder_set_log(bool every_call, bool new_shapes_any_gpu);
+ 
+ void mtl_end_encoding(void *encoder);
+ void mtl_barrier_after_stages(void *encoder, enum mtl_stages after_stages,
+diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
+index 6fbe13b..6dd8a1f 100644
+--- a/src/kosmickrisp/bridge/mtl_encoder.m
++++ b/src/kosmickrisp/bridge/mtl_encoder.m
+@@ -21,16 +21,23 @@
+ 
+ /* The M4 reports abort in Apple's background/load program compiler without
+  * its reason reaching stderr. Keep the inputs before entering AGX, not only
+- * after it returns. A small per-thread shape cache bounds the bookkeeping
+- * and avoids logging the same alternating framebuffers every frame. cbs
+- * bypasses that cache for an exact call/return trace on any GPU.
++ * after it returns. Each thread logs a shape once (a set, not a direct-mapped
++ * cache: Steam's eleven alternating framebuffers collided in 64 slots and
++ * logged every frame, ~1800 lines/s on M3/M5) and at most
++ * ENCODER_SHAPES_LOGGED shapes. cbs bypasses the set for an exact call/return
++ * trace on any GPU; shapes logs new shapes on any GPU, not only Apple9+.
+  */
++#define ENCODER_SHAPES_LOGGED 256u
++#define ENCODER_SHAPE_SLOTS   (2u * ENCODER_SHAPES_LOGGED)
++
+ static bool encoder_log_all;
++static bool encoder_log_shapes_any_gpu;
+ 
+ void
+-mtl_encoder_set_log(bool enabled)
++mtl_encoder_set_log(bool every_call, bool new_shapes_any_gpu)
+ {
+-   encoder_log_all = enabled;
++   encoder_log_all = every_call;
++   encoder_log_shapes_any_gpu = new_shapes_any_gpu;
+ }
+ 
+ static bool
+@@ -38,7 +45,7 @@
+ {
+    static _Thread_local id<MTLDevice> last_device;
+    static _Thread_local bool enabled;
+-   if (encoder_log_all)
++   if (encoder_log_all || encoder_log_shapes_any_gpu)
+       return true;
+    if (device != last_device) {
+       last_device = device;
+@@ -47,16 +54,32 @@
+    return enabled;
+ }
+ 
++static uint64_t encoder_thread_id(void);
++
+ static bool
+ encoder_log_shape(uint32_t hash)
+ {
+-   static _Thread_local uint32_t shapes[64];
+-   static _Thread_local bool occupied[64];
+-   const unsigned slot = hash % 64;
+-   if (!encoder_log_all && occupied[slot] && shapes[slot] == hash)
++   static _Thread_local uint32_t shapes[ENCODER_SHAPE_SLOTS];
++   static _Thread_local bool occupied[ENCODER_SHAPE_SLOTS];
++   static _Thread_local unsigned count;
++   if (encoder_log_all)
++      return true;
++   unsigned slot = hash % ENCODER_SHAPE_SLOTS;
++   while (occupied[slot]) {
++      if (shapes[slot] == hash)
++         return false;
++      slot = (slot + 1) % ENCODER_SHAPE_SLOTS;
++   }
++   if (count == ENCODER_SHAPES_LOGGED) {
++      fprintf(stderr, "kk: encoder shapes: %u logged on thread %" PRIu64
++              ", not logging new ones\n", count, encoder_thread_id());
++      count++;
++   }
++   if (count > ENCODER_SHAPES_LOGGED)
+       return false;
+    shapes[slot] = hash;
+    occupied[slot] = true;
++   count++;
+    return true;
+ }
+ 
+diff --git a/src/kosmickrisp/bridge/stubs/mtl_encoder.c b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
+index c0e096e..d452ceb 100644
+--- a/src/kosmickrisp/bridge/stubs/mtl_encoder.c
++++ b/src/kosmickrisp/bridge/stubs/mtl_encoder.c
+@@ -8,7 +8,7 @@
+ 
+ /* Common encoder utils */
+ void
+-mtl_encoder_set_log(bool enabled)
++mtl_encoder_set_log(bool every_call, bool new_shapes_any_gpu)
+ {
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+index c561665..5f549f6 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -21,6 +21,7 @@ const struct debug_named_value debug_flags[] = {
+    {"noint64atomics", KK_DEBUG_NO_INT64_ATOMICS},
+    {"novertexsubgroups", KK_DEBUG_NO_VERTEX_SUBGROUPS},
+    {"noimageint64atomics", KK_DEBUG_NO_IMAGE_INT64_ATOMICS},
++   {"shapes", KK_DEBUG_SHAPES},
+    {NULL, 0},
+ };
+ 
+@@ -44,5 +45,5 @@ kk_process_debug_variable(void)
+    kk_mesa_debug_flags = debug_get_option_mesa_kk_debug();
+    kk_mesa_experimental_flags = debug_get_option_mesa_kk_experimental();
+    mtl_compiler_set_log(KK_DEBUG(COMPILES));
+-   mtl_encoder_set_log(KK_DEBUG(CBS));
++   mtl_encoder_set_log(KK_DEBUG(CBS), KK_DEBUG(SHAPES));
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
+index 63c4c6e..221e1dd 100644
+--- a/src/kosmickrisp/vulkan/kk_debug.h
++++ b/src/kosmickrisp/vulkan/kk_debug.h
+@@ -36,6 +36,9 @@ enum kk_debug {
+     * atomics, lowered in nir_to_msl.c): A/B and a fallback if a title trips
+     * over the lowering's racy fetch result */
+    KK_DEBUG_NO_IMAGE_INT64_ATOMICS = 1ull << 9,
++   /* Log each new copy/render encoder descriptor shape once per thread on any
++    * GPU (by default only Apple9+ logs them) */
++   KK_DEBUG_SHAPES = 1ull << 10,
+ };
+ 
+ extern enum kk_debug kk_mesa_debug_flags;

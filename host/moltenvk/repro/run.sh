@@ -183,6 +183,9 @@
 # samples beyond what the format query advertises are refused by vkCreateImage (each case in its own
 # process: the old driver reached Metal's `Linear texture: cannot be mipmapped` abort on bind); valid
 # LINEAR and seven-mip OPTIMAL images, imported or not, still create, bind and view their last mip.
+# encoder_shapes.c (KosmicKrisp only; STEAMAC-74/73): with MESA_KK_DEBUG=shapes (Apple9+ logs without it) each
+# render encoder shape is logged once per thread: 100 shapes over 30 frames must log exactly the lines of one frame
+# (0073's direct-mapped cache logged 2275 render shape lines), and 300 shapes stop at 256 with one note.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -459,6 +462,20 @@ if [ "$driver" = kosmickrisp ]; then
 		fi
 		grep '^OK nir_cache' "$nir_log"
 	done
+
+	# STEAMAC-74/73: encoder shape diagnostics must not grow with frames, and stay bounded per thread.
+	build encoder_shapes
+	shapes_log() { MESA_KK_DEBUG=shapes "$work/encoder_shapes" "$1" "$2" > "$work/encoder-shapes-$1-$2.log" 2>&1 ||
+		{ cat "$work/encoder-shapes-$1-$2.log"; exit 1; }; grep -c '^kk: encoder render shape=.* cmd=' "$work/encoder-shapes-$1-$2.log" || true; }
+	one=$(shapes_log 100 1)
+	thirty=$(shapes_log 100 30)
+	capped=$(shapes_log 300 2)
+	notes=$(grep -c 'not logging new ones' "$work/encoder-shapes-300-2.log" || true)
+	if [ "$one" != 100 ] || [ "$thirty" != 100 ] || [ "$capped" != 256 ] || [ "$notes" != 1 ]; then
+		echo "FAIL encoder_shapes: render shape lines 1 frame $one, 30 frames $thirty (100 each), 300 shapes $capped (256) with $notes notes (1)"
+		exit 1
+	fi
+	echo "OK encoder_shapes: 100 shapes logged once over 30 frames, 300 shapes capped at 256"
 
 	# STEAMAC-5E/5F: block-edge and volume scratch copies with Metal validation.
 	build sentry-image-copy

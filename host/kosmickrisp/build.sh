@@ -293,11 +293,12 @@
 #   0073       steamac: log new copy/render descriptor shapes before entering AGX on Apple9+,
 #              with a ready marker after the call: Metal formats/types, sizes, levels/layers,
 #              samples, usage/storage/buffer backing, attachment load/store/resolve metadata and
-#              copy offsets/strides/options. A per-thread 64-entry shape cache avoids repeat-frame
-#              logs; MESA_KK_DEBUG=cbs logs every call/return on any GPU. STEAMAC-5H and STEAMAC-3
-#              e265653f are one M4 Pro render-load/background-program compiler abort without an
-#              AGX reason or descriptor data; neither that M4 failure nor 5E/5F's actual resource
-#              shape is provable on M1 Max. Existing residency.c exercises descriptor logging.
+#              copy offsets/strides/options. Its per-thread 64-entry shape cache was meant to avoid
+#              repeat-frame logs (replaced in 0078); MESA_KK_DEBUG=cbs logs every call/return on any
+#              GPU. STEAMAC-5H and STEAMAC-3 e265653f are one M4 Pro render-load/background-program
+#              compiler abort without an AGX reason or descriptor data; neither that M4 failure nor
+#              5E/5F's actual resource shape is provable on M1 Max. Existing residency.c exercises
+#              descriptor logging.
 #   0074       steamac: prioritize fault feedback and shader excerpts before innocent victims and successful
 #              compositor records in bounded GPU-failure diagnostics (STEAMAC-G); no submission changes.
 #   0075       steamac: vkCreateImage refuses LINEAR (buffer-backed) images with more mips, layers, volume
@@ -322,6 +323,13 @@
 #              thread leaving returns true. test/util_queue_finish.c (10000 finishes of 4-thread queues
 #              against the build's libmesa_util.a, 60 s watchdog) runs after the driver build: without the
 #              patch it hangs after 42-103 finishes (3 of 3 runs), with it 10000 finish in under a second.
+#   0078       steamac: 0073's direct-mapped 64-slot cache evicted alternating shapes, so Steam's UI (eleven
+#              framebuffers a frame, several sharing a slot) logged every render encoder of every frame on
+#              M3/M5: ~1800 lines/s (STEAMAC-74 "Steam UI feels very sluggish", STEAMAC-73; their
+#              10000-line logs covered five seconds). An open-addressed per-thread set logs each shape
+#              once, at most 256 per thread, then one note. MESA_KK_DEBUG=shapes logs new shapes on any
+#              GPU. host/moltenvk/repro/encoder_shapes.c: 100 shapes x 30 frames logged 2275 render shape
+#              lines with 0073's cache, 100 with 0078; 300 shapes log 256 and the note.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -529,6 +537,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0075 = steamac: refuse LINEAR images beyond one mip/layer/sample before Metal's buffer texture (STEAMAC-3F/6Y)"
 	echo "  0076 = steamac: verify versioned precompiled NIR BLAKE3 before deserialization; reject bad entries as cache misses"
 	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
+	echo "  0078 = steamac: log each encoder descriptor shape once per thread, at most 256 (STEAMAC-74/73 log flood)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
