@@ -27,6 +27,17 @@ struct Options {
     /// virtio-fs device tagged `Options.shareTag` (VM.init). nil = no share.
     var share: String?
     static let shareTag = "macshare"
+    /// --share-mount PATH / Settings > Advanced "Mount point in SteamOS": where the guest mounts the share
+    /// (kernel cmdline steamac.share=PATH; the initramfs creates a runtime mount unit for it).
+    var shareMount = Options.defaultShareMount
+    static let defaultShareMount = "/home/steamos/MacShare"
+    /// Absolute, no "." or ".." components, only [A-Za-z0-9/_.-] (what the initramfs accepts).
+    static func isValidShareMount(_ p: String) -> Bool {
+        guard p.hasPrefix("/"), p.count > 1, !p.hasSuffix("/"),
+              p.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "/_.-").contains($0) || CharacterSet.alphanumerics.contains($0) && $0.isASCII })
+        else { return false }
+        return !p.split(separator: "/").contains { $0 == "." || $0 == ".." }
+    }
     /// Settings > Advanced, --cpus / --mem, else automatic for this Mac (VMSizing; applySettings).
     var cpus = VMSizing.autoCPUs(.current)
     var memMiB = VMSizing.autoMemMiB(.current)
@@ -123,7 +134,7 @@ struct Options {
     var explicit: Set<String> = []
 
     static let usage = """
-    usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ... [--share DIR | --no-share]
+    usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ... [--share DIR [--share-mount PATH] | --no-share]
                       [--cpus N] [--mem MiB] [--display WxH] [--refresh HZ] [--headless]
                       [--log FILE] [--no-net] [--no-sound] [--ssh-port PORT | --no-ssh] [--shm-mib MiB]
                       [--gpu-flags HEX] [--gvproxy PATH] [--frame-dump PNG]
@@ -160,6 +171,9 @@ struct Options {
       --share DIR          expose the Mac folder DIR to SteamOS as the virtio-fs device tagged "macshare"
                            (in the guest: mount -t virtiofs macshare /mnt; default: Settings > Advanced
                            "Shared folder", none unless chosen)
+      --share-mount PATH   where SteamOS mounts the shared folder (default: Settings > Advanced "Mount point in
+                           SteamOS", /home/steamos/MacShare); kernel cmdline steamac.share=PATH, the initramfs
+                           creates a mount unit for it on every boot
       --no-share           no shared folder this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
                            cores, 2..8)
@@ -336,6 +350,7 @@ struct Options {
                 o.disks.append(DiskSpec(path: p, readOnly: ro))
             case "--share": o.share = try value(a)
             case "--no-share": o.share = nil
+            case "--share-mount": o.shareMount = try value(a)
             case "--cpus": o.cpus = try int(a)
             case "--mem": o.memMiB = try int(a)
             case "--display":
@@ -497,6 +512,7 @@ struct Options {
             add("steamac.steam_client", o.steamClient.rawValue)
             add("steamac.gfx", o.wmtrLibrary == nil ? "vulkan" : "dxmt")
             add("steamac.gpu_mib", String(VMSizing.gpuBudgetMiB(memMiB: o.memMiB)))
+            add("steamac.share", o.share == nil ? nil : o.shareMount)
             if o.macTime {
                 add("steamac.tz", MacTime.zone)
                 add("steamac.clock24", MacTime.clock24.map { $0 ? "1" : "0" })
@@ -563,6 +579,11 @@ struct Options {
         } else {
             share = s.sharedFolder.isEmpty ? nil : s.sharedFolder
         }
+        if given("--share-mount") {
+            ov[.sharedMount] = "--share-mount \(shareMount)"
+        } else {
+            shareMount = Options.isValidShareMount(s.sharedMount) ? s.sharedMount : Options.defaultShareMount
+        }
         if given("--no-gamepad") { ov[.virtualPad] = "--no-gamepad" }
         if let padType { ov[.padType] = "--pad \(padType.rawValue)" }
         if given("--refresh") { ov[.refreshRate] = "--refresh \(refreshRate)" } else { refreshRate = min(240, max(24, s.refreshRate)) }
@@ -626,6 +647,9 @@ struct Options {
             guard FileManager.default.fileExists(atPath: share, isDirectory: &isDir), isDir.boolValue,
                   FileManager.default.isReadableFile(atPath: share) else {
                 throw OptionError("--share: not a readable folder: \(share)")
+            }
+            guard Options.isValidShareMount(shareMount) else {
+                throw OptionError("--share-mount: absolute path without . or .. components, characters A-Z a-z 0-9 / _ . - only: \(shareMount)")
             }
         }
     }

@@ -45,6 +45,7 @@
 #   steamac.ssh=0|1    0: no SSH server this boot (see "SSH switch"); 1/absent: as enabled
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
 #   steamac.clock24=0|1  Mac 12/24-hour format (layer mac-clock-format before Steam/Plasma)
+#   steamac.share=PATH mount the launcher's virtio-fs "macshare" at PATH (see "shared folder")
 #   init=PATH          init in the new root (default /sbin/init)
 
 PATH=/bin
@@ -911,6 +912,45 @@ if [ "$SSH" = 0 ]; then
         ln -sfn /dev/null "/run/systemd/system/$_unit"
     done
     msg "steamac.ssh=0: SSH server disabled for this boot (sshd units runtime-masked)"
+fi
+
+# ---------------------------------------------------------------- shared folder
+# Contract "shared folder": with Settings > Advanced "Shared folder" the launcher adds
+# a virtio-fs device tagged macshare (krun_add_virtiofs4) and passes
+# steamac.share=<guest path>. A runtime mount unit (lives only for this boot, like
+# the masks above) mounts it there; systemd creates the directory. Wanted, not
+# required, by local-fs.target: a boot without the device still completes.
+SHARE=$(getarg steamac.share)
+if [ -n "$SHARE" ]; then
+    _ok=1
+    case $SHARE in
+        /*/|/|*[!A-Za-z0-9/_.-]*) _ok=0 ;;
+        /*) for _c in $(IFS=/; echo $SHARE); do
+                case $_c in .|..) _ok=0 ;; esac
+            done ;;
+        *) _ok=0 ;;
+    esac
+    if [ $_ok = 1 ]; then
+        # systemd-escape --path: strip the leading /, "-" -> \x2d, "/" -> "-", a leading "." -> \x2e
+        _unit=$(printf %s "${SHARE#/}" | sed 's/-/\\x2d/g; s,/,-,g; s/^\./\\x2e/').mount
+        mkdir -p /run/systemd/system/local-fs.target.wants
+        cat > "/run/systemd/system/$_unit" <<EOF
+[Unit]
+Description=Shared Mac folder (steamac.share)
+Documentation=https://github.com/fxgl/steamac
+
+[Mount]
+What=macshare
+Where=$SHARE
+Type=virtiofs
+Options=defaults
+TimeoutSec=15
+EOF
+        ln -sfn "../$_unit" "/run/systemd/system/local-fs.target.wants/$_unit"
+        msg "shared folder: virtio-fs macshare at $SHARE ($_unit)"
+    else
+        warn "ignoring steamac.share='$SHARE' (absolute path, no . or .. components, [A-Za-z0-9/_.-] only)"
+    fi
 fi
 
 # ---------------------------------------------------------------- switch_root

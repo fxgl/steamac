@@ -1053,7 +1053,7 @@ private struct AdvancedTab: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Label2(title: "Shared folder",
-                           detail: String(localized: "A Mac folder SteamOS can read and write in place (virtio-fs, no copy): mount -t virtiofs macshare DIR in SteamOS, or add it to /etc/fstab. Games stored there load at the Mac disk's speed."),
+                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed."),
                            now: false, key: .sharedFolder)
                     HStack {
                         Text(verbatim: settings.sharedFolder.isEmpty ? String(localized: "None") : (settings.sharedFolder as NSString).abbreviatingWithTildeInPath)
@@ -1063,6 +1063,14 @@ private struct AdvancedTab: View {
                         Button("Choose Folder…") { chooseSharedFolder() }
                         Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
                     }
+                    HStack {
+                        Label2(title: "Mount point in SteamOS", now: false, key: .sharedMount)
+                        Spacer()
+                        TextField("", text: Binding(get: { settings.sharedMount },
+                                                    set: { if Options.isValidShareMount($0) { settings.sharedMount = $0 } }))
+                            .font(.body.monospaced()).frame(width: 260).multilineTextAlignment(.trailing)
+                    }
+                    .disabled(settings.sharedFolder.isEmpty)
                 }
                 Picker(selection: $settings.steamClient) {
                     ForEach(LauncherSettings.SteamClient.allCases) { Text(verbatim: SteamClientPicker.itemTitle($0)).tag($0) }

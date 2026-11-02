@@ -486,18 +486,18 @@
         }
       }
     },
-    "A Mac folder SteamOS can read and write in place (virtio-fs, no copy): mount -t virtiofs macshare DIR in SteamOS, or add it to /etc/fstab. Games stored there load at the Mac disk's speed.": {
+    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования): в SteamOS выполните mount -t virtiofs macshare DIR или добавьте её в /etc/fstab. Игры в ней загружаются со скоростью диска Mac."
+            "value": "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制）：在 SteamOS 中执行 mount -t virtiofs macshare DIR，或将其加入 /etc/fstab。存放于此的游戏以 Mac 磁盘的速度加载。"
+            "value": "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。"
           }
         }
       }
@@ -3654,6 +3654,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "超过此 Mac 的 %lld 个性能核心。额外的 vCPU 会在能效核心上运行，拖慢客户机，并减少可用于 Mac GPU 相关工作的核心。"
+          }
+        }
+      }
+    },
+    "Mount point in SteamOS": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Точка монтирования в SteamOS"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SteamOS 中的挂载点"
           }
         }
       }
