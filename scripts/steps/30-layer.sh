@@ -106,6 +106,14 @@ grep -q 'ExecStartPre=-/usr/lib/steamac/steam-gfx-path' "$ST/usr/lib/systemd/use
           && -L $ST/usr/lib/systemd/user/plasma-session.target.wants/steamac-gfx-path.service ]] \
     || { echo "[layer] steam-gfx-path (steam.service ExecStartPre, steamac-gfx-path.service) missing" >&2; exit 1; }
 
+# Manager drop-ins must survive staging (including the Venus merge). The
+# initramfs mounts this /usr before starting PID 1; no /etc modification needed.
+for manager in system user; do
+    conf=usr/lib/systemd/$manager.conf.d/50-steamac-vcpu-affinity.conf
+    cmp "/src/guest/layer/$conf" "$ST/$conf" \
+        || { echo "[layer] $conf missing or overwritten" >&2; exit 1; }
+done
+
 # layer-release: content hash (excluding itself) so a boot log identifies the layer.
 tree_hash=$(cd "$ST" && find usr -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
 cat > "$ST/usr/lib/steamac/layer-release" <<EOF
