@@ -220,6 +220,7 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var samples: [String] = []
     private let device = MTLCreateSystemDefaultDevice()
+    private let regionDiagnostics = MemoryRegionDiagnostics()
     private typealias VulkanStats = @convention(c) (UnsafeMutablePointer<UInt64>) -> Void
     private let vulkanStats: VulkanStats? = {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "virgl_steamac_memory_stats") else { return nil }
@@ -258,9 +259,15 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
             line += " footprint=\(info.phys_footprint >> 20) resident=\(info.resident_size >> 20)"
                 + " internal=\(info.internal >> 20) compressed=\(info.compressed >> 20)"
                 + " external=\(info.external >> 20) reusable=\(info.reusable >> 20)"
+            if let regions = regionDiagnostics.sample(footprint: info.phys_footprint) {
+                line += " " + regions
+            }
         } else {
             line += " task-info-error=\(result)"
         }
+        var malloc = malloc_statistics_t()
+        malloc_zone_statistics(nil, &malloc)
+        line += " malloc-in-use=\(malloc.size_in_use >> 20) malloc-allocated=\(malloc.size_allocated >> 20)"
         if let device {
             line += " metal-allocated=\(device.currentAllocatedSize >> 20)"
                 + " metal-recommended=\(device.recommendedMaxWorkingSetSize >> 20)"

@@ -207,12 +207,17 @@ final class StallMonitor {
             notRespondingReported = true
             log("stall: guest not responding (no heartbeat for \(Int(heartbeatAge ?? 0)) s, gpu idle \(Int(now - lastActivity)) s)")
             onNotResponding?(Diagnostic(idle: now - lastActivity, heartbeatAge: heartbeatAge ?? 0,
-                                       history: diagnosticHistory(now: now) + "\n" + VMMemoryDiagnostics.shared.history()))
+                                       history: diagnosticHistory(now: now) + "\n"
+                                           + VMMemoryDiagnostics.shared.history() + "\n"
+                                           + StallThreadDiagnostics.snapshot()))
         }
         if !longStallLogged && now - max(lastActivity, gateOpenedAt) >= 10 {
             longStallLogged = true
             for line in diagnosticHistory(now: now).split(separator: "\n") {
                 log("stall: history \(line)")
+            }
+            for line in StallThreadDiagnostics.snapshot().split(separator: "\n") {
+                log("stall: \(line)")
             }
         }
     }

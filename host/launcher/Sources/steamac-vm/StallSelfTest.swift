@@ -24,6 +24,8 @@ enum StallSelfTest {
     }
 
     static func run(_ o: Options) -> Never {
+        if let error = StallThreadDiagnostics.selfCheck() { fatal(error) }
+        log("stall selftest: PASS bounded host thread snapshot includes named waiting worker")
         let app = SteamacApplication.shared
         app.setActivationPolicy(.regular)
         let display = DisplayBackend()
@@ -186,6 +188,10 @@ enum StallSelfTest {
                         $0.idle >= StallMonitor.idleThreshold && $0.heartbeatAge > StallMonitor.heartbeatTimeout
                             && $0.history.contains("ctrl-total ring-total heartbeat-age guest-uptime-ms")
                             && $0.history.contains("VM memory snapshots")
+                            && $0.history.contains("malloc-in-use=")
+                            && $0.history.contains("malloc-allocated=")
+                            && $0.history.contains("Host thread snapshot:")
+                            && $0.history.contains("cpu-permille=")
                             && $0.history.split(separator: "\n").count > 5
                     } == true ? nil : "missing counter/heartbeat history in the stall report")
             },
