@@ -7,6 +7,7 @@
  * only the first pixel of each tile).
  *
  * Each 8x8 workgroup writes index+1 per invocation and the count of a zero-initialized shared counter; 4 workgroups.
+ * Each case runs with direct and indirect dispatch (STEAMAC-G diagnostic recording must not change either).
  * The .spvasm files in shaders/wgsize (assembled by run.sh, SPIR-V 1.6):
  *   wg_localsize_init.spv        LocalSize 8 8 1 + initializer (control)
  *   wg_localsizeid_noinit.spv    LocalSizeId, no initializer (control: threadgroup size only; its counter starts
@@ -73,7 +74,8 @@ int main(int argc, char **argv)
 	CK(vkCreatePipelineLayout(dev, &plci, NULL, &layout));
 
 	const VkDeviceSize size = GROUPS * 65 * 4;
-	VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT };
+	VkBufferCreateInfo bci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size + sizeof(VkDispatchIndirectCommand),
+		.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT };
 	VkBuffer buf;
 	CK(vkCreateBuffer(dev, &bci, NULL, &buf));
 	VkMemoryRequirements mr;
@@ -108,7 +110,9 @@ int main(int argc, char **argv)
 	static const char *spv[] = { "wg_localsize_init.spv", "wg_localsizeid_noinit.spv", "wg_localsizeid_init.spv",
 		"wg_localsizeid_spec_init.spv" };
 	int fails = 0;
-	for (size_t i = 0; i < sizeof(spv) / sizeof(spv[0]); i++) {
+	for (size_t case_id = 0; case_id < 2 * sizeof(spv) / sizeof(spv[0]); case_id++) {
+		size_t i = case_id / 2;
+		int indirect = case_id % 2;
 		uint32_t eight = 8;
 		VkSpecializationMapEntry me = { 0, 0, 4 };
 		VkSpecializationInfo si8 = { 1, &me, 4, &eight };
@@ -118,6 +122,8 @@ int main(int argc, char **argv)
 		VkPipeline p;
 		CK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p));
 		memset(map, 0, size);
+		VkDispatchIndirectCommand args = {GROUPS, 1, 1};
+		memcpy((char *)map + size, &args, sizeof(args));
 		VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = pool, .commandBufferCount = 1 };
 		VkCommandBuffer cmd;
 		CK(vkAllocateCommandBuffers(dev, &cai, &cmd));
@@ -125,7 +131,10 @@ int main(int argc, char **argv)
 		CK(vkBeginCommandBuffer(cmd, &cbbi));
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, NULL);
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
-		vkCmdDispatch(cmd, GROUPS, 1, 1);
+		if (indirect)
+			vkCmdDispatchIndirect(cmd, buf, size);
+		else
+			vkCmdDispatch(cmd, GROUPS, 1, 1);
 		VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT };
 		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 		CK(vkEndCommandBuffer(cmd));
@@ -140,8 +149,8 @@ int main(int argc, char **argv)
 		/* Without an initializer the shared counter starts undefined: only the invocations are checked. */
 		const int initialized = !strstr(spv[i], "_noinit");
 		int ok = ran == GROUPS * 64 && (!initialized || !bad_count);
-		printf("%-4s %s: %d of %d invocations ran, shared count per workgroup %u (%s)\n", ok ? "OK" : "FAIL", spv[i], ran,
-		       GROUPS * 64, map[64], initialized ? "want 64" : "undefined, no initializer");
+		printf("%-4s %s (%s): %d of %d invocations ran, shared count per workgroup %u (%s)\n", ok ? "OK" : "FAIL", spv[i],
+		       indirect ? "indirect" : "direct", ran, GROUPS * 64, map[64], initialized ? "want 64" : "undefined, no initializer");
 		fails += !ok;
 	}
 	if (fails) { printf("wgsize: %d failure(s)\n", fails); return 1; }
