@@ -1,0 +1,279 @@
+From: northbridgeforge <northbridgeforge@pm.me>
+Subject: [PATCH] virtio-gpu: advertise high-refresh modes with DisplayID
+
+Keep the existing 128-byte EDID for modes that fit its rounded 16-bit
+pixel clock. Otherwise append a DisplayID 1.3 Type I preferred timing,
+with a 24-bit clock and separate EDID and DisplayID checksums. Retain
+the clamped base DTD for legacy readers. Encode the DisplayID clock
+minus one, matching Linux DRM's decoder.
+
+Test 4K240, other high-clock modes, the extension threshold, clock
+saturation, legacy modes and runtime resize transitions.
+
+Applies after patches 0001-0019 to libkrun v1.19.6 (227b2de6).
+---
+diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs
+index 98a528c..2cbbfdf 100644
+--- a/src/devices/src/virtio/gpu/display.rs
++++ b/src/devices/src/virtio/gpu/display.rs
+@@ -284,8 +284,18 @@ mod tests {
+ 
+     /// The preferred mode in an EDID: (width, height, refresh Hz, width mm, height mm).
+     fn preferred_mode(edid: &[u8]) -> (u32, u32, f64, u16, u16) {
+-        assert_eq!(edid.len(), 128);
+-        assert_eq!(edid.iter().fold(0u8, |sum, b| sum.wrapping_add(*b)), 0);
++        assert!(
++            matches!(edid.len(), 128 | 256),
++            "Unexpected EDID length: {}",
++            edid.len()
++        );
++        for block in edid.chunks_exact(128) {
++            assert_eq!(
++                block.iter().fold(0u8, |sum, &b| sum.wrapping_add(b)),
++                0,
++                "Invalid EDID block checksum"
++            );
++        }
+         let dtd = &edid[54..72];
+         let clock_hz = u16::from_le_bytes([dtd[0], dtd[1]]) as f64 * 10_000.0;
+         let hi = |lsb: u8, msb: u8| u32::from(lsb) | (u32::from(msb) << 8);
+@@ -295,7 +305,16 @@ mod tests {
+         let vblank = hi(dtd[6], dtd[7] & 0xf);
+         let width_mm = hi(dtd[12], dtd[14] >> 4) as u16;
+         let height_mm = hi(dtd[13], dtd[14] & 0xf) as u16;
+-        let refresh = clock_hz / f64::from((width + hblank) * (height + vblank));
++        let refresh = if edid.len() == 256 {
++            let t = &edid[136..156];
++            let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
++            let dimension = |i| u32::from(u16::from_le_bytes([t[i], t[i + 1]])) + 1;
++            assert_eq!((dimension(4), dimension(12)), (width, height));
++            f64::from(clock) * 10_000.0
++                / f64::from((width + dimension(6)) * (height + dimension(14)))
++        } else {
++            clock_hz / f64::from((width + hblank) * (height + vblank))
++        };
+         (width, height, refresh, width_mm, height_mm)
+     }
+ 
+@@ -336,11 +355,30 @@ mod tests {
+         let (w, h, hz, ..) = preferred_mode(&display.edid_bytes());
+         assert_eq!((w, h), (4095, 2304));
+         assert!((hz - 60.0).abs() < 0.5, "{hz} Hz");
+-        // Does not fit even with reduced blanking: clamped clock, lower refresh.
++        // Does not fit even with reduced blanking: DisplayID keeps the refresh.
+         display.resize(&resize(4095, 4095, 4095, 4095)).unwrap();
+         let (w, h, hz, wmm, hmm) = preferred_mode(&display.edid_bytes());
+         assert_eq!((w, h, wmm, hmm), (4095, 4095, 4095, 4095));
+-        assert!(hz > 30.0 && hz < 60.0, "{hz} Hz");
++        assert!((hz - 60.0).abs() < 0.01, "{hz} Hz");
++    }
++
++    #[test]
++    fn resize_transitions_between_legacy_and_displayid() {
++        let mut display = DisplayInfo::new(1920, 1080);
++        display.edid = DisplayInfoEdid::Generated(EdidParams {
++            refresh_rate: 240,
++            ..Default::default()
++        });
++        assert_eq!(display.edid_bytes().len(), 128);
++        display.resize(&resize(3840, 2160, 600, 340)).unwrap();
++        assert_eq!(display.edid_bytes().len(), 256);
++        let (w, h, hz, wmm, hmm) = preferred_mode(&display.edid_bytes());
++        assert_eq!((w, h, wmm, hmm), (3840, 2160, 600, 340));
++        assert!((hz - 240.0).abs() < 0.01, "{hz} Hz");
++        display.resize(&resize(1920, 1080, 300, 170)).unwrap();
++        assert_eq!(display.edid_bytes().len(), 128);
++        let (_, _, hz, ..) = preferred_mode(&display.edid_bytes());
++        assert!((hz - 240.0).abs() < 0.1, "{hz} Hz");
+     }
+ 
+     #[test]
+diff --git a/src/devices/src/virtio/gpu/edid.rs b/src/devices/src/virtio/gpu/edid.rs
+index 59e5125..fb1a57d 100644
+--- a/src/devices/src/virtio/gpu/edid.rs
++++ b/src/devices/src/virtio/gpu/edid.rs
+@@ -19,6 +19,7 @@
+ use super::display::{EdidParams, PhysicalSize};
+ 
+ const EDID_DATA_LENGTH: usize = 128;
++const DISPLAYID_EXTENSION_TAG: u8 = 0x70;
+ const DEFAULT_HORIZONTAL_BLANKING: u16 = 560;
+ const DEFAULT_VERTICAL_BLANKING: u16 = 50;
+ const DEFAULT_HORIZONTAL_FRONT_PORCH: u16 = 64;
+@@ -107,7 +108,9 @@ impl EdidInfo {
+     }
+ 
+     pub fn bytes(self) -> Box<[u8]> {
+-        let mut edid_box: Box<[u8]> = vec![0; EDID_DATA_LENGTH].into_boxed_slice();
++        let extended = self.wanted_pixel_clock() > MAX_PIXEL_CLOCK;
++        let length = EDID_DATA_LENGTH * if extended { 2 } else { 1 };
++        let mut edid_box: Box<[u8]> = vec![0; length].into_boxed_slice();
+         let edid = &mut edid_box[..];
+ 
+         populate_header(edid);
+@@ -122,12 +125,59 @@ impl EdidInfo {
+         let block1 = &mut edid[72..90];
+         populate_display_name(block1);
+ 
+-        calculate_checksum(edid);
++        if extended {
++            edid[126] = 1;
++        }
++        calculate_checksum(&mut edid[..EDID_DATA_LENGTH]);
++
++        if extended {
++            populate_displayid_extension(&mut edid[EDID_DATA_LENGTH..], &self);
++        }
+ 
+         edid_box
+     }
+ }
+ 
++// DisplayID 1.3 Type I timing, adapted from ChromiumOS crosvm.
++// Unlike the base EDID DTD, this supports a 24-bit pixel clock.
++fn populate_displayid_extension(ext: &mut [u8], info: &EdidInfo) {
++    assert_eq!(ext.len(), EDID_DATA_LENGTH);
++
++    ext[0] = DISPLAYID_EXTENSION_TAG;
++    // Version, payload size, product type, extension count,
++    // timing block tag, revision, timing payload length.
++    ext[1..8].copy_from_slice(&[0x13, 23, 3, 0, 3, 0, 20]);
++
++    let timing = &mut ext[8..28];
++
++    // Pixel clock in 10 kHz units minus one, stored as 24-bit little-endian.
++    let clock = info.wanted_pixel_clock().saturating_sub(1).min(0x00ff_ffff) as u32;
++    timing[0..3].copy_from_slice(&clock.to_le_bytes()[..3]);
++    timing[3] = 0x88; // Preferred progressive timing.
++
++    // DisplayID Type I dimensions are stored minus one.
++    let encoded = |value: u32| (value.saturating_sub(1) as u16).to_le_bytes();
++
++    timing[4..6].copy_from_slice(&encoded(info.width));
++    timing[6..8].copy_from_slice(&encoded(info.horizontal_blanking as u32));
++    timing[8..10].copy_from_slice(&encoded(info.horizontal_front as u32));
++    timing[10..12].copy_from_slice(&encoded(info.horizontal_sync as u32));
++
++    timing[12..14].copy_from_slice(&encoded(info.height));
++    timing[14..16].copy_from_slice(&encoded(info.vertical_blanking as u32));
++    timing[16..18].copy_from_slice(&encoded(info.vertical_front as u32));
++    timing[18..20].copy_from_slice(&encoded(info.vertical_sync as u32));
++
++    // DisplayID internal checksum, excluding extension tag.
++    let sum = ext[1..28]
++        .iter()
++        .fold(0u8, |sum, &byte| sum.wrapping_add(byte));
++    ext[28] = sum.wrapping_neg();
++
++    // Standard EDID extension block checksum.
++    calculate_checksum(ext);
++}
++
+ fn populate_display_name(edid_block: &mut [u8]) {
+     // Display Product Name String Descriptor Tag
+     edid_block[0..5].clone_from_slice(&[0x00, 0x00, 0x00, 0xFC, 0x00]);
+@@ -344,3 +394,104 @@ const fn gcd(x: u32, y: u32) -> u32 {
+         _ => gcd(y, x % y),
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn checksums(edid: &[u8]) {
++        assert_eq!(edid.len(), (usize::from(edid[126]) + 1) * 128);
++        for block in edid.chunks_exact(128) {
++            assert_eq!(block.iter().fold(0u8, |sum, &b| sum.wrapping_add(b)), 0);
++        }
++        if edid.len() > 128 {
++            let ext = &edid[128..];
++            assert_eq!(&ext[..8], &[0x70, 0x13, 23, 3, 0, 3, 0, 20]);
++            // Internal DisplayID checksum excludes the extension tag and padding.
++            assert_eq!(ext[1..29].iter().fold(0u8, |s, &b| s.wrapping_add(b)), 0);
++            assert!(ext[29..127].iter().all(|&b| b == 0));
++        }
++    }
++
++    #[test]
++    fn high_refresh_displayid_timings() {
++        for (width, height, hz, expected_clock) in [
++            (3840, 2160, 240, 212_160),
++            (3840, 2160, 120, 106_080),
++            (2560, 1440, 240, 97_270),
++            (4095, 4095, 60, 105_820),
++        ] {
++            let params = EdidParams {
++                refresh_rate: hz,
++                ..Default::default()
++            };
++            let edid = EdidInfo::new(width, height, &params).bytes();
++            assert_eq!(edid.len(), 256);
++            checksums(&edid);
++            let t = &edid[136..156];
++            // Decode as Linux DRM does, including the pixel clock's +1.
++            let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
++            assert_eq!(clock, expected_clock);
++            assert_eq!(t[3], 0x88); // Preferred, progressive, unspecified aspect ratio.
++            let dimension = |i| u32::from(u16::from_le_bytes([t[i], t[i + 1]])) + 1;
++            assert_eq!((dimension(4), dimension(12)), (width, height));
++            assert_eq!((dimension(6), dimension(14)), (160, 50));
++            assert_eq!((dimension(8), dimension(10)), (48, 32));
++            assert_eq!((dimension(16), dimension(18)), (1, 3));
++            let refresh = f64::from(clock) * 10_000.0
++                / f64::from((width + dimension(6)) * (height + dimension(14)));
++            assert!((refresh - f64::from(hz)).abs() < 0.01, "{refresh} Hz");
++            // Preserve the base DTD as a clamped fallback for legacy readers.
++            assert_eq!(u16::from_le_bytes([edid[54], edid[55]]), 65530);
++        }
++    }
++
++    #[test]
++    fn legacy_modes_remain_valid() {
++        for (width, height, refresh_rate) in [
++            (1920, 1080, 60),
++            (1920, 1080, 240),
++            (2560, 1440, 144),
++            (3840, 2160, 60),
++        ] {
++            let params = EdidParams {
++                refresh_rate,
++                ..Default::default()
++            };
++            let edid = EdidInfo::new(width, height, &params).bytes();
++            assert_eq!(edid.len(), 128, "{width}x{height}@{refresh_rate}");
++            checksums(&edid);
++        }
++    }
++
++    #[test]
++    fn extension_starts_above_legacy_clock_limit() {
++        let mut info = EdidInfo::new(3840, 2160, &EdidParams::default());
++        // Isolate the rounded clock boundary from the blanking selection.
++        info.width = 6553;
++        info.height = 1000;
++        info.horizontal_blanking = 0;
++        info.vertical_blanking = 0;
++        info.refresh_rate = 100;
++        assert_eq!(info.wanted_pixel_clock(), MAX_PIXEL_CLOCK);
++        let legacy = info.bytes();
++        assert_eq!(legacy.len(), 128);
++        checksums(&legacy);
++        info.width += 1;
++        assert_eq!(info.wanted_pixel_clock(), MAX_PIXEL_CLOCK + 10);
++        let extended = info.bytes();
++        assert_eq!(extended.len(), 256);
++        checksums(&extended);
++    }
++
++    #[test]
++    fn displayid_clock_saturates_without_wrapping() {
++        let params = EdidParams {
++            refresh_rate: u32::MAX,
++            ..Default::default()
++        };
++        let edid = EdidInfo::new(3840, 2160, &params).bytes();
++        checksums(&edid);
++        assert_eq!(&edid[136..139], &[0xff, 0xff, 0xff]);
++    }
++}
