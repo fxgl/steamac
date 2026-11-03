@@ -678,7 +678,8 @@ folder occupies whole clusters (128 KiB on a 2 TB drive), about 28 GB in all. Th
 reconstructing the rootfs, and on exFAT deletes the chunk cache before allocating the disk when the volume would otherwise
 be too full (`--keep-cache` keeps it and needs room for both).
 Expected location failures (an existing destination, busy cache, read-only volume, missing write permission,
-full volume, disconnected drive, or filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
+full volume, disconnected drive, a destination or cache folder that disappears during creation, or
+filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
 connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
@@ -811,16 +812,25 @@ range, or between color formats of different block sizes, fails with `VK_ERROR_F
 (STEAMAC-6H); image copies through a scratch buffer stay inside the mip and cover every volume slice
 (STEAMAC-5E/5F); LINEAR images with more mips, layers, depth or samples than the format query
 advertises fail in `vkCreateImage` (STEAMAC-3F/6Y); a cached precompiled NIR shader carries a BLAKE3
-checked before it is deserialized, so a damaged entry is a cache miss instead of a crash (STEAMAC-6M/6K).
+checked before it is deserialized, so a damaged entry is a cache miss instead of a crash. The
+STEAMAC-6M/6K/7J/7H/7P crashes in `vkCreateComputePipelines` had another cause: Mesa's NIR serializer
+stored source indices in 20 bits, so shaders with more than 2^20 objects came back with sources pointing at
+unrelated objects; larger indices now follow in a separate word (`host/kosmickrisp/test/nir_object_ids.c`
+round-trips a shader with over a million defs in the KosmicKrisp build).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
 packed into Metal's 31 buffer slots (STEAMAC-67); full 32-bit specialization constant IDs work
-(STEAMAC-6A). SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V
+(STEAMAC-6A); an optimal image in imported host memory gets a placement heap, so 2D views of a 3D image
+used as render attachments no longer dereference a missing heap (STEAMAC-76/77); failed pipelines log
+complete small shaders, Metal descriptors, blend state and fragment output indices (STEAMAC-41/75).
+SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V and keeps a dual-source blend
+output's second index when it packs outputs (STEAMAC-75)
 (`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader). wmtr (DXMT) refuses only
-garbage or freed object handles, ends encoders a game left open when its context goes away, and refuses
-a render pipeline without a vertex function (STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives
-DXMT's own command lists through the shipped executor on the GPU.
+garbage or freed object handles, ends encoders a game left open when its context goes away (also past
+65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
+(STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives DXMT's own command lists through the shipped
+executor on the GPU.
 
 **Allow DXMT (D3D11 on the Mac's Metal), experimental.** Settings → Advanced → **Allow DXMT (D3D11 on
 the Mac's Metal)** is off by default and applies on next start (`--wmtr-lib PATH` or `--no-wmtr` for one launch).
