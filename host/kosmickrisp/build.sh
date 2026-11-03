@@ -340,6 +340,37 @@
 #              Repro: host/moltenvk/repro/sparse.c (D32 sparse depth test/write, one and two render passes, plain and
 #              MUTABLE_FORMAT: 4 of 4 fail on 0001-0078, pass with 0079; a buffer-to-image copy into the bound tile passes
 #              on both).
+#   0080       steamac: nir_serialize packed a source's object index into 20 bits and only a debug assert
+#              limited shaders to 2^20 objects; release builds truncated larger indices, so nir_deserialize
+#              resolved those sources to unrelated objects. KosmicKrisp serializes the NIR of every stage
+#              (vk_pipeline precomp) and deserializes it to compile: a struct deref then took its type from
+#              an ALU def and faulted in glsl_get_struct_field (STEAMAC-6M/6K), and ALU sources resolving to
+#              defs of another width desynchronized the stream (read_block, STEAMAC-7J/7H/7P), all in
+#              vkCreateComputePipelines on 5 users' Macs since 1.9.4 and unchanged by 0076 (the BLAKE3 of the
+#              blob matched: the blob was what the writer wrote). The largest 20-bit value now escapes to a
+#              separate uint32. test/nir_object_ids.c (a compute shader with 1,050,627 defs, round trip
+#              compared source by source) runs after the driver build: 1.9.8's NIR faults in
+#              glsl_get_struct_field reading type+0x28, the STEAMAC-6M frame; with 0080 the round trip is
+#              identical.
+#   0082       steamac: bounded render-descriptor diagnostics on Apple7/8 too (STEAMAC-7Q/3: M1 abort
+#              inside AGX renderCommandEncoderWithDescriptor; no assertion/descriptor in either event).
+#              New render shapes include Metal allocated/recommended bytes; copies remain Apple9+ or
+#              MESA_KK_DEBUG=shapes. Diagnostics only: the crash has not been reproduced or fixed.
+#   0083       steamac: bounded timestamp-resolve diagnostics (STEAMAC-7R: NULL dereference in AGX
+#              resolveCounterHeap on macOS 26.0 beta 25A5306g): heap/capacity/type, range, destination
+#              GPU address/bytes and call/return pairs (first 64/thread, then one note; cbs logs all;
+#              invalid operands always log). No rendering/timestamp behavior change.
+#              host/moltenvk/repro/metal-diagnostics.sh fails against 1.9.8 (no render/resolve logs) and
+#              passes with 0082/0083 (64 bounded pairs and one note; 200 cbs pairs, 400 nonzero timestamps).
+#   0085       steamac: validate failed command-buffer GPU timestamps (STEAMAC-G). Preserve raw
+#              start/end/commit/feedback clocks; distinguish missing/stale timestamps without claiming
+#              the GPU never started. Durations require commit/feedback bounds with 5 ms calibration
+#              tolerance. No submission changes.
+#   0086       steamac: retain the largest requested direct and the last indirect dispatch independently
+#              of the first-eight-program cap (STEAMAC-G). Failure/culprit logs add at most two lines: MSL
+#              hash, group/local sizes, or indirect address and local size. GPU counts are never read on
+#              the CPU; no dispatch changes. host/moltenvk/repro/gpu-diagnostics.sh checks both (eight
+#              direct/indirect readback cases under Metal validation, device-loss reporting).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -449,6 +480,14 @@ eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/b
 	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$uqf"
 "$uqf"
 
+# --- NIR serialization of shaders with more than 2^20 objects (0080)
+noi=$work/nir_object_ids
+eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build" src/compiler/nir/nir_serialize.c) \
+	"$here/test/nir_object_ids.c" "$work/build/src/compiler/nir/libnir.a" "$work/build/src/compiler/libcompiler.a" \
+	"$work/build/src/util/libmesa_util.a" "$work/build/src/util/blake3/libblake3.a" \
+	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$noi"
+"$noi"
+
 # --- stage
 stage=$work/stage
 rm -rf "$stage"
@@ -549,6 +588,11 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0077 = steamac: only the last waiter leaving the macOS fallback barrier may destroy it; util_queue_finish regression"
 	echo "  0078 = steamac: log each encoder descriptor shape once per thread, at most 256 (STEAMAC-74/73 log flood)"
 	echo "  0079 = steamac: sparse depth images without MTLTextureUsageShaderWrite (Apple10 drops render-pass stores)"
+	echo "  0080 = steamac: escape NIR source object indices past 20 bits (STEAMAC-6M/6K/7J/7H/7P); nir_object_ids regression"
+	echo "  0082 = steamac: bounded render-descriptor diagnostics on Apple7/8 with Metal memory (STEAMAC-7Q/3)"
+	echo "  0083 = steamac: bounded timestamp-resolve operand diagnostics (STEAMAC-7R)"
+	echo "  0085 = steamac: validate failed command-buffer GPU timestamps before reporting durations (STEAMAC-G)"
+	echo "  0086 = steamac: retain largest direct and last indirect dispatch for GPU-failure logs (STEAMAC-G)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
