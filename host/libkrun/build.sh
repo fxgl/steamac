@@ -23,6 +23,8 @@
 # (STEAMAC-15), so inaccessible, locked and malformed disks are distinguishable.
 # Patch 0020 adds a DisplayID timing when the legacy EDID clock cannot hold the
 # requested refresh (e.g. 3840x2160 at 240 Hz); legacy modes retain their base EDID.
+# Patch 0021 adds the required DisplayID 1.3 Display Parameters block while
+# preserving the high-refresh timing bytes and legacy EDID output.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
