@@ -80,8 +80,9 @@ if !Supervisor.isChild {
 if options.needsDisk { FirstRun.run(settings: settings) }
 settings.noteBoot(overrides: settingsOverrides, autoCapture: options.autoCapture)
 
-// After a guest reboot, boot at the size the window had (the guest display followed it).
-if let f = Supervisor.windowFrame, !f.isEmpty, !options.headless {
+// After a guest reboot, keep the window's size only if the guest display follows the window;
+// otherwise the configured / --display size stands (it may be larger than the window).
+if settings.followWindowSize, let f = Supervisor.windowFrame, !f.isEmpty, !options.headless {
     let content = NSWindow.contentRect(forFrameRect: NSRectFromString(f), styleMask: [.titled, .closable, .miniaturizable, .resizable])
     let maxSide = VM.maxDisplaySide & ~1
     options.displayWidth = min(maxSide, max(Int(WindowController.minGuestSize.width), Int(content.width) & ~1))

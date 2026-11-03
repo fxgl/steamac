@@ -163,7 +163,7 @@ enum SettingsSelfTest {
             step()
         }
 
-        /// Display tab: open the real window-size popup, check its items (11 presets, Fit to screen,
+        /// Display tab: open the real window-size popup, check its items (every size preset, Fit to screen,
         /// Custom…) → DIR/settings-display-presets.{txt,png}, then reveal "Custom…"
         /// (settings-display-custom.png). The saved window size is restored afterwards.
         func displayPresets(then done: @escaping () -> Void) {
