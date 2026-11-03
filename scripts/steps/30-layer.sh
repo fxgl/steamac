@@ -109,7 +109,7 @@ grep -q 'ExecStartPre=-/usr/lib/steamac/steam-gfx-path' "$ST/usr/lib/systemd/use
 # Manager drop-ins must survive staging (including the Venus merge). The
 # initramfs mounts this /usr before starting PID 1; no /etc modification needed.
 for manager in system user; do
-    conf=usr/lib/systemd/$manager.conf.d/50-steamac-vcpu-affinity.conf
+    conf=usr/lib/systemd/$manager.conf.d/99-steamac-vcpu-affinity.conf
     cmp "/src/guest/layer/$conf" "$ST/$conf" \
         || { echo "[layer] $conf missing or overwritten" >&2; exit 1; }
 done

@@ -26,6 +26,16 @@ def check(condition, message):
         raise SystemExit(f"FAIL: {message}")
 
 
+game_pids = []
+for arg in sys.argv[1:]:
+    try:
+        pid = int(arg)
+    except ValueError:
+        raise SystemExit(f"FAIL: invalid game PID {arg!r}: expected a positive integer")
+    check(pid > 0, f"invalid game PID {arg!r}: expected a positive integer")
+    game_pids.append(pid)
+
+
 online_text = Path("/sys/devices/system/cpu/online").read_text().strip()
 online = cpu_set(online_text)
 print(f"boot_id={Path('/proc/sys/kernel/random/boot_id').read_text().strip()}")
@@ -34,7 +44,7 @@ print(f"online={online_text} ({len(online)} vCPUs)")
 for manager in ("system", "user"):
     config = subprocess.check_output(
         ["systemd-analyze", "cat-config", f"systemd/{manager}.conf"], text=True)
-    expected = f"/usr/lib/systemd/{manager}.conf.d/50-steamac-vcpu-affinity.conf"
+    expected = f"/usr/lib/systemd/{manager}.conf.d/99-steamac-vcpu-affinity.conf"
     check(f"# {expected}\n" in config, f"{expected} not loaded")
     assignments = [line.split("=", 1)[1].strip() for line in config.splitlines()
                    if "=" in line and line.split("=", 1)[0].strip() == "CPUAffinity"]
@@ -56,11 +66,14 @@ check(any(name == "systemd --user" for name in processes.values()), "no user man
 for name in ("gamescope-wl", "steam"):
     check(name in processes.values(), f"no newly started {name}")
 processes[1] = "PID 1"
-for arg in sys.argv[1:]:
-    processes[int(arg)] = "game"
+for pid in game_pids:
+    processes[pid] = "game"
 
 for pid, name in sorted(processes.items()):
-    tasks = list(Path(f"/proc/{pid}/task").iterdir())
+    try:
+        tasks = list(Path(f"/proc/{pid}/task").iterdir())
+    except (FileNotFoundError, ProcessLookupError):
+        raise SystemExit(f"FAIL: {name} pid={pid} exited or does not exist")
     masks = {}
     for task in tasks:
         try:
@@ -75,7 +88,10 @@ for pid, name in sorted(processes.items()):
     check(not limited, f"{name} pid={pid} restricted threads: {limited}")
     # Walk every ancestor: an empty cpuset.cpus means inheritance, while the
     # effective file includes restrictions imposed by ancestors.
-    group = Path(f"/proc/{pid}/cgroup").read_text().strip().split("0::", 1)[1]
+    try:
+        group = Path(f"/proc/{pid}/cgroup").read_text().strip().split("0::", 1)[1]
+    except (FileNotFoundError, ProcessLookupError):
+        raise SystemExit(f"FAIL: {name} pid={pid} exited during cgroup inspection")
     path = Path("/sys/fs/cgroup") / group.lstrip("/")
     while True:
         effective = path / "cpuset.cpus.effective"
