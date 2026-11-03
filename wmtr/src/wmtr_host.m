@@ -116,6 +116,7 @@ struct wmtr_host {
   struct wmtr_handle { _Atomic uint64_t id; _Atomic uint64_t obj; } *handles;
   pthread_mutex_t object_lock;
   struct object_entry *objects;
+  uint32_t object_capacity, object_count;
   struct pool_state *pools;
 #ifdef WMTR_TESTING
   int strict_objects;
@@ -1249,7 +1250,8 @@ wmtr_host_create(void *ring, const struct wmtr_host_ops *ops, void *ctx) {
   h->slots = (struct wmtr_slot *)((uint8_t *)ring + WMTR_SLOTS_OFFSET);
   h->ops = ops; h->ctx = ctx;
   h->handles = calloc(WMTR_HANDLE_SLOTS, sizeof *h->handles);
-  h->objects = calloc(WMTR_HANDLE_SLOTS, sizeof *h->objects);
+  h->object_capacity = WMTR_HANDLE_SLOTS;
+  h->objects = calloc(h->object_capacity, sizeof *h->objects);
   h->pools = calloc(1, sizeof *h->pools);
   pthread_mutex_init(&h->pools->lock, NULL);
   pthread_mutexattr_t recursive;
@@ -1359,7 +1361,7 @@ wmtr_host_destroy(struct wmtr_host *h) {
       if (obj) { object_drop(h, (uint64_t)obj, 1); [obj release]; }
     }
   }
-  if (object_checks(h)) for (uint32_t i = 0; i < WMTR_HANDLE_SLOTS; i++) {
+  if (object_checks(h)) for (uint32_t i = 0; i < h->object_capacity; i++) {
     struct object_entry *e = &h->objects[i];
     if (!e->value || e->value == UINT64_MAX) continue;
     if (e->plain) {

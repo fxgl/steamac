@@ -26,8 +26,11 @@
 # go through, as refusing them handed DXMT nil libraries and Metal aborted on a nil vertex function
 # (1.9.6, STEAMAC-6S/6W/3/6T). A render pipeline without a vertex function is refused (nil pipeline,
 # draws dropped). Encoders still open when a context is destroyed are ended before release (Metal
-# aborted the VM, STEAMAC-6Z/70). Late encoders on committed command buffers and Objective-C exceptions
-# lose only that context. `make test` includes a real-object multi-context regression; the marshalling
+# aborted the VM, STEAMAC-6Z/70). The provenance registry grows instead of silently losing exports
+# beyond 65536 live objects: 1.9.8 missed encoders retained in virtual pools after that limit.
+# Registry growth logs the capacity/live count so a recurrence shows whether saturation was involved.
+# Late encoders on committed command buffers and Objective-C exceptions lose only that context.
+# `make test` includes a real-object saturation/open-encoder teardown regression; the marshalling
 # loopback still uses fake handles.
 # wmtr_dxmt_test drives DXMT's own guest API (winemetal_thunks.c) over the wmtr client into the
 # production libwmtr_host (DXMT's winemetal_unix.c, validation on, real Metal): blit, compute and

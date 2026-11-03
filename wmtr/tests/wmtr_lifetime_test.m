@@ -20,8 +20,14 @@ static NTSTATUS command_buffer(void *p) {
   ((struct unixcall_generic_obj_obj_ret *)p)->ret = (uint64_t)[(id<MTLCommandQueue>)((struct unixcall_generic_obj_obj_ret *)p)->handle commandBuffer]; return 0;
 }
 static NTSTATUS queue(void *p) { ((struct unixcall_generic_obj_ret *)p)->ret = (uint64_t)[[MTLCreateSystemDefaultDevice() newCommandQueue] autorelease]; return 0; }
+static NTSTATUS blit_encoder(void *p) {
+  dispatched++;
+  struct unixcall_generic_obj_obj_ret *args = p;
+  args->ret = (uint64_t)[(id<MTLCommandBuffer>)args->handle blitCommandEncoder];
+  return 0;
+}
 static NTSTATUS bad_string(void *p) { char buffer[8]; [(id)((struct unixcall_nsstring_getcstring *)p)->str getCString:buffer maxLength:sizeof buffer encoding:NSUTF8StringEncoding]; return 0; }
-const void *wmtr_impl_funcs[WMTR_NCALLS] = {[0]=retain_object, [1]=release_object, [4]=make_owned, [5]=query, [53]=make_probe, [62]=queue, [11]=command_buffer, [30]=noop, [38]=noop, [8]=bad_string, [92]=query};
+const void *wmtr_impl_funcs[WMTR_NCALLS] = {[0]=retain_object, [1]=release_object, [4]=make_owned, [5]=query, [53]=make_probe, [62]=queue, [11]=command_buffer, [30]=blit_encoder, [38]=noop, [8]=bad_string, [92]=query};
 uint64_t wmtr_test_present_create_view(void *c, uint64_t hwnd, void *dev, uint64_t *layer) { return 0; }
 void wmtr_test_present_release_view(void *c, uint64_t v) {}
 static void *blob(void *ctx, uint32_t n, uint64_t *size) { *size = WMTR_RING_BLOB_BYTES; return n ? NULL : ctx; }
@@ -104,6 +110,19 @@ int main(void) { @autoreleasepool {
   struct unixcall_generic_obj_obj_ret enc={cb.ret,0}; before=dispatched;
   CHECK(call(a,30,&enc,sizeof enc)==STATUS_INVALID_PARAMETER && enc.ret==0 && dispatched==before && a->faulted);
   destroy_host(a);
+  /* 1.9.8 silently stopped registering objects at 65536 live handles. An encoder created after
+   * that limit still entered the virtual pool, but teardown could not find and end it. Use real
+   * objects and a real Metal encoder: before the fix destroy aborts in vpool_pop with
+   * "Command encoder released without endEncoding", exactly STEAMAC-6Z/70. */
+  a=new_host();
+  CHECK(call(a,10,&pa,sizeof pa)==0);
+  for (uint32_t i=0; i<WMTR_HANDLE_SLOTS; i++) CHECK(call(a,4,&owned,sizeof owned)==0);
+  CHECK(alive==WMTR_HANDLE_SLOTS);
+  qr=(struct unixcall_generic_obj_ret){0}; CHECK(call(a,62,&qr,sizeof qr)==0);
+  cb=(struct unixcall_generic_obj_obj_ret){qr.ret,0}; CHECK(call(a,11,&cb,sizeof cb)==0);
+  enc=(struct unixcall_generic_obj_obj_ret){cb.ret,0}; CHECK(call(a,30,&enc,sizeof enc)==0 && enc.ret);
+  destroy_host(a);
+  CHECK(alive==0);
   printf("wmtr_lifetime_test: %s\n", failures ? "FAILED" : "all passed");
   return failures != 0;
 } }
