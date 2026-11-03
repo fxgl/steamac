@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000045 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@localhost>
+Date: Tue, 3 Nov 2026 18:00:00 +0300
+Subject: [PATCH] Back imported optimal image aliases with a placement heap
+
+STEAMAC-76/77: TF2 crashed in MVKImageViewPlane::newMTLTexture after
+a GPU page fault. The alias path dereferences getHeapAllocation() after
+a release-build assertion. ensureMTLHeap() succeeds without creating a
+heap for imported host memory or an existing Metal buffer. Venus imports
+host-visible allocations, leaving optimal 3D textures standalone and their
+2D render views without the heap this path requires. A host-imported volume
+clear reproduces the same null dereference on M1 Max (exit 139).
+
+Keep the existing separate optimal-image backing and host flush/pull copies,
+but allocate that backing in an image-owned placement heap when aliases need
+one. Ordinary heap-backed images remain unchanged. Diagnose other unsupported
+alias backings instead of dereferencing null. Regression volume_views clears
+slice 1 through dynamic rendering and reads the original 3D texture back.
+
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.h b/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.h
+@@ -93,6 +93,7 @@
+     std::unordered_map<NSUInteger, id<MTLTexture>> _mtlTextureViews;
+     MVKSmallVector<MVKImageSubresource, 1> _subresources;
+     HeapAllocation _heapAllocation;
++    id<MTLHeap> _ownedAliasHeap = nil;
+ };
+ 
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+@@ -47,11 +47,11 @@
+         MVKImageMemoryBinding* memoryBinding = getMemoryBinding();
+ 		MVKDeviceMemory* dvcMem = memoryBinding->_deviceMemory;
+ 
+-        if (_image->_is2DViewOn3DImageCompatible && !dvcMem->ensureMTLHeap()) {
+-            MVKAssert(0, "Creating a 2D view of a 3D texture currently requires a placement heap, which is not available.");
+-        }
+-        if (_image->_isBlockTexelViewCompatible && !dvcMem->ensureMTLHeap()) {
+-            MVKAssert(0, "Creating an uncompressed view of a compressed texture currently requires a placement heap, which is not available.");
++        const bool needsAliasHeap = _image->_is2DViewOn3DImageCompatible || _image->_isBlockTexelViewCompatible;
++        if (needsAliasHeap && !dvcMem->ensureMTLHeap()) {
++            reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "Could not allocate placement heap for image aliases.");
++            [mtlTexDesc release];
++            return nil;
+         }
+ 
+         id<MTLTexture> tex;
+@@ -87,7 +87,31 @@
+             // to its memory: the memory object wouldn't allow it.
+             tex = [dvcMem->_imageMemoryBindings[0]->_image->getMTLTexture(_planeIndex, mtlTexDesc.pixelFormat) retain];
+         } else {
+-            tex = [_image->getMTLDevice() newTextureWithDescriptor: mtlTexDesc];
++            if (needsAliasHeap) {
++                // Imported host memory (Venus) and memory already backed by a buffer cannot
++                // have a placement heap. Optimal images already use a separate Metal backing
++                // with flush/pull copies in that case. Put that backing in a placement heap so
++                // the 2D/3D and block-texel views alias it instead of dereferencing a null heap.
++                const auto sizeAlign = [_image->getMTLDevice() heapTextureSizeAndAlignWithDescriptor:mtlTexDesc];
++                MTLHeapDescriptor* heapDesc = [MTLHeapDescriptor new];
++                heapDesc.type = MTLHeapTypePlacement;
++                heapDesc.storageMode = mtlTexDesc.storageMode;
++                heapDesc.cpuCacheMode = mtlTexDesc.cpuCacheMode;
++                heapDesc.size = sizeAlign.size;
++                _ownedAliasHeap = [_image->getMTLDevice() newHeapWithDescriptor:heapDesc];
++                [heapDesc release];
++                _heapAllocation = { _ownedAliasHeap, 0, sizeAlign.size, sizeAlign.align };
++                tex = [_ownedAliasHeap newTextureWithDescriptor:mtlTexDesc offset:0];
++                if (!tex) {
++                    reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "Could not allocate image alias backing (%llu bytes).",
++                                (unsigned long long)sizeAlign.size);
++                    [_ownedAliasHeap release];
++                    _ownedAliasHeap = nil;
++                    _heapAllocation = {};
++                }
++            } else {
++                tex = [_image->getMTLDevice() newTextureWithDescriptor: mtlTexDesc];
++            }
+         }
+         if (tex.storageMode != MTLStorageModeMemoryless) {
+             _image->_device->makeResident(tex);
+@@ -135,6 +159,9 @@
+         dev->releaseMTLResourceAfterQueues(elem.second, false);
+     }
+     _mtlTextureViews.clear();
++    [_ownedAliasHeap release];
++    _ownedAliasHeap = nil;
++    _heapAllocation = {};
+ }
+ 
+ // Returns a Metal texture descriptor constructed from the properties of this image.
+@@ -1920,7 +1947,13 @@
+ 
+     if (is2dViewOf3d || isBlockTexelView) {
+         const auto heapAllocation = image->getHeapAllocation(_planeIndex);
+-        MVKAssert(heapAllocation, "Attempting to create a memory-aliased texture without a placement heap");
++        if (!heapAllocation) {
++            reportError(VK_ERROR_FORMAT_NOT_SUPPORTED,
++                        "Image alias requires a placement heap (format %d, type %d, view type %lu, plane %u).",
++                        image->getVkFormat(), image->getImageType(),
++                        (unsigned long)_imageView->_mtlTextureType, unsigned(_planeIndex));
++            return nil;
++        }
+ 
+         MTLTextureDescriptor* mtlTexDesc = image->newMTLTextureDescriptor(_planeIndex); // temp retain
+ 
