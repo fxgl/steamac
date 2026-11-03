@@ -1,0 +1,102 @@
+From: georgii pl <gp@fx.gl>
+Date: Tue, 3 Nov 2026 18:00:00 +0300
+Subject: [PATCH] MSL: Preserve dual-source index when packing fragment output components
+
+STEAMAC-75 reports a Metal pipeline missing color(0), index(1). Component-packed
+fragment outputs were merged by Location alone, dropping the secondary source
+and overwriting the primary value. Key packed interfaces by Location and Index,
+retain Index on their members, and use distinct secondary-source fixups.
+
+A Vulkan 1.1 validated GLSL reconstruction fails before with the exact reported
+Metal error. All four plain/packed primary/secondary combinations create a
+pipeline and read back the expected dual-source blend after this change. The
+event lacks fragment/blend state, so its exact triggering shader is unproven.
+
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -4185,10 +4185,12 @@
+ 	// Deal with Component decorations.
+ 	const InterfaceBlockMeta::LocationMeta *location_meta = nullptr;
+ 	uint32_t location = ~0u;
++	uint32_t index = get_decoration(var.self, DecorationIndex);
++	string index_suffix = index ? join("_index_", index) : "";
+ 	if (has_decoration(var.self, DecorationLocation))
+ 	{
+ 		location = get_decoration(var.self, DecorationLocation);
+-		auto location_meta_itr = meta.location_meta.find(location);
++		auto location_meta_itr = meta.location_meta.find((uint64_t(index) << 32) | location);
+ 		if (location_meta_itr != end(meta.location_meta))
+ 			location_meta = &location_meta_itr->second;
+ 	}
+@@ -4247,7 +4249,7 @@
+ 					for (uint32_t loc_off = 0; loc_off < array_size; loc_off++)
+ 					{
+ 						auto basetype = get_fragment_output_base_type(storage, location + loc_off, type);
+-						statement(ib_var_ref, ".m_location_", location + loc_off,
++						statement(ib_var_ref, ".m_location_", location + loc_off, index_suffix,
+ 						          vector_swizzle(type_components, start_component), " = ",
+ 						          to_fragment_output_value(type, basetype, join(to_name(var.self), "[", loc_off, "]")),
+ 						          ";");
+@@ -4256,7 +4258,7 @@
+ 				else
+ 				{
+ 					auto basetype = get_fragment_output_base_type(storage, location, type);
+-					statement(ib_var_ref, ".m_location_", location,
++					statement(ib_var_ref, ".m_location_", location, index_suffix,
+ 					          vector_swizzle(type_components, start_component), " = ",
+ 					          to_fragment_output_value(type, basetype, to_name(var.self)), ";");
+ 				}
+@@ -5871,13 +5873,14 @@
+ 						uint32_t array_size = 1;
+ 						if (!type.array.empty())
+ 							array_size = to_array_size_literal(type);
++						uint32_t index = get_decoration(var.self, DecorationIndex);
+ 
+ 						for (uint32_t location_offset = 0; location_offset < array_size; location_offset++)
+ 						{
+-							auto &location_meta = meta.location_meta[location + location_offset];
++							auto &location_meta = meta.location_meta[(uint64_t(index) << 32) | (location + location_offset)];
+ 							location_meta.num_components = max<uint32_t>(location_meta.num_components, component + type.vecsize);
+ 
+-							// For variables sharing location, decorations and base type must match.
++							// For variables sharing location and index, decorations and base type must match.
+ 							location_meta.base_type_id = type.self;
+ 							location_meta.flat = has_decoration(var.self, DecorationFlat);
+ 							location_meta.noperspective = has_decoration(var.self, DecorationNoPerspective);
+@@ -6278,7 +6281,8 @@
+ 	// unroll locations one by one and we will flatten output or input as necessary.
+ 	for (auto &loc : meta.location_meta)
+ 	{
+-		uint32_t location = loc.first;
++		uint32_t location = uint32_t(loc.first);
++		uint32_t index = uint32_t(loc.first >> 32);
+ 		auto &location_meta = loc.second;
+ 
+ 		uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+@@ -6290,8 +6294,10 @@
+ 			type_id = build_fragment_output_type(type_id, location_meta.num_components, basetype);
+ 		ib_type.member_types.push_back(type_id);
+ 
+-		set_member_name(ib_type.self, ib_mbr_idx, join("m_location_", location));
++		set_member_name(ib_type.self, ib_mbr_idx, join("m_location_", location, index ? join("_index_", index) : ""));
+ 		set_member_decoration(ib_type.self, ib_mbr_idx, DecorationLocation, location);
++		if (index)
++			set_member_decoration(ib_type.self, ib_mbr_idx, DecorationIndex, index);
+ 		mark_location_as_used_by_shader(location, get<SPIRType>(type_id), storage);
+ 
+ 		if (location_meta.flat)
+diff --git a/spirv_msl.hpp b/spirv_msl.hpp
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -1128,7 +1128,8 @@
+ 			bool centroid = false;
+ 			bool sample = false;
+ 		};
+-		std::unordered_map<uint32_t, LocationMeta> location_meta;
++		// Low 32 bits: Location. High 32 bits: dual-source Index.
++		std::unordered_map<uint64_t, LocationMeta> location_meta;
+ 		bool strip_array = false;
+ 		bool allow_local_declaration = false;
+ 	};

@@ -1,0 +1,117 @@
+From: georgii pl <gp@fx.gl>
+Date: Tue, 3 Nov 2026 18:00:00 +0300
+Subject: [PATCH] Retain Vulkan blend state and fragment source index in failed pipeline diagnostics
+
+STEAMAC-75 contains only truncated vertex MSL. Log the original Vulkan static
+color-blend attachment state on graphics pipeline failure and retain SPIR-V
+Index alongside Location and Component in reflected interfaces. This separates
+a lost secondary output from source-1 factors forwarded when Vulkan ignores
+them (disabled blending or MIN/MAX), without changing blending behavior.
+
+The normal and mesh Metal descriptor dump in patch 0047 supplies effective
+Metal state. Reflection regression covers all four plain/packed dual-source
+combinations; run.sh verifies static blend state on its expected link failure.
+
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -1297,6 +1297,24 @@
+ 	// or has a different numeric type (STEAMAC-2M), or losing all context for a Metal ICE (41).
+ 	if (!_hasValidMTLPipelineStates && getConfigurationResult() != VK_PIPELINE_COMPILE_REQUIRED) {
+ 		std::ostringstream diagnostic;
++		// Keep the caller's static blend values as well as the Metal descriptor. In Vulkan,
++		// disabled blending and MIN/MAX operations ignore factors that may still name source 1.
++		if (_isRasterizingColor && pCreateInfo->pColorBlendState) {
++			auto* blend = pCreateInfo->pColorBlendState;
++			auto* rendering = getRenderingCreateInfo(pCreateInfo);
++			diagnostic << "[mvk-msl] // Vulkan static blend logicOpEnable=" << blend->logicOpEnable
++					   << " logicOp=" << blend->logicOp << "\n";
++			for (uint32_t attachment = 0; attachment < blend->attachmentCount; attachment++) {
++				auto& color = blend->pAttachments[attachment];
++				diagnostic << "[mvk-msl] // Vulkan static blend attachment=" << attachment
++						   << " location=" << _colorAttachmentLocations[attachment]
++						   << " format=" << rendering->pColorAttachmentFormats[attachment]
++						   << " enabled=" << color.blendEnable << " writeMask=" << color.colorWriteMask
++						   << " rgbOp=" << color.colorBlendOp << " srcRGB=" << color.srcColorBlendFactor
++						   << " dstRGB=" << color.dstColorBlendFactor << " alphaOp=" << color.alphaBlendOp
++						   << " srcAlpha=" << color.srcAlphaBlendFactor << " dstAlpha=" << color.dstAlphaBlendFactor << "\n";
++			}
++		}
+ 		diagnostic << "[mvk-msl] // Failed graphics pipeline stage interfaces (SPIR-V BaseType values)\n";
+ 		auto logStage = [&](const char* label, MVKShaderModule* module,
+ 							const VkPipelineShaderStageCreateInfo* stage, spv::ExecutionModel model) {
+@@ -1314,7 +1332,7 @@
+ 				}
+ 				for (auto& var : variables) {
+ 					diagnostic << "[mvk-msl] // " << (input ? "in" : "out") << " location=" << var.location
+-							   << " component=" << var.component << " type=" << unsigned(var.baseType)
++							   << " component=" << var.component << " index=" << var.index << " type=" << unsigned(var.baseType)
+ 							   << " width=" << var.vecWidth << " builtin=" << unsigned(var.builtin)
+ 							   << " used=" << var.isUsed << " patch=" << var.perPatch << "\n";
+ 				}
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVReflection.h b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVReflection.h
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVReflection.h
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVReflection.h
+@@ -88,6 +88,9 @@
+ 
+ 		/** Whether this variable is actually used (read or written) by the shader. */
+ 		bool isUsed;
++
++		/** The dual-source color index (zero when not decorated). Retained for failure diagnostics. */
++		uint32_t index = 0;
+ 	};
+ 	typedef SPIRVShaderInterfaceVariable SPIRVShaderOutput;
+ 
+@@ -293,7 +296,7 @@
+ 	static inline uint32_t getShaderInterfaceStructMembers(const SPIRV_CROSS_NAMESPACE::CompilerReflection& reflect,
+ 														   Vi& vars, SPIRVShaderInterfaceVariable* pParentFirstMember,
+ 														   const SPIRV_CROSS_NAMESPACE::SPIRType* structType, spv::StorageClass storage,
+-														   bool patch, uint32_t loc) {
++														   bool patch, uint32_t loc, uint32_t index = 0) {
+ 		bool isUsed = true;
+ 		auto biType = spv::BuiltInMax;
+ 		SPIRVShaderInterfaceVariable* pFirstMember = nullptr;
+@@ -302,6 +305,8 @@
+ 			// Each member may have a location decoration. If not, each member
+ 			// gets an incrementing location based on the base location for the struct.
+ 			uint32_t cmp = 0;
++			uint32_t memberIndex = reflect.has_member_decoration(structType->self, mbrIdx, spv::DecorationIndex)
++				? reflect.get_member_decoration(structType->self, mbrIdx, spv::DecorationIndex) : index;
+ 			if (reflect.has_member_decoration(structType->self, mbrIdx, spv::DecorationLocation)) {
+ 				loc = reflect.get_member_decoration(structType->self, mbrIdx, spv::DecorationLocation);
+ 				cmp = reflect.get_member_decoration(structType->self, mbrIdx, spv::DecorationComponent);
+@@ -315,11 +320,11 @@
+ 			uint32_t elemCnt = (type->array.empty() ? 1 : type->array[0]) * type->columns;
+ 			for (uint32_t elemIdx = 0; elemIdx < elemCnt; elemIdx++) {
+ 				if (type->basetype == SPIRV_CROSS_NAMESPACE::SPIRType::Struct)
+-					loc = getShaderInterfaceStructMembers(reflect, vars, pFirstMember, type, storage, patch, loc);
++					loc = getShaderInterfaceStructMembers(reflect, vars, pFirstMember, type, storage, patch, loc, memberIndex);
+ 				else {
+ 					// The alignment of a structure is the same as the largest member of the structure.
+ 					// Consequently, the first flattened member of a structure should align with structure itself.
+-					vars.push_back({type->basetype, type->vecsize, loc, cmp, 0, biType, patch, isUsed});
++					vars.push_back({type->basetype, type->vecsize, loc, cmp, 0, biType, patch, isUsed, memberIndex});
+ 					auto& currOutput = vars.back();
+ 					if ( !pFirstMember ) { pFirstMember = &currOutput; }
+ 					pFirstMember->firstStructMemberAlignment = std::max(pFirstMember->firstStructMemberAlignment, getShaderOutputSize(currOutput));
+@@ -382,6 +387,7 @@
+ 				}
+ 				uint32_t loc = -1;
+ 				uint32_t cmp = 0;
++				uint32_t index = reflect.get_decoration(varID, spv::DecorationIndex);
+ 				if (reflect.has_decoration(varID, spv::DecorationLocation)) {
+ 					loc = reflect.get_decoration(varID, spv::DecorationLocation);
+ 				}
+@@ -399,9 +405,9 @@
+ 				for (uint32_t i = 0; i < elemCnt; i++) {
+ 					if (type->basetype == SPIRV_CROSS_NAMESPACE::SPIRType::Struct) {
+ 						SPIRVShaderInterfaceVariable* pFirstMember = nullptr;
+-						loc = getShaderInterfaceStructMembers(reflect, vars, pFirstMember, type, storage, patch, loc);
++						loc = getShaderInterfaceStructMembers(reflect, vars, pFirstMember, type, storage, patch, loc, index);
+ 					} else {
+-						vars.push_back({type->basetype, type->vecsize, loc, cmp, 0, biType, patch, isUsed});
++						vars.push_back({type->basetype, type->vecsize, loc, cmp, 0, biType, patch, isUsed, index});
+ 						loc = addSat(loc, 1);
+ 					}
+ 				}

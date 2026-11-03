@@ -147,4 +147,7 @@ xcrun -sdk macosx clang -fobjc-arc -framework Foundation -framework Metal \
 "$work/runtime" components "$work/components-runtime.metal"
 "$work/runtime" interpolant "$work/interpolant-components-runtime.metal"
 "$work/runtime" interpolant "$work/interpolant-chained-runtime.metal"
+
+# 75: primary and secondary component packing must retain distinct blend sources.
+sh "$here/sentry-75-dual-source.sh" "$spvc" "$work/dual-source"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'
