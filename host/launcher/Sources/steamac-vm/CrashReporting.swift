@@ -836,6 +836,24 @@ enum CrashReporting {
             || crash?.frames.last != "??? + 0x7b" {
             failures.append("crash report: \(crash?.summary ?? "nil")")
         }
+        let incomplete = Event(level: .fatal)
+        let native = Exception(value: "Signal 10, Code 1", type: "SIGBUS")
+        native.mechanism = Mechanism(type: "signal")
+        incomplete.exceptions = [native]
+        _ = scrub(event: incomplete)
+        if incomplete.tags?["process"] != role.rawValue || incomplete.tags?["native_crash_context"] != "incomplete" {
+            failures.append("native crash: tagless cached signal lost its cache-process identity")
+        }
+        if incomplete.tags?["device"] != nil || incomplete.tags?["macos"] != nil {
+            failures.append("native crash: current host mislabeled as historical crash host")
+        }
+        let complete = Event(level: .fatal)
+        complete.exceptions = [native]
+        complete.tags = ["process": "vm", "device": "old-device"]
+        _ = scrub(event: complete)
+        if complete.tags?["process"] != "vm" || complete.tags?["native_crash_context"] != nil {
+            failures.append("native crash: existing crash process identity overwritten")
+        }
         log("selftest-settings: exit check: force quit, crash report, disk image: "
             + (failures.isEmpty ? "ok" : failures.joined(separator: "; ")))
         return failures
@@ -865,6 +883,37 @@ enum CrashReporting {
         for _ in 0..<250 { _ = scanner.feed("[steamac-vm] unrelated breadcrumb") }
         if scanner.nativeException.first != exception || scanner.nativeException.last?.contains("_NSString_getCString") != true {
             failures.append("scanner: native exception reason or first-throw stack lost")
+        }
+        var pipeline = LineScanner()
+        let pipelineLines = ["[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Render pipeline compile failed (Error code 3):",
+                             "Compiler encountered an internal error.",
+                             "[mvk-msl] // Metal pipeline descriptor: alphaToCoverage=0",
+                             "[mvk-msl] // Pipeline failure MSL stage=0 entry=main bytes=4000 lines=140 capture=full"]
+            + (1...140).map { "[mvk-msl] \($0): vertex line \($0)" }
+            + ["[mvk-msl] // Pipeline failure MSL stage=4 entry=main bytes=20 lines=1 capture=full",
+               "[mvk-msl] 1: fragment float4 main() {}",
+               "[mvk-msl] // Vulkan static blend attachment=0 enabled=1",
+               "[mvk-msl] // Failed graphics pipeline stage interfaces",
+               "[mvk-msl] // fragment entry=main",
+               "[mvk-msl] // in location=0",
+               "[mvk-msl] // color-attachment 0 format=80"]
+        let pipelines = pipelineLines.flatMap { pipeline.feed($0) } + pipeline.flushPending()
+        if pipelines.count != 1 || pipelines.first?.extra["msl_stage_0"]?.contains("140: vertex line 140") != true
+            || pipelines.first?.extra["msl_stage_4"]?.contains("fragment float4 main") != true
+            || pipelines.first?.extra["msl_interfaces"]?.contains("color-attachment") != true
+            || pipelines.first?.extra["msl_interfaces"]?.contains("Vulkan static blend") != true
+            || pipelines.first?.extra["msl_interfaces"]?.contains("Metal pipeline descriptor") != true {
+            failures.append("scanner: later shader stages or pipeline interfaces lost after vertex source")
+        }
+        var capped = LineScanner()
+        let large = Array(pipelineLines.prefix(3))
+            + ["[mvk-msl] // Pipeline failure MSL stage=0 entry=main"]
+            + (1...1000).map { "[mvk-msl] \($0): " + String(repeating: "v", count: 80) }
+            + Array(pipelineLines.suffix(7))
+        let bounded = large.flatMap { capped.feed($0) } + capped.flushPending()
+        if bounded.first?.extra.values.contains(where: { $0.count > 8000 }) != false
+            || bounded.first?.extra["msl_stage_4"]?.contains("fragment float4 main") != true {
+            failures.append("scanner: per-stage shader source cap lost or crowded out fragment source")
         }
         log("selftest-settings: scanner check: \(LineScanner.teardownSample.count) teardown lines → no report, "
             + "\(LineScanner.fatalSample.count) fatal lines → one report each: "
@@ -908,6 +957,16 @@ enum CrashReporting {
 
     /// Last line of defence for every event (crash reports from earlier runs included).
     static func scrub(event e: Event) -> Event {
+        // STEAMAC-4: a minimal native signal report can lack the crash-time scope entirely.
+        // Caches are process-role-specific: this identity is safe even when uploading an old
+        // crash. Never backfill host/driver/boot tags from the current run.
+        if e.tags?["process"] == nil, e.threads?.isEmpty != false,
+           e.exceptions?.contains(where: { $0.mechanism?.type == "signal" && $0.stacktrace == nil }) == true {
+            var nativeTags = e.tags ?? [:]
+            nativeTags["process"] = role.rawValue
+            nativeTags["native_crash_context"] = "incomplete"
+            e.tags = nativeTags
+        }
         e.serverName = nil
         if let m = e.message { e.message = SentryMessage(formatted: scrub(m.formatted)) }
         if let u = e.user {
@@ -1033,7 +1092,46 @@ private struct LineScanner {
     /// error location.
     static let mslPrefix = "[mvk-msl] "
 
-    private var pending: (kind: CrashReporting.Kind, header: String, lines: [String], msl: [String])?
+    private final class Pending {
+        let kind: CrashReporting.Kind
+        let header: String
+        var lines: [String] = []
+        var msl: [String] = []
+        var stage: String?
+        var stages: [String: String] = [:]
+        var interfaces = ""
+
+        init(kind: CrashReporting.Kind, header: String) { self.kind = kind; self.header = header }
+
+        func appendMSL(_ text: String) {
+            if text.hasPrefix("// Metal pipeline descriptor:") || text.hasPrefix("// Vulkan static blend ")
+                || text.hasPrefix("// color-attachment ") {
+                if interfaces.count < 8000 { interfaces += (text + "\n").prefix(8000 - interfaces.count) }
+                return
+            }
+            let prefix = "// Pipeline failure MSL stage="
+            if text.hasPrefix(prefix),
+               let number = Int(text.dropFirst(prefix.count).prefix(while: { $0.isNumber })),
+               (0...63).contains(number), stages.count < 8 || stages[String(number)] != nil {
+                stage = String(number)
+            } else if text.hasPrefix("// Failed graphics pipeline stage interfaces") {
+                stage = nil
+            }
+            // Each extra field has its own 8K cap. A long vertex shader must never crowd out
+            // fragment/geometry source or the small descriptor/interface diagnostics (41/75).
+            if let stage {
+                let count = stages[stage, default: ""].count
+                if count < 8000 { stages[stage, default: ""] += (text + "\n").prefix(8000 - count) }
+            } else if !stages.isEmpty {
+                if interfaces.count < 8000 { interfaces += (text + "\n").prefix(8000 - interfaces.count) }
+            } else if msl.count < 120 {
+                msl.append(text)   // single shader-library compile diagnostics (no stage headers)
+            }
+        }
+
+        var hasMSL: Bool { !msl.isEmpty || !stages.isEmpty || !interfaces.isEmpty }
+    }
+    private var pending: Pending?
     private var multiSerial: Int?
     /// Newest multi-line message still open; CrashReporting reports it after a pause.
     var pendingSerial: Int? { multiSerial }
@@ -1063,19 +1161,17 @@ private struct LineScanner {
                 nativeException.append(String(line.prefix(500)))
             }
         }
-        if var p = pending {
+        if let p = pending {
             if p.kind == .pipelineCompile && line.hasPrefix(Self.mslPrefix) {
-                if p.msl.count < 120 { p.msl.append(String(line.dropFirst(Self.mslPrefix.count))) }
-                pending = p
+                p.appendMSL(String(line.dropFirst(Self.mslPrefix.count)))
                 return out
             }
             let continuation = !line.hasPrefix("[") && !line.hasPrefix("thread '")
-            if continuation && p.lines.count >= 6 && p.kind == .pipelineCompile && p.msl.isEmpty {
+            if continuation && p.lines.count >= 6 && p.kind == .pipelineCompile && !p.hasMSL {
                 return out   // more compiler output than the report keeps; the source may follow
             }
-            if continuation && p.lines.count < 6 && p.msl.isEmpty && !line.trimmingCharacters(in: .whitespaces).isEmpty {
+            if continuation && p.lines.count < 6 && !p.hasMSL && !line.trimmingCharacters(in: .whitespaces).isEmpty {
                 p.lines.append(line)
-                pending = p
                 if p.kind == .rustPanic { out.append(finish()) }
                 return out
             }
@@ -1170,7 +1266,7 @@ private struct LineScanner {
     private mutating func begin(_ kind: CrashReporting.Kind, _ header: String) {
         serial += 1
         multiSerial = serial
-        pending = (kind, header, [], [])
+        pending = Pending(kind: kind, header: header)
     }
 
     private mutating func finish() -> Finding {
@@ -1191,6 +1287,8 @@ private struct LineScanner {
             let head = p.msl.filter { !isContext($0) }, context = p.msl.filter(isContext)
             if !head.isEmpty { f.extra["msl_source"] = head.joined(separator: "\n") }
             if !context.isEmpty { f.extra["msl_error_context"] = context.joined(separator: "\n") }
+            for (stage, source) in p.stages { f.extra["msl_stage_" + stage] = source }
+            if !p.interfaces.isEmpty { f.extra["msl_interfaces"] = p.interfaces }
             return f
         }
     }

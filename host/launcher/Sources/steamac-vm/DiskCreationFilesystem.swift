@@ -14,8 +14,8 @@ enum DiskCreationFilesystem {
         var errorDescription: String? { localized ?? description }
     }
 
-    /// Includes failures after preflight: a drive can disappear, fill up, or change permissions
-    /// while desync or the disk writer runs. Match errno diagnostics only at their suffix.
+    /// Includes failures after preflight: a drive or cache directory can disappear, fill up,
+    /// or change permissions while desync or the disk writer runs. Match errno only at the suffix.
     static func rejection(_ error: Error) -> Rejection? {
         if let rejection = error as? Rejection { return rejection }
         let e = error as NSError
@@ -30,12 +30,14 @@ enum DiskCreationFilesystem {
                 return rejection(errno: EROFS, detail: "\(error)")
             case NSFileWriteOutOfSpaceError:
                 return rejection(errno: ENOSPC, detail: "\(error)")
+            case NSFileNoSuchFileError, NSFileReadNoSuchFileError:
+                return rejection(errno: ENOENT, detail: "\(error)")
             default: break
             }
         }
         guard error is OptionError else { return nil }
         let detail = "\(error)"
-        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, ENXIO, ENODEV, EIO] {
+        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, ENXIO, ENODEV, EIO, ENOENT] {
             if detail.lowercased().hasSuffix(": " + String(cString: strerror(code)).lowercased()) {
                 return rejection(errno: code, detail: detail)
             }
@@ -54,6 +56,8 @@ enum DiskCreationFilesystem {
             advice = String(localized: "The volume ran out of space while creating SteamOS. Free some space or choose another volume, then try again.")
         case ENXIO, ENODEV, EIO:
             advice = String(localized: "The drive disconnected or reported an I/O error. Check its connection and run Disk Utility First Aid, then try again; use another drive if the error continues.")
+        case ENOENT:
+            advice = String(localized: "A disk-creation file or folder is no longer available. Reconnect the drive and check that the destination and download cache have not been moved or deleted, then try again.")
         default: return nil
         }
         return Rejection("\(advice) (\(detail))", localized: "\(advice)\n\n\(detail)")

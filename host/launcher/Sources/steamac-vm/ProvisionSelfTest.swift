@@ -14,6 +14,8 @@ enum ProvisionSelfTest {
         func attempt(_ what: String, _ body: () throws -> Void) {
             do { try body() } catch { check(false, "\(what): \(error)") }
         }
+        let memoryFailures = MemoryRegionDiagnostics.selfCheck()
+        check(memoryFailures.isEmpty, "host memory-region diagnostics: \(memoryFailures)")
 
         // CRC32 (GPT) and SHA-512 crypt reference vectors (Drepper's specification).
         check(GPT.crc32(Array("123456789".utf8)) == 0xCBF4_3926, "crc32 check value")
@@ -112,7 +114,7 @@ enum ProvisionSelfTest {
         }
         check(CrashReporting.diskCreationReport(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotParseResponse)) != nil,
               "unexpected URLSession protocol failure remains reportable")
-        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, ENXIO, ENODEV, EIO] {
+        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, ENXIO, ENODEV, EIO, ENOENT] {
             let detail = "write /Volumes/test/steamos.img: \(String(cString: strerror(code)))"
             let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(code))
             let cocoa = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
@@ -123,6 +125,19 @@ enum ProvisionSelfTest {
             let desync = DiskCreator.desyncFailure(status: 1, output: ["Error: failed to store in local cache: \(detail.lowercased())"])
             check(desync is DiskCreationFilesystem.Rejection && CrashReporting.diskCreationReport(desync) == nil,
                   "desync filesystem condition is log-only: \(code)")
+        }
+        attempt("removed download-cache directory (STEAMAC-5D)") {
+            let fm = FileManager.default
+            let dir = NSTemporaryDirectory() + "steamac-removed-cache-\(UUID().uuidString)"
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try fm.removeItem(atPath: dir)
+            do {
+                try Data([1, 2, 3]).write(to: URL(fileURLWithPath: dir + "/rootfs.img.caibx"))
+                check(false, "writing into a removed cache must fail")
+            } catch {
+                check(DiskCreationFilesystem.rejection(error) != nil && CrashReporting.diskCreationReport(error) == nil,
+                      "removed cache/drive while extracting the index is explained and log-only")
+            }
         }
         check(DiskCreator.cacheRenameCollision(output: ["Error: failed to store in local cache: rename /cache/.tmp-cacnk.1 /cache/chunk.cacnk: file exists"])
               && !DiskCreator.cacheRenameCollision(output: ["Error: rename /rootfs /output: file exists"]),
@@ -162,7 +177,7 @@ enum ProvisionSelfTest {
                 close(fd)
                 check(false, "missing cache must fail")
             } catch {
-                check(CrashReporting.diskCreationReport(error) != nil, "unexpected lock filesystem error stays reportable")
+                check(CrashReporting.diskCreationReport(error) == nil, "removed cache while acquiring its lock is log-only")
             }
         }
 

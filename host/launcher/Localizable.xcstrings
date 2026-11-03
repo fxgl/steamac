@@ -2,6 +2,22 @@
   "sourceLanguage" : "en",
   "strings" : {
     "" : {},
+    "A disk-creation file or folder is no longer available. Reconnect the drive and check that the destination and download cache have not been moved or deleted, then try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл или папка для создания диска больше недоступны. Подключите диск заново и убедитесь, что папка назначения и кэш загрузки не перемещены и не удалены, затем повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建磁盘所需的文件或文件夹已不可用。请重新连接磁盘，确认目标文件夹和下载缓存未被移动或删除，然后重试。"
+          }
+        }
+      }
+    },
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
