@@ -76,5 +76,10 @@ rm -rf "$T"
 hdr "layer ($LAYER)"
 L=$(newloop -r "$LAYER"); LOOPS+=("$L")
 mnt "$L" "$M/layer" -t erofs -o ro
+for manager in system user; do
+    conf=usr/lib/systemd/$manager.conf.d/99-steamac-vcpu-affinity.conf
+    cmp "/src/guest/layer/$conf" "$M/layer/$conf"
+    echo "  $conf matches guest layer source"
+done
 (cd "$M/layer" && find . -not -type d | sort | sed 's/^/  /')
 echo "  $(cat "$M/layer/usr/lib/steamac/layer-release")"
