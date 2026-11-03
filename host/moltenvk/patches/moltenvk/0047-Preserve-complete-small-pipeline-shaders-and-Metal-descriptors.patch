@@ -1,0 +1,98 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] Preserve complete small pipeline shaders and failed Metal descriptors
+
+STEAMAC-41 retained only lines 1-80 and 134-172 of a 173-line, 5440-byte
+object shader. Its payload, draw bindings and entry point were lost, along
+with the linked mesh/fragment functions and descriptor state. Preserve all
+source (including templates and long lines) for shaders up to 32 KiB and
+512 lines, explicitly label full/excerpt capture, and retain the existing
+bounded excerpt for larger shaders. Log Metal render/mesh descriptor
+descriptions only on failure, through the existing numbered-MSL stream.
+No shader or successful-pipeline behavior changes.
+
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -1102,6 +1102,24 @@
+ 		_colorAttachmentLocations.push_back(pColorAttLocs ? pColorAttLocs[attIdx] : attIdx);
+ 	}
+ 	_hasRemappedAttachmentLocations = (attCnt && pColorAttLocs);
++}
++
++// The descriptor contains the actual linked functions, attachment/blend formats,
++// vertex layout or object/mesh limits. Capture it only after a Metal compile fails.
++static void logFailedMetalPipelineDescriptor(id descriptor) {
++	@autoreleasepool {
++		string out;
++		for (NSString* line in [[descriptor description] componentsSeparatedByString: @"\n"]) {
++			out += "[mvk-msl] // Metal pipeline descriptor: ";
++			out += line.UTF8String;
++			out += '\n';
++		}
++		for (size_t done = 0; done < out.size();) {
++			ssize_t written = write(STDERR_FILENO, out.data() + done, out.size() - done);
++			if (written <= 0) { break; }
++			done += size_t(written);
++		}
++	}
+ }
+ 
+ // Either returns an existing pipeline state or compiles a new one.
+@@ -1112,7 +1130,11 @@
+ 		MVKRenderPipelineCompiler* plc = new MVKRenderPipelineCompiler(this);
+ 		plState = plc->newMTLRenderPipelineState(plDesc);	// retained
+ 		plc->destroy();
+-		if ( !plState ) { _hasValidMTLPipelineStates = false; logFailedPipelineShaders(); }
++		if ( !plState ) {
++			_hasValidMTLPipelineStates = false;
++			logFailedMetalPipelineDescriptor(plDesc);
++			logFailedPipelineShaders();
++		}
+ 	}
+ 	return plState;
+ }
+@@ -1126,7 +1148,11 @@
+ 		MVKRenderPipelineCompiler* plc = new MVKRenderPipelineCompiler(this);
+ 		plState = plc->newMTLRenderPipelineState(plDesc);    // retained
+ 		plc->destroy();
+-		if ( !plState ) { _hasValidMTLPipelineStates = false; logFailedPipelineShaders(); }
++		if ( !plState ) {
++			_hasValidMTLPipelineStates = false;
++			logFailedMetalPipelineDescriptor(plDesc);
++			logFailedPipelineShaders();
++		}
+ 	}
+ 	return plState;
+ }
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+@@ -216,21 +216,25 @@
+ 		lines.emplace_back(msl.data() + offset, end - offset);
+ 		offset = end + 1;
+ 	}
++	// Small shaders must be replayable: omitting the middle loses the object-stage
++	// payload, bindings and entry point of geometry pipelines (STEAMAC-41).
++	const bool fullSource = msl.size() <= 32768 && lines.size() <= 512;
+ 	string out = "[mvk-msl] // Pipeline failure MSL stage=" + to_string(stage) +
+ 		" entry=" + _shaderConversionResultInfo.entryPoint.mtlFunctionName +
+-		" bytes=" + to_string(msl.size()) + " lines=" + to_string(lines.size()) + "\n";
++		" bytes=" + to_string(msl.size()) + " lines=" + to_string(lines.size()) +
++		" capture=" + (fullSource ? "full" : "excerpt") + "\n";
+ 	size_t head = 0, shared = 0;
+ 	for (size_t i = 0; i < lines.size(); i++) {
+-		// Keep shader structs and entry points, not generated helper templates.
+-		if (head < 80 && lines[i].substr(0, 9) == "template<") {
++		// Keep the existing bounded excerpt for large shaders only.
++		if (!fullSource && head < 80 && lines[i].substr(0, 9) == "template<") {
+ 			while (i + 1 < lines.size() && lines[i] != "}" && lines[i] != "};" &&
+ 				   !(lines[i].size() && lines[i].back() == '}')) { i++; }
+ 			continue;
+ 		}
+ 		bool threadgroup = lines[i].find("threadgroup ") != string_view::npos;
+-		if (head < 80 || i + 40 >= lines.size() || (threadgroup && shared < 16)) {
++		if (fullSource || head < 80 || i + 40 >= lines.size() || (threadgroup && shared < 16)) {
+ 			out += "[mvk-msl] " + to_string(i + 1) + ": ";
+-			out.append(lines[i].substr(0, 512));
++			out.append(fullSource ? lines[i] : lines[i].substr(0, 512));
+ 			out += '\n';
+ 			if (head < 80) { head++; }
+ 			if (threadgroup) { shared++; }

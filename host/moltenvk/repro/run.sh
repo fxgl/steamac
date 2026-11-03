@@ -337,6 +337,10 @@ if [ "$driver" = moltenvk ]; then
 	"$work/pipeline_limits" "$gspv" blend
 	build spec_ids
 	"$work/spec_ids" "$gspv"
+	# STEAMAC-76/77: imported optimal volumes still need placement-backed 2D aliases.
+	build volume_views
+	"$work/volume_views"
+	"$work/volume_views" plain
 	"$work/pipeline_limits" "$gspv" shared
 	compute_log=$work/compute-memory-log.txt
 	"$work/pipeline_limits" "$gspv" oversized 2> "$compute_log"
@@ -408,9 +412,14 @@ if [ "$driver" = moltenvk ]; then
 	"$work/msl_helpers" "$gspv" link-log 2> "$link_log"
 	if grep -q '^\[mvk-msl\] // vertex entry=main hash=' "$link_log" &&
 		grep -q '^\[mvk-msl\] // fragment entry=main hash=' "$link_log" &&
-		grep -q '^\[mvk-msl\] // in location=3 component=0 type=.* width=4 ' "$link_log" &&
-		grep -q '^\[mvk-msl\] // Pipeline failure MSL stage=.*bytes=.*lines=' "$link_log"; then
-		echo "OK graphics pipeline failure includes stage interfaces and bounded MSL source"
+		grep -q '^\[mvk-msl\] // in location=3 component=0 index=0 type=.* width=4 ' "$link_log" &&
+		grep -q '^\[mvk-msl\] // Pipeline failure MSL stage=0 .*capture=full' "$link_log" &&
+		grep -q '^\[mvk-msl\] // Pipeline failure MSL stage=4 .*capture=full' "$link_log" &&
+		grep -q '^\[mvk-msl\] [0-9][0-9]*: .*fullSourceMiddle' "$link_log" &&
+		grep -q '^\[mvk-msl\] [0-9][0-9]*: template<typename' "$link_log" &&
+		grep -q '^\[mvk-msl\] // Vulkan static blend attachment=0 .*enabled=0 ' "$link_log" &&
+		grep -q '^\[mvk-msl\] // Metal pipeline descriptor:' "$link_log"; then
+		echo "OK graphics pipeline failure includes interfaces, complete small MSL and Metal descriptor"
 	else
 		cat "$link_log"
 		echo "FAIL graphics pipeline failure lacks stage interfaces"
@@ -477,6 +486,8 @@ if [ "$driver" = kosmickrisp ]; then
 		exit 1
 	fi
 	echo "OK encoder_shapes: 100 shapes logged once over 30 frames, 300 shapes capped at 256"
+
+	REPRO_DRIVER=kosmickrisp "$here/metal-diagnostics.sh" "$kk"
 
 	# STEAMAC-5E/5F: block-edge and volume scratch copies with Metal validation.
 	build sentry-image-copy

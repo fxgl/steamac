@@ -13,6 +13,21 @@
 #   patches/moltenvk/     applied in order on MoltenVK (git format-patch series)
 #   patches/spirv-cross/  applied in order on SPIRV-Cross, passed to fetchDependencies
 #                         via --spirv-cross-root
+#   Local 1.9.8 follow-up:
+#   MoltenVK 0045 (STEAMAC-76/77): Venus HOST_ALLOCATION optimal 3D images had no
+#   placement heap for 2D aliases (TF2 MVKImageViewPlane::newMTLTexture crash).
+#   volume_views imported clear/readback reproduced SIGSEGV; placement-backed
+#   optimal storage preserves imported/plain dynamic-rendering slice contents.
+#   SPIRV-Cross 0051 (STEAMAC-75): packing outputs by Location alone lost Index=1,
+#   reproducing Metal's missing color(0), index(1) error. sentry-75-dual-source.sh
+#   validates all four plain/packed source combinations and reads blended pixels.
+#   MoltenVK 0046 retains Vulkan blend factors and reflected output indices on
+#   pipeline failure; sentry_75_reflection.cpp checks both indices on those SPVs.
+#   The exact event fragment/blend state was absent, so its cause remains unproven.
+#   MoltenVK 0047 (STEAMAC-41): a 173-line object shader lost its middle, bindings
+#   and entry point in bounded diagnostics. Preserve complete small shaders and
+#   failed Metal descriptors; run.sh's link-log checks templates, shader middle
+#   and descriptors. Diagnostic-only: no proven workaround for Apple's compiler.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -286,6 +301,14 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         (STEAMAC-57/41/R/3X: existing reports cannot prove the cause)"
 	echo "  0044 = steamac: Vulkan specialization IDs are translated through SPIRV-Cross's Metal index map,"
 	echo "         retained in serialized pipeline caches; unused IDs cannot alias compact indices (STEAMAC-6A)"
+	echo "  0045 = steamac: optimal images on imported host memory or existing buffers keep their separate"
+	echo "         backing in an image-owned placement heap, so 2D/3D aliases do not dereference a null heap;"
+	echo "         imported and ordinary volume slice render/readback regression (STEAMAC-76/77)"
+	echo "  0046 = steamac: failed graphics pipelines retain static Vulkan blend state and reflected"
+	echo "         dual-source output indices (STEAMAC-75); reflection covers all four packed/plain pairs"
+	echo "  0047 = steamac: failed render/mesh pipelines include their Metal descriptors; shaders up to"
+	echo "         32 KiB/512 lines are complete, including helpers and the middle lost by 0043"
+	echo "         (STEAMAC-41: no proven compiler workaround; diagnostic capture regression)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"
@@ -380,6 +403,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         thread_scope_subgroup), fixing MSL 3.2 shader compilation (STEAMAC-5C)"
 	echo "  0050 = steamac: pull-model interpolation retains component swizzles and interface members through"
 	echo "         pointer copies and split access chains (STEAMAC-6V: float initialized from float4 centroid result)"
+	echo "  0051 = steamac: component-packed fragment outputs use both Location and Index, preserving"
+	echo "         source 1 and distinct fixups (STEAMAC-75); four validated shaders render expected blend pixels"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"
