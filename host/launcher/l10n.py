@@ -60,6 +60,12 @@ def units(localization):
                 yield f"{kind}.{case}{'.' + path if path else ''}", unit
 
 
+def dump_catalog(catalog):
+    """The catalog in xcstringstool's own formatting (sorted keys, `"key" : value`), so a rewrite
+    changes only the keys that changed."""
+    return json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : "), sort_keys=True) + "\n"
+
+
 def needs_translation(key, entry):
     return entry.get("shouldTranslate", True) and re.search(r"[A-Za-z]{2}", SPEC.sub("", key))
 
@@ -78,7 +84,7 @@ def sync(directory):
     if stale:
         for k in stale:
             del catalog["strings"][k]
-        CATALOGS[0].write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n")
+        CATALOGS[0].write_text(dump_catalog(catalog))
         run()
         print(f"l10n: removed {len(stale)} key(s) no longer in the code: {stale}")
 

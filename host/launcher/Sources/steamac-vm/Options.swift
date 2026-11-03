@@ -31,12 +31,36 @@ struct Options {
     /// (kernel cmdline steamac.share=PATH; the initramfs creates a runtime mount unit for it).
     var shareMount = Options.defaultShareMount
     static let defaultShareMount = "/home/steamos/MacShare"
-    /// Absolute, no "." or ".." components, only [A-Za-z0-9/_.-] (what the initramfs accepts).
+    static func isReadableFolder(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+            && FileManager.default.isReadableFile(atPath: path)
+    }
+    /// Where a share may be mounted: a subdirectory of one of these (never the directory itself,
+    /// so no system directory is mounted over).
+    static let shareMountRoots = ["/home/steamos/", "/mnt/", "/media/"]
+    /// The same check as the initramfs ("shared folder" section): a subdirectory of
+    /// `shareMountRoots`, no empty, "." or ".." components, only [A-Za-z0-9/_.-].
     static func isValidShareMount(_ p: String) -> Bool {
-        guard p.hasPrefix("/"), p.count > 1, !p.hasSuffix("/"),
-              p.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "/_.-").contains($0) || CharacterSet.alphanumerics.contains($0) && $0.isASCII })
+        guard shareMountRoots.contains(where: { p.hasPrefix($0) && p.count > $0.count }),
+              !p.hasSuffix("/"),
+              p.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "/_.-".unicodeScalars.contains($0)) })
         else { return false }
-        return !p.split(separator: "/").contains { $0 == "." || $0 == ".." }
+        return !p.split(separator: "/", omittingEmptySubsequences: false).dropFirst().contains { $0.isEmpty || $0 == "." || $0 == ".." }
+    }
+
+    /// --selftest-settings: the validator agrees with the initramfs on what it accepts.
+    static func shareMountSelfCheck() -> [String] {
+        var failures: [String] = []
+        for good in ["/home/steamos/MacShare", "/home/steamos/Games/Mac-1", "/mnt/mac", "/media/mac/.cache"] where !isValidShareMount(good) {
+            failures.append("share mount: \(good) rejected")
+        }
+        for bad in ["", "/", "/home", "/home/steamos", "/home/steamos/", "/mnt", "/usr/mac", "/etc", "/home/steamos//x",
+                    "/home/steamos/../x", "/home/steamos/./x", "/home/steamos/My Games", "~/Games", "/home/steamos/x/",
+                    "/home/steamos/é", "/home/steamos/a:b", "/home/steamosx"] where isValidShareMount(bad) {
+            failures.append("share mount: \(bad) accepted")
+        }
+        return failures
     }
     /// Settings > Advanced, --cpus / --mem, else automatic for this Mac (VMSizing; applySettings).
     var cpus = VMSizing.autoCPUs(.current)
@@ -169,11 +193,11 @@ struct Options {
                            steamac.ssh/steam_client/tz are added unless STR sets them)
       --disk PATH[:ro]     raw virtio-blk disk; repeatable, order = vda, vdb, ...
       --share DIR          expose the Mac folder DIR to SteamOS as the virtio-fs device tagged "macshare"
-                           (in the guest: mount -t virtiofs macshare /mnt; default: Settings > Advanced
-                           "Shared folder", none unless chosen)
+                           (default: Settings > Advanced "Shared folder", none unless chosen). virtio-fs does
+                           not confine the guest to DIR: root in SteamOS may reach what this Mac user can read
       --share-mount PATH   where SteamOS mounts the shared folder (default: Settings > Advanced "Mount point in
-                           SteamOS", /home/steamos/MacShare); kernel cmdline steamac.share=PATH, the initramfs
-                           creates a mount unit for it on every boot
+                           SteamOS", /home/steamos/MacShare): a subdirectory of /home/steamos/, /mnt/ or /media/;
+                           kernel cmdline steamac.share=PATH, the initramfs creates a mount unit for it on every boot
       --no-share           no shared folder this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
                            cores, 2..8)
@@ -577,7 +601,16 @@ struct Options {
         if given("--share") || given("--no-share") {
             ov[.sharedFolder] = share.map { "--share \($0)" } ?? "--no-share"
         } else {
-            share = s.sharedFolder.isEmpty ? nil : s.sharedFolder
+            // Like the DXMT library: a folder that is gone (external drive unplugged, renamed)
+            // must not stop the launcher; boot without the share and say so.
+            share = nil
+            if !s.sharedFolder.isEmpty {
+                if Options.isReadableFolder(s.sharedFolder) {
+                    share = s.sharedFolder
+                } else {
+                    log("shared folder \(s.sharedFolder): not a readable folder; booting without the share")
+                }
+            }
         }
         if given("--share-mount") {
             ov[.sharedMount] = "--share-mount \(shareMount)"
@@ -643,13 +676,9 @@ struct Options {
         }
         if disks.count > 26 { throw OptionError("at most 26 disks") }
         if let share {
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: share, isDirectory: &isDir), isDir.boolValue,
-                  FileManager.default.isReadableFile(atPath: share) else {
-                throw OptionError("--share: not a readable folder: \(share)")
-            }
+            guard Options.isReadableFolder(share) else { throw OptionError("--share: not a readable folder: \(share)") }
             guard Options.isValidShareMount(shareMount) else {
-                throw OptionError("--share-mount: absolute path without . or .. components, characters A-Z a-z 0-9 / _ . - only: \(shareMount)")
+                throw OptionError("--share-mount: a subdirectory of \(Options.shareMountRoots.joined(separator: ", ")), no . or .. components, characters A-Z a-z 0-9 / _ . - only: \(shareMount)")
             }
         }
     }

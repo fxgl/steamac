@@ -265,7 +265,7 @@ Steam Link и Mac должны находиться в **одной подсет
 | Контроллер | какой физический контроллер (GameController) ведёт виртуальный pad (первый подключённый или выбранный), получает ли SteamOS pad и каким он виден (`--no-gamepad`, `--pad`, см. «Контроллер»), передаётся ли DualSense как есть, становятся ли остальные контроллеры игроками 2–4, A/B и X/Y местами, мёртвая зона стиков, живой тест ввода | — |
 | Звук | устройство вывода (Как в системе следует за macOS или конкретное CoreAudio-устройство), громкость/Выключить звук, буфер Низкий (10 мс)/Обычный (20 мс)/Надёжный (60 мс) — через `krun_snd_set_*` (ищутся `dlsym`; со старым libkrun поля выключены с пояснением) | звук (`--no-sound`) |
 | Игры | **Делиться статистикой игр** (выключено до вашего согласия, см. «Статистика игр»); известные игры и игры с записанными сеансами: отдельные профили (графика, Vulkan-драйвер, параметры запуска; см. ниже), число сеансов, время игры, FPS / 1% low / память игры / Vulkan-драйвер последнего сеанса, ваша необязательная оценка (Работает хорошо / Играбельно с проблемами / Запускается, но играть нельзя / Не запускается) и отдельный переключатель **Делиться** для каждой игры | для профиля может потребоваться перезапуск Steam или ВМ (см. ниже) |
-| Дополнительно | — | vCPU (`--cpus`), RAM (`--mem`), SSH вкл/выкл + порт (`--ssh-port`, `--no-ssh`) и сгенерированный пароль, сеть (`--no-net`), образ диска (`--disk`), Новый диск…, клиент Steam (`--steam-client`, см. «Клиент Steam»), Vulkan-драйвер (`--vulkan-driver`, см. «Vulkan-драйвер»), Разрешить DXMT (D3D11 через Metal на Mac), экспериментально (`--wmtr-lib`, `--no-wmtr`, см. «Vulkan-драйвер») |
+| Дополнительно | — | vCPU (`--cpus`), RAM (`--mem`), SSH вкл/выкл + порт (`--ssh-port`, `--no-ssh`) и сгенерированный пароль, сеть (`--no-net`), образ диска (`--disk`), Новый диск…, клиент Steam (`--steam-client`, см. «Клиент Steam»), Vulkan-драйвер (`--vulkan-driver`, см. «Vulkan-драйвер»), Разрешить DXMT (D3D11 через Metal на Mac), экспериментально (`--wmtr-lib`, `--no-wmtr`, см. «Vulkan-драйвер»), общая папка + точка монтирования в SteamOS (`--share`, `--share-mount`, `--no-share`, см. «Общая папка») |
 
 **ОЗУ ВМ и графика используют одну память Mac.** Автоматический объём ОЗУ ВМ — половина
 физической памяти (4–16 GiB). При каждой загрузке лаунчер резервирует ещё минимум 3 GiB
@@ -478,6 +478,33 @@ Plasma через `zwlr_data_control_manager_v1` (`ext_data_control_manager_v1`,
 дисплее при его появлении (например, история, восстановленная Klipper), на Mac не отправляется —
 туда предлагается общее содержимое. В `--control-fifo` есть `chord KEYCODE ctrl` (например,
 `chord 9 ctrl` = Ctrl+V в госте) и `set shareClipboard on|off`.
+
+## Общая папка
+
+**Настройки → Дополнительно → Общая папка** (со следующего запуска) открывает SteamOS одну папку Mac
+как устройство virtio-fs с меткой `macshare`, монтируемое по пути **Точка монтирования в SteamOS**
+(по умолчанию `/home/steamos/MacShare`) при каждой загрузке. Файлы читаются и пишутся на месте,
+ничего не копируется: игры, хранящиеся на Mac, загружаются со скоростью диска Mac, а записанное из
+SteamOS сразу есть на Mac. По умолчанию выключено (папка не выбрана). Командная строка: `--share DIR`,
+`--share-mount PATH`, `--no-share` на один запуск.
+
+Лаунчер добавляет устройство через `krun_add_virtiofs4` (`KRUN_SEMANTICS_LINUX_SIMPLIFIED`: гость
+видит на каждом файле свои uid/gid, так что пользователь `steamos` читает и пишет без сопоставления
+владельцев; без окна DAX) и передаёт `steamac.share=PATH` в командной строке ядра. Initramfs
+(раздел «shared folder») проверяет путь — подкаталог `/home/steamos/`, `/mnt/` или `/media/`, без
+пустых компонентов, `.` и `..`, только `[A-Za-z0-9/_.-]` — и создаёт runtime-юнит монтирования
+(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`), wanted от
+`local-fs.target`: systemd создаёт каталог и монтирует; загрузка без устройства всё равно завершается.
+Юнит живёт только эту загрузку, как и runtime-маски юнитов. Папка, которой нет при запуске
+(внешний диск отключён, переименована), пишется в лог и пропускается — лаунчер стартует без общей
+папки; отказывается стартовать только явный `--share`. В настройках строка показана красным как
+не найденная.
+
+**Безопасность.** По модели безопасности libkrun virtio-fs не ограничивает гостя общей папкой: на
+macOS lookup не отфильтровывает `..`, а лаунчер не в песочнице. С включённой общей папкой root в
+SteamOS (всё, что получит там root: игра, Flatpak, эксплойт в Proton) потенциально может прочитать
+всё, что доступно вашему пользователю Mac, и писать туда, куда может он. Открывайте папку только
+той SteamOS, которой доверяете, и выключайте, когда она не нужна. SSH тут ни при чём.
 
 ## Контроллер
 
@@ -1236,7 +1263,7 @@ ID отчёта (первые 8 знаков ID события). Не удало
 | `host/launcher/` | `steamac-vm` (Swift/AppKit): окно на Metal (Сверхвысокое разрешение MetalFX по желанию), оверлей «FX STEAM LAUNCHER» с прогрессом загрузки/выключения, разрешение гостя = размер окна (× backing scale экрана с Разрешение Retina) при постоянном DPI (EDID из физического размера экрана), клавиатура/мышь/планшет, pad гостя Xbox 360 / DualSense / DualShock 4 из GameController.framework с вибрацией или DualSense, проброшенный как сырое HID-устройство (`fx.pad`), сеть через gvproxy, перезапуск ВМ при reboot гостя, `--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9, всё встроено, 4K-страницы, выравнивание blob-узлов по 16K, Apple TSO для FEX; uhid, hidraw и `hid-playstation` (с нужными ему классами LED) для проброшенного DualSense |
 | `guest/mesa/` | Из закреплённого Mesa: Venus ICD для aarch64 (Proton, gamescope, zink) и x86_64/i386 (FEX-провайдер графики); GL-стек zink (libgallium, GLX/EGL/GBM) поверх штатного в обоих, с бэкпортами из `guest/mesa/patches/` (Mesa 6abefa51: zink пересоздаёт pipeline, когда меняется только формат вершин; без `VK_EXT_vertex_input_dynamic_state`, которого нет у Venus на Metal, GL-игры иначе рисуют со старыми форматами вершин); x86_64-репортёр сбоев эмулируемых игр (`/usr/lib/steamac/x86_64/fault-report.so`) |
-| `guest/initramfs/` | загрузочный этап = «загрузчик»: выбор слота A/B со счётчиком попыток, partsets, оверлеи `/etc` и `/usr`; первичная подготовка диска, созданного лаунчером (`steamac.provision=1`: статические mkfs.fat, mke2fs, btrfstune в initramfs); `steamac.ssh=0` — без SSH-сервера; config-payload лаунчера (`steamac.config=1`) — новый пароль `steamos`; `steamac.tz=` — часовой пояс Mac в `/etc/localtime`; нетронутый procfs в `/run/steamac/proc` для песочниц Flatpak |
+| `guest/initramfs/` | загрузочный этап = «загрузчик»: выбор слота A/B со счётчиком попыток, partsets, оверлеи `/etc` и `/usr`; первичная подготовка диска, созданного лаунчером (`steamac.provision=1`: статические mkfs.fat, mke2fs, btrfstune в initramfs); `steamac.ssh=0` — без SSH-сервера; config-payload лаунчера (`steamac.config=1`) — новый пароль `steamos`; `steamac.tz=` — часовой пояс Mac в `/etc/localtime`; нетронутый procfs в `/run/steamac/proc` для песочниц Flatpak; `steamac.share=` — runtime-юнит монтирования общей папки (virtio-fs `macshare`, см. «Общая папка») |
 | `guest/layer/` | слой для ВМ поверх `/usr` (read-only erofs): файловый `splctl`, безопасный post-install для RAUC, `VARIANT_ID=steamdeck`, сессия gamescope на DRM, режим рабочего стола (Plasma внутри gamescope), маски сервисов железа Frame, агент прогресса `fx-progress-agent` (Rust, `guest/progress-agent/`, порт virtio-console `fx.progress`) и его root-сервисы (`fx.clock`, `fx.sleep`, uinput- или uhid-геймпад на `fx.pad`), быстрые таймауты выключения, режим входа в Steam с QR-кодом (клиент Steam Deck, пока нет запомненного аккаунта), опциональная ветка клиента Steam (`/etc/steamac/steam-client-branch`), фоновая обработка шейдеров Steam включена по умолчанию (`steam-shader-defaults`), заставка Steam при бездействии по умолчанию выключена (`steam-idle-screensaver`) |
 | `scripts/` | сборка `work/out/steamos.img`: GPT в разметке Valve (esp, efi-A/B, rootfs-A/B, var-A/B, home); `scripts/test/provision-test-disk.sh` — dev-проверка провижининга против диска из Docker; `scripts/test/vkd3d-tiled.sh` — dev-проверка D3D12 tiled resources и feature level насквозь (тесты vkd3d-proton из Proton 11.0, `d3d12-caps`, `vk-minmax`) во временной ВМ |
 

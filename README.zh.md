@@ -226,7 +226,7 @@ Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
 | 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，其余控制器是否成为玩家 2–4，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
 | 声音 | 输出设备（系统默认跟随 macOS，或指定 CoreAudio 设备），音量/静音，低（10 毫秒）/普通（20 毫秒）/稳定（60 毫秒）缓冲——经 `krun_snd_set_*`（`dlsym` 查找；旧 libkrun 下字段置灰并说明） | 声音（`--no-sound`） |
 | 游戏 | **共享游戏统计**（同意前关闭，见“游戏统计”）；已知游戏及已记录会话的游戏：单独配置（图形、Vulkan 驱动、启动选项，见下文）、会话数、游玩时间、上次会话的 FPS / 1% low / 游戏内存 / Vulkan 驱动、可选的个人评价（运行良好 / 可玩但有问题 / 能启动但无法游玩 / 无法启动）与每款游戏的**共享**开关 | 配置可能需要重启 Steam 或虚拟机（见下文） |
-| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”） |
+| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + SteamOS 中的挂载点（`--share`、`--share-mount`、`--no-share`，见“共享文件夹”） |
 
 **虚拟机内存与图形共享 Mac 的内存。** 自动分配的虚拟机内存为物理内存的一半（4–16 GiB）。
 每次启动还会为 macOS、其他应用和驱动开销预留至少 3 GiB 或宿主内存的四分之一，
@@ -367,6 +367,27 @@ gamescope、KWin 或 Klipper 重复宣告多少次。显示器出现时已有的
 Klipper 恢复的历史）不发往 Mac；共享内容改为在 Mac 侧提供。
 `--control-fifo` 有 `chord KEYCODE ctrl`（如 `chord 9 ctrl` = 客户机中 Ctrl+V）与
 `set shareClipboard on|off`。
+
+## 共享文件夹
+
+**设置 → 高级 → 共享文件夹**（下次启动生效）把一个 Mac 文件夹作为标签为 `macshare` 的 virtio-fs 设备提供给
+SteamOS，每次启动时挂载到 **SteamOS 中的挂载点**（默认 `/home/steamos/MacShare`）。文件就地读写，不复制：
+存放在 Mac 上的游戏以 Mac 磁盘的速度加载，SteamOS 写入的内容立即出现在 Mac 上。默认关闭（未选择文件夹）。
+命令行：`--share DIR`、`--share-mount PATH`，`--no-share` 仅本次启动。
+
+启动器通过 `krun_add_virtiofs4` 添加设备（`KRUN_SEMANTICS_LINUX_SIMPLIFIED`：客户机在每个文件上看到自己的
+uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗口），并在内核命令行传入
+`steamac.share=PATH`。initramfs（“shared folder” 一节）检查路径——`/home/steamos/`、`/mnt/` 或 `/media/`
+的子目录，无空组件、`.` 或 `..`，仅 `[A-Za-z0-9/_.-]`——并写入运行时挂载单元
+（`/run/systemd/system/<path>.mount`，`What=macshare`、`Type=virtiofs`、`TimeoutSec=15`），由
+`local-fs.target` wanted：systemd 创建目录并挂载；没有该设备也能正常启动。该单元仅在本次启动期间存在，
+与运行时单元屏蔽相同。启动时不存在的文件夹（外置硬盘已拔出、已改名）会记入日志并跳过——启动器不带共享
+启动；只有显式的 `--share` 才会拒绝启动。设置中该行以红色显示为未找到。
+
+**安全。** 按 libkrun 的安全模型，virtio-fs 不会把客户机限制在共享目录内：在 macOS 上 lookup 不过滤 `..`，
+启动器也未沙箱化。设置了共享后，SteamOS 中的 root（在其中取得 root 的任何东西：游戏、Flatpak、Proton
+漏洞）可能读取你的 Mac 用户能读取的任何内容，并写入该用户能写入的位置。仅与你信任的 SteamOS 共享，不需要时
+关闭共享。与 SSH 无关。
 
 ## 控制器
 
@@ -892,7 +913,7 @@ Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs
 | `host/launcher/` | `steamac-vm`（Swift/AppKit）：Metal 窗口（可选 MetalFX 超分辨率）、带开关机进度的“FX STEAM LAUNCHER”覆盖层、客户机分辨率 = 窗口大小（Retina 分辨率下 × 屏幕 backing scale）恒定 DPI（EDID 取自屏幕物理尺寸）、键盘/鼠标/平板、GameController.framework 的客户机 Xbox 360 / DualSense / DualShock 4 手柄带振动或 DualSense 裸 HID 直通（`fx.pad`）、gvproxy 网络、客户机重启则虚拟机重启、`--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9，全编入，4K 页，16K blob 节点对齐，FEX 用 Apple TSO；直通 DualSense 用的 uhid、hidraw 与 `hid-playstation`（含其所需 LED 类） |
 | `guest/mesa/` | 来自锁定的 Mesa：Venus ICD aarch64 版（Proton、gamescope、zink）与 x86_64/i386 版（FEX 图形提供方）；两者中替换原装的 zink GL 栈（libgallium、GLX/EGL/GBM），带 `guest/mesa/patches/` 中的回移植（Mesa 6abefa51：仅顶点布局变化时 zink 也重建管线；Metal 上的 Venus 缺 `VK_EXT_vertex_input_dynamic_state`，否则 GL 游戏会用过时的顶点格式绘制）；模拟游戏 x86_64 fault 上报器（`/usr/lib/steamac/x86_64/fault-report.so`） |
-| `guest/initramfs/` | 启动阶段 = “bootloader”：带尝试计数的 A/B 槽选择、partsets、`/etc` 与 `/usr` 覆盖；启动器创建磁盘的初始预配（`steamac.provision=1`：initramfs 中静态 mkfs.fat、mke2fs、btrfstune）；`steamac.ssh=0`——无 SSH 服务器；启动器配置载荷（`steamac.config=1`）——新 `steamos` 密码；`steamac.tz=`——`/etc/localtime` 中的 Mac 时区；Flatpak 沙箱用 untouched procfs `/run/steamac/proc` |
+| `guest/initramfs/` | 启动阶段 = “bootloader”：带尝试计数的 A/B 槽选择、partsets、`/etc` 与 `/usr` 覆盖；启动器创建磁盘的初始预配（`steamac.provision=1`：initramfs 中静态 mkfs.fat、mke2fs、btrfstune）；`steamac.ssh=0`——无 SSH 服务器；启动器配置载荷（`steamac.config=1`）——新 `steamos` 密码；`steamac.tz=`——`/etc/localtime` 中的 Mac 时区；Flatpak 沙箱用 untouched procfs `/run/steamac/proc`；`steamac.share=`——共享文件夹的运行时挂载单元（virtio-fs `macshare`，见“共享文件夹”） |
 | `guest/layer/` | `/usr` 上虚拟机层（只读 erofs）：文件化 `splctl`、RAUC 安全 post-install、`VARIANT_ID=steamdeck`、DRM 上 gamescope 会话、桌面模式（gamescope 嵌套 Plasma）、Frame 硬件服务屏蔽、`fx-progress-agent` 进度代理（Rust，`guest/progress-agent/`，`fx.progress` virtio-console 端口）与其 root 服务（`fx.clock`、`fx.sleep`、`fx.pad` 上 uinput 或 uhid 手柄）、短关机超时、二维码 Steam 登录模式（无记住账号时用 Steam Deck 客户端）、可选 Steam 客户端分支（`/etc/steamac/steam-client-branch`）、Steam 着色器后台处理默认开启（`steam-shader-defaults`）、Steam 空闲屏保默认关闭（`steam-idle-screensaver`） |
 | `scripts/` | 构建 `work/out/steamos.img`：Valve 分区布局的 GPT（esp、efi-A/B、rootfs-A/B、var-A/B、home）；`scripts/test/provision-test-disk.sh`——对照 Docker 磁盘的预配开发测试；`scripts/test/vkd3d-tiled.sh`——在临时虚拟机中端到端检查 D3D12 平铺资源与功能级别（Proton 11.0 的 vkd3d-proton 测试、`d3d12-caps`、`vk-minmax`） |
 

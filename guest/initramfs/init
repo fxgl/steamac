@@ -45,7 +45,8 @@
 #   steamac.ssh=0|1    0: no SSH server this boot (see "SSH switch"); 1/absent: as enabled
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
 #   steamac.clock24=0|1  Mac 12/24-hour format (layer mac-clock-format before Steam/Plasma)
-#   steamac.share=PATH mount the launcher's virtio-fs "macshare" at PATH (see "shared folder")
+#   steamac.share=PATH mount the launcher's virtio-fs "macshare" at PATH, a subdirectory of
+#                      /home/steamos/, /mnt/ or /media/ (see "shared folder")
 #   init=PATH          init in the new root (default /sbin/init)
 
 PATH=/bin
@@ -922,13 +923,13 @@ fi
 # required, by local-fs.target: a boot without the device still completes.
 SHARE=$(getarg steamac.share)
 if [ -n "$SHARE" ]; then
-    _ok=1
+    # Same rule as the launcher (Options.isValidShareMount): a subdirectory of /home/steamos/,
+    # /mnt/ or /media/ (never one of those themselves, so no system directory is mounted
+    # over), no empty, "." or ".." components, [A-Za-z0-9/_.-] only.
+    _ok=0
     case $SHARE in
-        /*/|/|*[!A-Za-z0-9/_.-]*) _ok=0 ;;
-        /*) for _c in $(IFS=/; echo $SHARE); do
-                case $_c in .|..) _ok=0 ;; esac
-            done ;;
-        *) _ok=0 ;;
+        */|*//*|*/.|*/..|*/./*|*/../*|*[!A-Za-z0-9/_.-]*) ;;
+        /home/steamos/?*|/mnt/?*|/media/?*) _ok=1 ;;
     esac
     if [ $_ok = 1 ]; then
         # systemd-escape --path: strip the leading /, "-" -> \x2d, "/" -> "-", a leading "." -> \x2e
@@ -949,7 +950,7 @@ EOF
         ln -sfn "../$_unit" "/run/systemd/system/local-fs.target.wants/$_unit"
         msg "shared folder: virtio-fs macshare at $SHARE ($_unit)"
     else
-        warn "ignoring steamac.share='$SHARE' (absolute path, no . or .. components, [A-Za-z0-9/_.-] only)"
+        warn "ignoring steamac.share='$SHARE' (a subdirectory of /home/steamos/, /mnt/ or /media/, no . or .. components, [A-Za-z0-9/_.-] only)"
     fi
 fi
 
