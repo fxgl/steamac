@@ -1,0 +1,54 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] kosmickrisp: diagnose render encoder aborts on Apple7 (STEAMAC-7Q)
+
+STEAMAC-7Q on M1/macOS 27.2 enters AGX render encoder creation through
+cs_start_render. Neither the original event nor its supervisor duplicate
+STEAMAC-3 contains an assertion, attachment or descriptor. The existing
+Apple9-only diagnostics skip M1. Log bounded render shapes on every GPU
+and record Metal allocated/recommended memory for the observed pressure
+(22,670 MiB footprint on a 16 GiB host). No rendering behavior changes.
+
+Diagnostic coverage regression: REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/metal-diagnostics.sh <dylib> fails on release 1.9.8
+(render=0), passes with this patch plus 0083 on M1 Max/macOS 27.0.1.
+This does not claim to reproduce or fix the AGX abort.
+---
+diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
+--- a/src/kosmickrisp/bridge/mtl_encoder.h
++++ b/src/kosmickrisp/bridge/mtl_encoder.h
+@@ -13,8 +13,8 @@
+ 
+ /* Common encoder utils */
+ /* MESA_KK_DEBUG=cbs logs every copy/render descriptor; otherwise each new
+- * shape is logged once per thread (at most 256) on Apple9+, or on any GPU with
+- * MESA_KK_DEBUG=shapes (M4 encoder crashes, STEAMAC-5E/5F/5H). */
++ * shape is logged once per thread (at most 256): rendering on every GPU,
++ * copies on Apple9+ or with MESA_KK_DEBUG=shapes (STEAMAC-7Q/5E/5F/5H). */
+ void mtl_encoder_set_log(bool every_call, bool new_shapes_any_gpu);
+ 
+ void mtl_end_encoding(void *encoder);
+diff --git a/src/kosmickrisp/bridge/mtl_encoder.m b/src/kosmickrisp/bridge/mtl_encoder.m
+--- a/src/kosmickrisp/bridge/mtl_encoder.m
++++ b/src/kosmickrisp/bridge/mtl_encoder.m
+@@ -165,8 +165,8 @@
+ encoder_log_render(id<MTL4CommandBuffer> command, MTL4RenderPassDescriptor *desc,
+                    uint32_t *hash)
+ {
+-   if (!encoder_diagnostics_enabled(command.device))
+-      return false;
++   /* STEAMAC-7Q aborts inside AGX render encoder creation on Apple7 too.
++    * Retain the bounded descriptor diagnostics on every supported GPU. */
+    MTLRenderPassAttachmentDescriptor *attachments[10];
+    struct attachment_shape {
+       struct encoder_texture_shape texture, resolve;
+@@ -202,6 +202,10 @@
+            *hash, encoder_thread_id(), (void *)command, shape.width, shape.height,
+            shape.layers, shape.samples, desc.depthAttachment.clearDepth,
+            (uint64_t)desc.stencilAttachment.clearStencil);
++   fprintf(stderr, "kk: encoder render memory allocated=%" PRIu64
++           " recommended=%" PRIu64 "\n",
++           (uint64_t)command.device.currentAllocatedSize,
++           (uint64_t)command.device.recommendedMaxWorkingSetSize);
+    for (unsigned i = 0; i < 10; ++i) {
+       MTLRenderPassAttachmentDescriptor *a = attachments[i];
+       if (!a.texture && !a.resolveTexture)

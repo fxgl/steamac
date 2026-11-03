@@ -1,0 +1,117 @@
+From: steamac <steamac@local>
+Date: Tue, 3 Nov 2026 17:30:00 +0000
+Subject: [PATCH] kk: reject impossible GPU timestamps in failure diagnostics (STEAMAC-G)
+
+Nine release timeout events have inconsistent GPU start/end timestamps,
+including 6501bc90: start 145536.279218, end 6148414588.946290.
+d49b81af also has a start 133903 seconds before commit. Preserve raw feedback
+but only label runtimes when bounded by commit/feedback (5 ms calibration
+tolerance). Do not equate a missing timestamp with work that never started.
+Standalone regression covers real sentinels, stale starts, NaN and valid clocks.
+No scheduling or command submission changes.
+
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -12,6 +12,7 @@
+ #include "kk_descriptor_set.h"
+ #include "kk_device.h"
+ #include "kk_entrypoints.h"
++#include "kk_gpu_time.h"
+ #include "kk_physical_device.h"
+ #include "kk_sparse.h"
+ #include "kk_sync.h"
+@@ -216,17 +217,12 @@
+              data->tag, app,
+              (data->feedback_time - data->commit_time) * 1000.0,
+              (now - dev->created_ns) / 1e9, committed, awaiting);
+-   if (data->gpu_start > 0.0) {
+-      mesa_loge("kk: it started %.1f ms after its commit and ran %.1f ms on "
+-                "the GPU (GPU start %.6f s, end %.6f s, commit %.6f s)",
+-                (data->gpu_start - data->commit_time) * 1000.0,
+-                (data->gpu_end - data->gpu_start) * 1000.0, data->gpu_start,
+-                data->gpu_end, data->commit_time);
+-   } else {
+-      mesa_loge("kk: it never started on the GPU (GPU start %.6f s, end "
+-                "%.6f s, commit %.6f s)",
+-                data->gpu_start, data->gpu_end, data->commit_time);
+-   }
++   char gpu_time[160];
++   kk_gpu_time_format(data->gpu_start, data->gpu_end, data->commit_time,
++                      data->feedback_time, gpu_time, sizeof(gpu_time));
++   mesa_loge("kk: it %s (GPU start %.6f s, end %.6f s, commit %.6f s, feedback %.6f s)",
++             gpu_time, data->gpu_start, data->gpu_end, data->commit_time,
++             data->feedback_time);
+    if (last_gpu_end > 0.0) {
+       mesa_loge("kk: the queue's last completed command buffer ended %.1f ms "
+                 "after this commit",
+diff --git a/src/kosmickrisp/vulkan/kk_gpu_time.h b/src/kosmickrisp/vulkan/kk_gpu_time.h
+new file mode 100644
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/kk_gpu_time.h
+@@ -0,0 +1,33 @@
++/* Copyright 2026 steamac
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef KK_GPU_TIME_H
++#define KK_GPU_TIME_H
++
++#include <math.h>
++#include <stddef.h>
++#include <stdio.h>
++
++/* Error feedback can contain stale or sentinel timestamps (STEAMAC-G).
++ * Keep the raw values in the caller, but never turn those into GPU durations.
++ * Permit small CPU/GPU clock calibration differences, not arbitrary runtimes. */
++static inline void
++kk_gpu_time_format(double start, double end, double commit, double feedback,
++                   char *out, size_t size)
++{
++   const double tolerance = 0.005;
++   if (start == 0.0) {
++      snprintf(out, size, "has no GPU start timestamp");
++   } else if (!isfinite(start) || !isfinite(commit) || !isfinite(feedback) ||
++              start < commit - tolerance || start > feedback + tolerance) {
++      snprintf(out, size, "has an inconsistent GPU start timestamp");
++   } else if (!isfinite(end) || end < start || end > feedback + tolerance) {
++      snprintf(out, size, "started %.1f ms after its commit; GPU end unavailable or inconsistent",
++               (start - commit) * 1000.0);
++   } else {
++      snprintf(out, size, "started %.1f ms after its commit and ran %.1f ms on the GPU",
++               (start - commit) * 1000.0, (end - start) * 1000.0);
++   }
++}
++
++#endif
+diff --git a/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+new file mode 100644
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+@@ -0,0 +1,27 @@
++/* Copyright 2026 steamac
++ * SPDX-License-Identifier: MIT
++ * Standalone: cc -std=c11 -Wall -Wextra -Werror steamac_gpu_diagnostics.c -o /tmp/kk-diag && /tmp/kk-diag
++ */
++#include "../kk_gpu_time.h"
++#include <assert.h>
++#include <string.h>
++
++int main(void)
++{
++   char text[192];
++   kk_gpu_time_format(100.001, 100.026, 100.0, 100.030, text, sizeof(text));
++   assert(strstr(text, "ran 25.0 ms"));
++   kk_gpu_time_format(100.001, 6148414588.946290, 100.0, 100.046, text, sizeof(text));
++   assert(strstr(text, "GPU end unavailable or inconsistent"));
++   assert(!strstr(text, "ran"));
++   kk_gpu_time_format(61521.381583, 195425.188578, 195424.685835, 195425.196, text, sizeof(text));
++   assert(strstr(text, "inconsistent GPU start"));
++   kk_gpu_time_format(0.0, 0.0, 100.0, 100.020, text, sizeof(text));
++   assert(strstr(text, "no GPU start timestamp"));
++   kk_gpu_time_format(NAN, INFINITY, 100.0, 100.020, text, sizeof(text));
++   assert(strstr(text, "inconsistent GPU start"));
++   kk_gpu_time_format(99.9985, 100.010, 100.0, 100.020, text, sizeof(text));
++   assert(strstr(text, "ran 11.5 ms"));
++
++   return 0;
++}

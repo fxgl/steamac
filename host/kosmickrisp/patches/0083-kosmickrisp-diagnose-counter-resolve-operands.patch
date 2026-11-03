@@ -1,0 +1,124 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] kosmickrisp: diagnose counter resolve operands (STEAMAC-7R)
+
+STEAMAC-7R dereferences NULL inside AGX resolveCounterHeap on macOS
+26.0 beta (25A5306g), through cs_end while ending rendering. The report
+contains no heap, range or destination. Both nil fences passed by KK are
+explicitly nullable in the Metal SDK. Do not guess which operand failed.
+
+Log the first 64 resolve call/return pairs per thread, then one cap note.
+Invalid input operands always log; MESA_KK_DEBUG=cbs logs every call.
+Include command/heap pointers, heap capacity/type, index/count and GPU
+destination address/length. The actual Metal call is unchanged.
+
+Diagnostic coverage regression: REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/metal-diagnostics.sh <dylib> fails on release 1.9.8
+(resolve=0), passes with 0082/0083: 64 bounded pairs and one cap note,
+200 full-trace pairs, 400 nonzero timestamps over 100 renderings.
+This does not claim to reproduce or fix the old beta driver crash.
+---
+diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.h b/src/kosmickrisp/bridge/mtl_command_buffer.h
+--- a/src/kosmickrisp/bridge/mtl_command_buffer.h
++++ b/src/kosmickrisp/bridge/mtl_command_buffer.h
+@@ -10,6 +10,9 @@
+ #include "mtl_types.h"
+ 
+ #include <stdint.h>
++#include <stdbool.h>
++
++void mtl_command_buffer_set_log(bool every_call);
+ 
+ void mtl_command_allocator_reset(mtl_command_allocator *allocator);
+ 
+diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.m b/src/kosmickrisp/bridge/mtl_command_buffer.m
+--- a/src/kosmickrisp/bridge/mtl_command_buffer.m
++++ b/src/kosmickrisp/bridge/mtl_command_buffer.m
+@@ -10,6 +10,18 @@
+ #include <Metal/MTL4CommandAllocator.h>
+ #include <Metal/MTL4CommandBuffer.h>
+ #include <Metal/MTL4Counters.h>
++
++#include <inttypes.h>
++#include <pthread.h>
++#include <stdio.h>
++
++static bool log_every_resolve;
++
++void
++mtl_command_buffer_set_log(bool every_call)
++{
++   log_every_resolve = every_call;
++}
+ 
+ void
+ mtl_command_allocator_reset(mtl_command_allocator *allocator)
+@@ -52,11 +64,37 @@
+          .bufferAddress = dst_addr,
+          .length = count * sizeof(MTL4TimestampHeapEntry),
+       };
++      /* STEAMAC-7R: AGX dereferences NULL while resolving on macOS 26.0 beta.
++       * Neither the heap/range nor the destination reached that crash report.
++       * Keep a bounded sample in release builds, full call/return pairs with
++       * cbs, and always report invalid operands without hiding the error. */
++      static _Thread_local unsigned logged;
++      const uint64_t capacity = h.count;
++      const bool invalid = !cmd_buf || !h || !dst_addr || !count ||
++         first_index > capacity || count > capacity - first_index;
++      const bool log = log_every_resolve || invalid || logged < 64;
++      uint64_t thread = 0;
++      if (log) {
++         pthread_threadid_np(NULL, &thread);
++         fprintf(stderr, "kk: counter resolve thread=%" PRIu64
++                 " cmd=%p heap=%p capacity=%" PRIu64 " type=%ld"
++                 " first=%u count=%u dst=0x%" PRIx64 " bytes=%" PRIu64
++                 " invalid=%u\n", thread, (void *)cmd_buf, (void *)h,
++                 capacity, (long)h.type, first_index, count, dst_addr,
++                 (uint64_t)range.length, invalid);
++      }
+       [cmd_buf resolveCounterHeap:h
+                         withRange:NSMakeRange(first_index, count)
+                        intoBuffer:range
+                         waitFence:nil
+                       updateFence:nil];
++      if (log) {
++         fprintf(stderr, "kk: counter resolve ready thread=%" PRIu64 "\n",
++                 thread);
++         if (!log_every_resolve && !invalid && ++logged == 64)
++            fprintf(stderr, "kk: counter resolve: 64 logged on thread %"
++                    PRIu64 ", use MESA_KK_DEBUG=cbs for every call\n", thread);
++      }
+    }
+ }
+ 
+diff --git a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
+--- a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
++++ b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
+@@ -5,6 +5,11 @@
+  */
+ 
+ #include "mtl_command_buffer.h"
++
++void
++mtl_command_buffer_set_log(bool every_call)
++{
++}
+ 
+ void
+ mtl_command_allocator_reset(mtl_command_allocator *allocator)
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -6,6 +6,7 @@
+ #include "util/u_debug.h"
+ 
+ #include "kosmickrisp/bridge/mtl_compiler.h"
++#include "kosmickrisp/bridge/mtl_command_buffer.h"
+ #include "kosmickrisp/bridge/mtl_encoder.h"
+ 
+ enum kk_debug kk_mesa_debug_flags = 0;
+@@ -46,4 +47,5 @@
+    kk_mesa_experimental_flags = debug_get_option_mesa_kk_experimental();
+    mtl_compiler_set_log(KK_DEBUG(COMPILES));
+    mtl_encoder_set_log(KK_DEBUG(CBS), KK_DEBUG(SHAPES));
++   mtl_command_buffer_set_log(KK_DEBUG(CBS));
+ }

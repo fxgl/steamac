@@ -1,0 +1,233 @@
+From: steamac <steamac@local>
+Date: Tue, 3 Nov 2026 17:31:00 +0000
+Subject: [PATCH] kk: retain bounded dispatch dimensions beyond program cap (STEAMAC-G)
+
+16 release command queue timeouts include Hang,PageFault,Timeout and innocent
+victims across 11 GPU models; the summaries omit dispatch sizes and drop up to
+388 program bindings. Keep the largest requested direct dispatch and last
+indirect kernel/local size/address independently of the first 8 programs. Never
+read GPU-written indirect counts on the CPU. Print at most 2 additional lines
+per failed/culprit command buffer. No dispatch behavior changes.
+
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -175,6 +175,8 @@
+                    "feedback, committed %.1f ms ago: %s",
+                    r->seq, app, (s->now - r->commit_ns) / 1e6, text);
+       }
++      if (culprit)
++         kk_cb_record_log_dispatches(&r->cb);
+       if (!strcmp(r->outcome, "Hang") && s->hangs < ARRAY_SIZE(s->hang))
+          s->hang[s->hangs++] = r->cb;
+    }
+@@ -234,6 +236,7 @@
+       char text[448];
+       kk_cb_record_format(&cb, text, sizeof(text));
+       mesa_loge("kk: it failed with %s and had %s", outcome, text);
++      kk_cb_record_log_dispatches(&cb);
+    }
+    if (data->error_info && !(recorded && strcmp(outcome, "ok") &&
+                              strstr(data->error_info, outcome)))
+diff --git a/src/kosmickrisp/vulkan/kk_cb_record.h b/src/kosmickrisp/vulkan/kk_cb_record.h
+--- a/src/kosmickrisp/vulkan/kk_cb_record.h
++++ b/src/kosmickrisp/vulkan/kk_cb_record.h
+@@ -59,6 +59,14 @@
+    bool pre_render;
+ };
+ 
++struct kk_dispatch_record {
++   uint32_t hash;
++   uint32_t groups[3];
++   uint32_t local[3];
++   uint64_t indirect_addr;
++   bool indirect;
++};
++
+ struct kk_cb_record {
+    uint16_t render_passes;
+    uint16_t msaa_render_passes;
+@@ -76,6 +84,10 @@
+    uint32_t ops;     /* BITFIELD_BIT(enum kk_cb_op) */
+    uint32_t precomp; /* BITFIELD_BIT(enum libkk_program) */
+    struct kk_cb_program programs[KK_CB_RECORD_PROGRAMS];
++   /* Bounded workload evidence, independent of the first-eight program cap.
++    * Indirect group counts are GPU data: never read them back on the CPU. */
++   struct kk_dispatch_record largest_direct, last_indirect;
++   uint64_t largest_direct_groups;
+ };
+ 
+ static inline void
+@@ -89,6 +101,25 @@
+ kk_cb_record_op(struct kk_cb_record *record, enum kk_cb_op op)
+ {
+    record->ops |= 1u << op;
++}
++
++static inline void
++kk_cb_record_dispatch(struct kk_cb_record *record,
++                       const struct kk_dispatch_record *dispatch)
++{
++   if (dispatch->indirect) {
++      record->last_indirect = *dispatch;
++      return;
++   }
++   uint64_t groups = (uint64_t)dispatch->groups[0] * dispatch->groups[1];
++   if (dispatch->groups[2] && groups > UINT64_MAX / dispatch->groups[2])
++      groups = UINT64_MAX;
++   else
++      groups *= dispatch->groups[2];
++   if (groups >= record->largest_direct_groups) {
++      record->largest_direct_groups = groups;
++      record->largest_direct = *dispatch;
++   }
+ }
+ 
+ void kk_cb_record_program(struct kk_cb_record *record,
+@@ -111,4 +142,6 @@
+ unsigned kk_cb_record_log_excerpts(const struct kk_cb_record *record,
+                                    unsigned max_lines);
+ 
++void kk_cb_record_log_dispatches(const struct kk_cb_record *record);
++
+ #endif /* KK_CB_RECORD_H */
+diff --git a/src/kosmickrisp/vulkan/kk_cb_record.c b/src/kosmickrisp/vulkan/kk_cb_record.c
+--- a/src/kosmickrisp/vulkan/kk_cb_record.c
++++ b/src/kosmickrisp/vulkan/kk_cb_record.c
+@@ -31,6 +31,21 @@
+       record->programs[record->program_count++] = *program;
+    else
+       kk_cb_record_count(&record->programs_dropped);
++}
++
++void
++kk_cb_record_log_dispatches(const struct kk_cb_record *record)
++{
++   const struct kk_dispatch_record *d = &record->largest_direct;
++   if (record->largest_direct_groups)
++      mesa_loge("kk: largest direct dispatch requested c:%08x groups=%ux%ux%u local=%ux%ux%u",
++                d->hash, d->groups[0], d->groups[1], d->groups[2],
++                d->local[0], d->local[1], d->local[2]);
++   d = &record->last_indirect;
++   if (d->indirect)
++      mesa_loge("kk: last indirect dispatch c:%08x local=%ux%ux%u address=0x%llx (GPU group counts unknown)",
++                d->hash, d->local[0], d->local[1], d->local[2],
++                (unsigned long long)d->indirect_addr);
+ }
+ 
+ /* The patterns nir_to_msl emits for each feature; a loop is
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_dispatch.c b/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
+--- a/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
+@@ -21,7 +21,7 @@
+  * nothing can be dispatched, and the command buffer carries the error
+  * (kk_cmd_shader_pipeline). */
+ static bool
+-kk_flush_compute_state(struct kk_cmd_buffer *cmd)
++kk_flush_compute_state(struct kk_cmd_buffer *cmd, struct kk_dispatch_record *shape)
+ {
+    mtl_compute_encoder *encoder = cs_get_compute(cmd);
+ 
+@@ -45,6 +45,12 @@
+    mtl_compute_set_pipeline_state(encoder, pipe->cs);
+    kk_cb_record_program(&cmd->record, &pipe->record);
+    kk_cb_record_count(&cmd->record.dispatches);
++   const struct mtl_size local = cmd->state.shaders[MESA_SHADER_COMPUTE]->info.cs.local_size;
++   shape->hash = pipe->record.hash[0];
++   shape->local[0] = local.x;
++   shape->local[1] = local.y;
++   shape->local[2] = local.z;
++   kk_cb_record_dispatch(&cmd->record, shape);
+    return true;
+ }
+ 
+@@ -90,6 +96,9 @@
+ 
+    struct kk_shader *cs = cmd->state.shaders[MESA_SHADER_COMPUTE];
+    struct mtl_size local_size = cs->info.cs.local_size;
++   struct kk_dispatch_record shape = {
++      .groups = {groupCountX, groupCountY, groupCountZ},
++   };
+ 
+    mtl_compute_encoder *encoder = cs_get_compute(cmd);
+    if (cmd->state.cond_render.enabled) {
+@@ -108,7 +117,7 @@
+       kk_predicate_compute(cmd, patched.gpu, patched.gpu);
+ 
+       /* Flush compute state after predication dispatch */
+-      if (!kk_flush_compute_state(cmd))
++      if (!kk_flush_compute_state(cmd, &shape))
+          return;
+       mtl_dispatch_threadgroups_with_indirect_buffer(encoder, patched.gpu,
+                                                      local_size);
+@@ -119,7 +128,7 @@
+          .z = groupCountZ * local_size.z,
+       };
+ 
+-      if (!kk_flush_compute_state(cmd))
++      if (!kk_flush_compute_state(cmd, &shape))
+          return;
+       mtl_dispatch_threads(encoder, grid_size, local_size);
+    }
+@@ -141,6 +150,10 @@
+ 
+    struct kk_shader *cs = cmd->state.shaders[MESA_SHADER_COMPUTE];
+    struct mtl_size local_size = cs->info.cs.local_size;
++   struct kk_dispatch_record shape = {
++      .indirect = true,
++      .indirect_addr = pInfo->addressRange.address,
++   };
+ 
+    kk_cb_record_count(&cmd->record.indirect_dispatches);
+    mtl_compute_encoder *encoder = cs_get_compute(cmd);
+@@ -154,12 +167,12 @@
+       kk_predicate_compute(cmd, patched.gpu, pInfo->addressRange.address);
+ 
+       /* Flush compute state after predication dispatch */
+-      if (!kk_flush_compute_state(cmd))
++      if (!kk_flush_compute_state(cmd, &shape))
+          return;
+       mtl_dispatch_threadgroups_with_indirect_buffer(encoder, patched.gpu,
+                                                      local_size);
+    } else {
+-      if (!kk_flush_compute_state(cmd))
++      if (!kk_flush_compute_state(cmd, &shape))
+          return;
+       mtl_dispatch_threadgroups_with_indirect_buffer(
+          encoder, pInfo->addressRange.address, local_size);
+diff --git a/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+--- a/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
++++ b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+@@ -2,6 +2,7 @@
+  * SPDX-License-Identifier: MIT
+  * Standalone: cc -std=c11 -Wall -Wextra -Werror steamac_gpu_diagnostics.c -o /tmp/kk-diag && /tmp/kk-diag
+  */
++#include "../kk_cb_record.h"
+ #include "../kk_gpu_time.h"
+ #include <assert.h>
+ #include <string.h>
+@@ -23,5 +24,24 @@
+    kk_gpu_time_format(99.9985, 100.010, 100.0, 100.020, text, sizeof(text));
+    assert(strstr(text, "ran 11.5 ms"));
+ 
++   struct kk_cb_record record = {0};
++   struct kk_dispatch_record shape = {.hash = 0x1234, .groups = {64, 32, 1}, .local = {8, 8, 1}};
++   kk_cb_record_dispatch(&record, &shape);
++   assert(record.largest_direct_groups == 2048);
++   assert(record.largest_direct.hash == 0x1234);
++   shape.hash = 0x5678;
++   shape.groups[0] = 1;
++   kk_cb_record_dispatch(&record, &shape);
++   assert(record.largest_direct.hash == 0x1234);
++   shape.indirect = true;
++   shape.indirect_addr = 0xabcd;
++   kk_cb_record_dispatch(&record, &shape);
++   assert(record.last_indirect.hash == 0x5678);
++   assert(record.last_indirect.indirect_addr == 0xabcd);
++   assert(record.largest_direct_groups == 2048);
++   shape.indirect = false;
++   shape.groups[0] = shape.groups[1] = shape.groups[2] = UINT32_MAX;
++   kk_cb_record_dispatch(&record, &shape);
++   assert(record.largest_direct_groups == UINT64_MAX);
+    return 0;
+ }
