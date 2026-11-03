@@ -195,8 +195,9 @@ struct Options {
                            controller", which applies while the VM runs)
       --pad TYPE           what the virtual gamepad is in SteamOS this run (default: Settings >
                            Controller): auto: the same kind as the controller that drives it
-                           (DualSense, DualShock 4, else Xbox 360); steamcontroller: a Steam
-                           Controller goes to SteamOS as itself, any other controller drives an
+                           (DualSense, DualShock 4, else Xbox 360), with a Steam Controller passed
+                           through as itself; steamcontroller: a Steam Controller goes to SteamOS
+                           as itself, any other controller drives an
                            Xbox 360 pad; xbox360: Microsoft X-Box 360 pad (xpad); dualsense,
                            dualshock4: Sony pad as the Linux hid-playstation / hid-sony drivers
                            expose it (PlayStation button glyphs in Steam). Any connected

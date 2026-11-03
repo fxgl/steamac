@@ -53,6 +53,8 @@ final class HIDPassthrough {
 
     final class Device {
         let ref: IOHIDDevice
+        /// Stable across IOHIDManager re-matching, unlike the newly created IOHIDDevice refs.
+        let registryID: UInt64
         let identity: Identity
         let maxInput: Int
         let maxFeature: Int
@@ -83,8 +85,9 @@ final class HIDPassthrough {
             return ProcessInfo.processInfo.systemUptime - t < HIDPassthrough.puckSlotTimeout
         }
 
-        init(ref: IOHIDDevice, identity: Identity, maxInput: Int, maxFeature: Int, puckSlot: Int? = nil) {
+        init(ref: IOHIDDevice, registryID: UInt64, identity: Identity, maxInput: Int, maxFeature: Int, puckSlot: Int? = nil) {
             self.ref = ref
+            self.registryID = registryID
             self.identity = identity
             self.maxInput = maxInput
             self.maxFeature = maxFeature
@@ -111,8 +114,8 @@ final class HIDPassthrough {
             // dropped (a full recreate is for an Input Monitoring grant).
             IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
             if !matchSteamControllers {
-                // Narrowing matching may not remove already-matched Valve devices; drop them
-                // ourselves. DualSenses stay open.
+                // Re-matching re-enumerates with new refs but sends no removals for the old
+                // ones. Drop excluded Valve devices ourselves; keep the open DualSense refs.
                 let before = devices.count
                 for d in devices where HIDPassthrough.isSteamController(d) {
                     d.onInput = nil
@@ -137,10 +140,14 @@ final class HIDPassthrough {
     /// Devices came or went.
     var onChange: (() -> Void)?
     private let io = DispatchQueue(label: "es.fxgam.steamac.hid-passthrough")
+    private var failedOpenCount = 0
+    private var loggedOpenFailures = false
 
     /// Start watching for supported devices; false if the IOHIDManager cannot be opened.
     @discardableResult
     func start() -> Bool {
+        failedOpenCount = 0
+        loggedOpenFailures = false
         let m = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
@@ -213,18 +220,28 @@ final class HIDPassthrough {
     }
 
     private func added(_ ref: IOHIDDevice, result: IOReturn) {
-        guard !devices.contains(where: { $0.ref == ref }) else { return }
+        guard let id = HIDPassthrough.registryID(ref),
+              !devices.contains(where: { $0.registryID == id }) else { return }
         // A device that did not open cannot be passed through (its reports are unavailable): a
         // Steam Controller opens only with Input Monitoring. Skip it; a grant recreates the
         // manager and this callback fires again with success.
         guard result == kIOReturnSuccess else {
-            log("hid passthrough: a device did not open: \(HIDPassthrough.describe(result))")
+            failedOpenCount += 1
+            if failedOpenCount == 1 {
+                // Matching callbacks arrive together; summarize all denied Puck interfaces once
+                // per manager start, rather than logging each interface separately.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.loggedOpenFailures else { return }
+                    self.loggedOpenFailures = true
+                    log("hid passthrough: \(self.failedOpenCount) devices did not open: \(HIDPassthrough.describe(result))")
+                }
+            }
             // A device that appeared after start (e.g. a Steam Controller connected later) never
             // reopens on its own: request access and recreate the manager once it is granted.
             if result == kIOReturnNotPermitted { awaitPermission() }
             return
         }
-        guard let d = HIDPassthrough.device(ref) else { return }
+        guard let d = HIDPassthrough.device(ref, registryID: id) else { return }
         devices.append(d)
         d.owner = self
         watch(d)
@@ -235,7 +252,8 @@ final class HIDPassthrough {
     }
 
     private func removed(_ ref: IOHIDDevice) {
-        guard let i = devices.firstIndex(where: { $0.ref == ref }) else { return }
+        guard let id = HIDPassthrough.registryID(ref),
+              let i = devices.firstIndex(where: { $0.registryID == id }) else { return }
         let d = devices.remove(at: i)
         if !devices.contains(where: { $0.puckSlot != nil }) { stopPuckTimer() }
         log("hid passthrough: \(d.identity.name) disconnected")
@@ -302,7 +320,15 @@ final class HIDPassthrough {
         isSteamController(d) && d.live
     }
 
-    private static func device(_ ref: IOHIDDevice) -> Device? {
+    /// Re-matching an open manager creates new refs for the same registry entries, without
+    /// removal callbacks for the old refs. Keep their open, scheduled Device until removal by ID.
+    static func registryID(_ ref: IOHIDDevice) -> UInt64? {
+        var id: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(ref), &id) == kIOReturnSuccess else { return nil }
+        return id
+    }
+
+    private static func device(_ ref: IOHIDDevice, registryID: UInt64) -> Device? {
         func int(_ key: String) -> Int? { (IOHIDDeviceGetProperty(ref, key as CFString) as? NSNumber)?.intValue }
         func string(_ key: String) -> String? { IOHIDDeviceGetProperty(ref, key as CFString) as? String }
         let transport = string(kIOHIDTransportKey) ?? "?"
@@ -335,7 +361,7 @@ final class HIDPassthrough {
                                 version: UInt16(truncatingIfNeeded: int(kIOHIDVersionNumberKey) ?? 0),
                                 country: UInt32(truncatingIfNeeded: int(kIOHIDCountryCodeKey) ?? 0),
                                 descriptor: [UInt8](descriptor), name: puckSlot != nil ? "Valve Steam Controller" : name)
-        return Device(ref: ref, identity: identity,
+        return Device(ref: ref, registryID: registryID, identity: identity,
                       maxInput: max(64, int(kIOHIDMaxInputReportSizeKey) ?? 0),
                       maxFeature: max(64, int(kIOHIDMaxFeatureReportSizeKey) ?? 0), puckSlot: puckSlot)
     }

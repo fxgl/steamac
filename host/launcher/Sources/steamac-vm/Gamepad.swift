@@ -208,7 +208,7 @@ private final class PadSlot {
     private(set) var controller: GCController?
     /// The uinput pad the guest has (created over the port), nil = none.
     private var guestPad: GuestPad?
-    /// The DualSense the guest has as itself (a uhid device), nil = none.
+    /// The DualSense or Steam Controller the guest has as itself (a uhid device), nil = none.
     private var guestHID: HIDPassthrough.Device?
     /// What the guest last got (or, without a uinput pad, the controller's last state).
     private var state = GamepadBridge.PadState()
@@ -525,10 +525,59 @@ private final class PadSlot {
         "pad \(index == 0 ? "" : "\(index + 1) ")\(current?.title ?? "none"), service \(serviceReady ? "ready" : "not ready")\(hidCapable ? " (hid)" : ""), "
             + "controller \(controller.map(GamepadBridge.logDisplayName(of:)) ?? "none"), rumble \(rumble.level.strong) \(rumble.level.weak)"
             + ", Home/PS \(GamepadBridge.homeDiagnostic(controller?.extendedGamepad?.buttonHome))"
-            + (hid.map { h in
-                let steam = h.devices.filter(HIDPassthrough.isSteamController).count
-                return ", HID DualSenses \(h.devices.count - steam), Steam Controllers \(steam), hid inputs \(hidInputs)"
-            } ?? "")
+            + ", hid inputs \(hidInputs)"
+    }
+}
+
+/// HID routing policy, independent of GameController and IOKit for the settings selftest.
+enum SteamControllerRouting {
+    /// GameController cannot identify which live Puck slot belongs to which controller.
+    static func puckPlayer(_ steamPlayers: [Int], liveSlots: Int) -> Int? {
+        steamPlayers.count == 1 && liveSlots == 1 ? steamPlayers[0] : nil
+    }
+
+    /// Keep connected BLE controllers on their players; only a new connection takes the lowest
+    /// free player. Losing a device (or disabling its player) releases that reservation.
+    static func blePlayers(previous: [UInt64: Int], devices: [UInt64], available: [Int]) -> [UInt64: Int] {
+        var next = previous.filter { devices.contains($0.key) && available.contains($0.value) }
+        for id in devices where next[id] == nil {
+            if let player = available.first(where: { !next.values.contains($0) }) { next[id] = player }
+        }
+        return next
+    }
+
+    static func selfCheck() -> [String] {
+        var failures: [String] = []
+        var checks = 0
+        func check(_ ok: Bool, _ name: String) {
+            checks += 1
+            if !ok { failures.append("Steam Controller routing: \(name)") }
+        }
+        check(puckPlayer([1], liveSlots: 1) == 1, "one Puck")
+        check(puckPlayer([0, 1], liveSlots: 1) == nil, "two GameController Steam Controllers")
+        check(puckPlayer([0], liveSlots: 2) == nil, "two live Puck slots")
+        check(puckPlayer([], liveSlots: 1) == nil, "no GameController Steam Controller")
+        check(puckPlayer([0], liveSlots: 0) == nil, "no live Puck")
+        let initial = blePlayers(previous: [:], devices: [10], available: [1, 2, 3])
+        check(initial == [10: 1], "BLE takes lowest free player")
+        let sticky = blePlayers(previous: initial, devices: [10], available: [0, 1, 2, 3])
+        check(sticky == initial, "player 1 disconnect does not move BLE up")
+        check(!availableControllerPlayer(1, blePlayers: sticky), "new GameController cannot take BLE player")
+        check(availableControllerPlayer(0, blePlayers: sticky), "new GameController may take lower free player")
+        let disconnected = blePlayers(previous: sticky, devices: [], available: [0, 1, 2, 3])
+        check(disconnected.isEmpty, "BLE disconnect frees player")
+        check(blePlayers(previous: disconnected, devices: [11], available: [0, 1, 2, 3]) == [11: 0],
+              "BLE reconnect takes lowest free player")
+        check(blePlayers(previous: sticky, devices: [10], available: []).isEmpty, "unusable players excluded")
+        check(blePlayers(previous: sticky, devices: [10, 20], available: [0, 1, 2, 3]) == [10: 1, 20: 0],
+              "second BLE does not displace first")
+        check(blePlayers(previous: [:], devices: [10], available: []).isEmpty, "no free player")
+        log("selftest-settings: Steam Controller routing: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
+        return failures
+    }
+
+    static func availableControllerPlayer(_ index: Int, blePlayers: [UInt64: Int]) -> Bool {
+        !blePlayers.values.contains(index)
     }
 }
 
@@ -544,7 +593,7 @@ private final class PadSlot {
 /// those services keeps the one pad, driven as before. A player keeps their controller until it
 /// disconnects (the others do not move up), and a reconnected controller takes the first free
 /// player. A Steam Controller on a free usable player is passed through the same way (Puck slot
-/// → that player's GameController controller; Bluetooth LE → lowest usable player without one).
+/// → that player's GameController controller when unambiguous; Bluetooth LE → sticky free player).
 final class GamepadBridge {
     /// Players at most: one PadPort each.
     static let maxPads = 4
@@ -556,6 +605,8 @@ final class GamepadBridge {
     private let settings: LauncherSettings
     private let typeOverride: LauncherSettings.PadType?
     private let hid: HIDPassthrough
+    /// BLE devices have no GameController object, but still occupy their player until disconnect.
+    private var blePlayers: [UInt64: Int] = [:]
     private var observers: [NSObjectProtocol] = []
     private var subscriptions: [AnyCancellable] = []
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
@@ -665,17 +716,18 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's Steam Controller device is assigned by `assignedSCDevice`: a Puck slot to
-        // the player whose GameController controller is the Puck, a Bluetooth LE controller to the
-        // lowest usable player without a GameController controller.
+        // Each player's Steam Controller device is assigned by `assignedSCDevice`: an unambiguous
+        // Puck slot to its GameController player, a BLE controller to its reserved player.
         for s in slots {
             let playerIndex = s.index
             s.steamControllerDevice = { [weak self] in self?.assignedSCDevice(for: playerIndex) }
         }
         hid.matchSteamControllers = matchesValveControllers
         hid.onChange = { [weak self] in
-            self?.reconcileAll()
+            self?.assignControllers()
         }
+        // Give already-connected GameController controllers their players before discovering BLE.
+        assignControllers()
         hid.start()
         GCController.startWirelessControllerDiscovery(completionHandler: nil)
         assignControllers()
@@ -698,27 +750,30 @@ final class GamepadBridge {
         return t == .auto || t == .steamController
     }
 
-    /// The Steam Controller HID device passed through to player `index`, if any. A Puck slot goes
-    /// to the player whose GameController controller is the Puck; a Bluetooth LE controller (which
-    /// GameController does not show) goes to the lowest usable player with no GameController
-    /// controller. Puck and BLE can be assigned at the same time to different players. Respects
-    /// `usable` so **Additional controllers** off keeps a BLE Steam Controller off players 2–4.
+    /// Reconcile BLE reservations only on topology/settings changes, never while querying a slot.
+    private func updateBLEPlayers() {
+        let devices = matchesValveControllers
+            ? hid.devices.filter { HIDPassthrough.isLiveSteamController($0) && $0.puckSlot == nil }.map(\.registryID) : []
+        let available = slots.indices.filter { usable($0) && slots[$0].controller == nil }
+        blePlayers = SteamControllerRouting.blePlayers(previous: blePlayers, devices: devices, available: available)
+    }
+
+    /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
+    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE uses reservations.
     private func assignedSCDevice(for index: Int) -> HIDPassthrough.Device? {
         guard matchesValveControllers, usable(index) else { return nil }
-        let live = hid.devices.filter(HIDPassthrough.isLiveSteamController)
-        guard !live.isEmpty else { return nil }
-        let puckPlayer = slots.firstIndex { $0.controller.map(GamepadBridge.isSteamController) ?? false }
-        if let puckSlot = live.first(where: { $0.puckSlot != nil }), index == puckPlayer {
-            return puckSlot
+        let steamPlayers = slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false }
+        let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
+        if SteamControllerRouting.puckPlayer(steamPlayers, liveSlots: livePuckSlots.count) == index {
+            return livePuckSlots.first
         }
-        let empty = slots.indices.filter { usable($0) && slots[$0].controller == nil }
-        guard let target = empty.min() else { return nil }
-        return index == target ? live.first(where: { $0.puckSlot == nil }) : nil
+        return hid.devices.first { blePlayers[$0.registryID] == index }
     }
 
     /// Release then create across every slot so one Steam Controller moving between players never
     /// briefly exists twice in the guest, and the old slot cannot clear the new slot's handler.
     private func reconcileAll() {
+        updateBLEPlayers()
         for s in slots { s.releaseIfUnwanted() }
         for s in slots { s.reconcile() }
     }
@@ -729,21 +784,25 @@ final class GamepadBridge {
     /// and free players get the remaining controllers in connection order.
     private func assignControllers() {
         let candidates = GamepadBridge.connected
+        updateBLEPlayers()
+        func available(_ index: Int) -> Bool {
+            SteamControllerRouting.availableControllerPlayer(index, blePlayers: blePlayers)
+        }
         let chosen = settings.controllerID.isEmpty ? nil
             : candidates.first { GamepadBridge.identifier(of: $0) == settings.controllerID }
         var next = [GCController?](repeating: nil, count: slots.count)
         if !slots.indices.dropFirst().contains(where: usable) {
-            next[0] = chosen ?? candidates.first
+            if available(0) { next[0] = chosen ?? candidates.first }
         } else {
             for (i, s) in slots.enumerated() where usable(i) {
                 if let c = s.controller, candidates.contains(where: { $0 === c }) { next[i] = c }
             }
             // Two controllers of one model have the same identifier: player 1 keeps a matching one.
-            if let chosen, next[0].map(GamepadBridge.identifier(of:)) != settings.controllerID {
+            if let chosen, available(0), next[0].map(GamepadBridge.identifier(of:)) != settings.controllerID {
                 if let j = next.firstIndex(where: { $0 === chosen }) { next[j] = next[0] }
                 next[0] = chosen
             }
-            for i in slots.indices where usable(i) && next[i] == nil {
+            for i in slots.indices where usable(i) && available(i) && next[i] == nil {
                 next[i] = candidates.first { c in !next.contains { $0 === c } }
             }
         }
@@ -753,8 +812,7 @@ final class GamepadBridge {
             s.setController(nil)
         }
         for (i, s) in slots.enumerated() { s.setController(next[i]) }
-        // A passthrough (DualSense or Steam Controller) depends on every player's controller: the
-        // assignment may move a Bluetooth LE Steam Controller to the first usable player without one.
+        // Preserve BLE reservations while filling free players, then route both HID kinds.
         reconcileAll()
         let players = Dictionary(uniqueKeysWithValues: slots.compactMap { s in s.controller.map { (ObjectIdentifier($0), s.index + 1) } })
         if players != GamepadBridge.players {
@@ -835,6 +893,8 @@ final class GamepadBridge {
             slot.injectTestSequence()
         case "state":
             for s in slots where s.index == 0 || s.serviceReady || s.controller != nil { log("control: \(s.stateLine)") }
+            let steam = hid.devices.filter(HIDPassthrough.isSteamController).count
+            log("control: HID DualSenses \(hid.devices.count - steam), Steam Controllers \(steam)")
         default:
             log(usage)
         }

@@ -547,8 +547,10 @@ DualSense on player 1) becomes the next free player instead of being dropped:
   number, which a uhid device does not have, so the slot that carries controller state goes to
   SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
   2 s is removed again (controller off, moved to another slot or to Bluetooth), and the
-  GameController pad of the Puck takes over. The Puck's GameController controller is the player
-  that receives that slot.
+  GameController pad of the Puck takes over. That player's Steam Controller is passed through
+  only when exactly one player's GameController controller is a Steam Controller and exactly one
+  Puck slot is live; otherwise those players keep uinput pads, since the slots cannot be matched
+  to their controllers reliably.
 
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
@@ -563,16 +565,20 @@ and `fx.pad2` … `fx.pad4`, each served by an instance of `fx-pad@.service` nam
 (the same `fx-progress-agent pad` with `FX_PAD_PORT`, started by udev), so the protocol on a port
 is the same for every player, and a pad's rumble plays on the controller that drives it. A player
 gets a controller once the guest's service of that port said `hello`: a guest layer without
-`fx-pad@.service` keeps the one pad. The controller chosen in Settings is player 1; a player keeps
-their controller until it disconnects (the others do not move up), and a reconnected controller
-takes the first free player. **Appears in SteamOS as**, swap A/B and dead zone apply to every pad (with
+`fx-pad@.service` keeps the one pad. The controller chosen in Settings is player 1 unless a
+Bluetooth LE Steam Controller already occupies that player. A player keeps their controller until
+it disconnects (the others do not move up), and a reconnected controller takes the first free player.
+A Bluetooth LE Steam Controller also keeps its player: a lower player's disconnect does not move
+it up, and a newly connected GameController controller cannot displace it. Disconnecting the BLE
+controller frees its player; reconnecting it takes the lowest free usable player.
+**Appears in SteamOS as**, swap A/B and dead zone apply to every pad (with
 Automatic each pad is the kind of its own controller). Only player 1's
 DualSense is passed through, and not while another player's controller is a DualSense too
 (GameController does not say which HID device is whose): both get uinput pads then. A Steam
 Controller is passed through on any free usable player (see above). While the VM
 runs, the live input test in Settings → Controller badges each controller with its player
-(**Player 2**). Off: one controller drives the one pad, as before (a Bluetooth LE Steam Controller
-with another controller connected is not passed through then).
+(**Player 2**). Off: only player 1 is used; a BLE Steam Controller does not displace an existing
+GameController controller, and a new GameController controller waits if BLE already owns that player.
 
 `--control-fifo` test commands: `pad on` (a pad without a controller, as `--input-selftest` uses),
 `pad off`, `pad test` (A + left stick) — each takes a player number (`pad on 2`; 1 if not given) —
