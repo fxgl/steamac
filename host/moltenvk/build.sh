@@ -23,7 +23,7 @@
 #   validates all four plain/packed source combinations and reads blended pixels.
 #   MoltenVK 0046 retains Vulkan blend factors and reflected output indices on
 #   pipeline failure; sentry_75_reflection.cpp checks both indices on those SPVs.
-#   The exact event fragment/blend state was absent, so its cause remains unproven.
+#   The original 1.9.8 fragment was absent; the 1.9.9 recurrence is covered below.
 #   MoltenVK 0047 (STEAMAC-41): a 173-line object shader lost its middle, bindings
 #   and entry point in bounded diagnostics. Preserve complete small shaders and
 #   failed Metal descriptors; run.sh's link-log checks templates, shader middle
@@ -41,6 +41,31 @@
 #   dropping its required geometry stage. pipeline_limits tessgeom reproduces the
 #   old error with a four-stage, no-fragment layered pass. This is a diagnostic,
 #   not tessellation-to-geometry support or a fix for the separately observed hang.
+#   Local 1.9.10 follow-up:
+#   MoltenVK 0050 / SPIRV-Cross 0052 (STEAMAC-75 recurrence): the complete fragment
+#   writes only the primary color while blend state uses OneMinusSource1Alpha.
+#   Vulkan permits an absent secondary output (undefined value), but Metal rejects
+#   the pipeline. Reflect original Index=1 locations before masking/packing and
+#   choose zero for absent secondary inputs by translating only SRC1 blend factors.
+#   frag_output dual-source checks all four factors, masked Location=1, real packed
+#   and array secondary outputs, GPU pixels, and serialized pipeline-cache reuse.
+#   MoltenVK 0051 / SPIRV-Cross 0053 (STEAMAC-8J): no original shader was retained,
+#   but sample-rate projected sampling reproduces the exact missing
+#   llvm.agx2.sample.itrproj.1xf symbol on M1 Max. On M1 only, use pull-model
+#   interpolation at get_sample_position(sample_id), preserving division and
+#   interpolation positions while avoiding Apple's broken projected-sample fusion.
+#   sentry-8j-projected.sh checks plain/helper/block/array/noperspective/explicit
+#   sample inputs, native interpolation pixels, 1x/4x MSAA and all Metal math modes;
+#   pipeline_limits projected exercises the Vulkan-to-Metal pipeline path.
+#   SPIRV-Cross 0054 (STEAMAC-87/88/2M candidate): flattening a stage interface
+#   block ignored explicit Locations after its first member, turning Locations
+#   0/2 into user(locn0)/user(locn1). Restart the location range at each decorated
+#   member, retaining array/matrix strides and Component sharing. The private
+#   sentry-block-locations.sh regression fails before the patch and passes after:
+#   16 validated vertex/fragment shaders match SPIR-V and all 16 block/standalone
+#   combinations link in Metal. This proves a translator bug, not these events'
+#   root cause: their SPIR-V is absent, 87's repeated identical locations were not
+#   reproduced, and 2M also used tessellation. Keep all three reports unresolved.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos

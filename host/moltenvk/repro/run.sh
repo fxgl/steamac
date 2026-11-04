@@ -100,6 +100,7 @@
 #    output to R32_SINT failed in Metal): signedness changes, a padded scalar, location 1 next to a matching output,
 #    an output array indexed dynamically, float to R32_UINT and ivec4 to RGBA8_UNORM (bits checked on MoltenVK only),
 #    two outputs packed into one location's components; every pipeline must be created and write the output's bits.
+#    MoltenVK also checks absent/real dual-source blend outputs, pixels and pipeline-cache roundtrips (STEAMAC-75).
 # 19. device_lost.c (KosmicKrisp only): a device loss must be printed on stderr (STEAMAC-G: a release build lost
 #    the device silently and Venus only logged "vkQueueSubmit resulted in CS error"); the runtime's queue-loss
 #    path (a timeline signal of value 0) stands in for a failed Metal command buffer, which can't be provoked.
@@ -358,6 +359,8 @@ if [ "$driver" = moltenvk ]; then
 		echo "FAIL combined tessellation+geometry lacks an explicit unsupported-feature diagnostic"
 		exit 1
 	fi
+	# STEAMAC-8J: sample-rate projected sampling must link on M1 (missing itrproj intrinsic).
+	"$work/pipeline_limits" "$gspv" projected
 	build spec_ids
 	"$work/spec_ids" "$gspv"
 	# STEAMAC-76/77: imported optimal volumes still need placement-backed 2D aliases.
@@ -460,6 +463,9 @@ fi
 
 build frag_output
 "$work/frag_output" "$gspv"
+if [ "$driver" = moltenvk ]; then
+	"$work/frag_output" "$gspv" dual-source
+fi
 
 if [ "$driver" = kosmickrisp ]; then
 	build device_lost

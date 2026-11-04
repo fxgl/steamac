@@ -150,4 +150,24 @@ xcrun -sdk macosx clang -fobjc-arc -framework Foundation -framework Metal \
 
 # 75: primary and secondary component packing must retain distinct blend sources.
 sh "$here/sentry-75-dual-source.sh" "$spvc" "$work/dual-source"
+
+# 75 recurrence: reflect original Index=1 locations, not the emitted/masked interface.
+glsl sentry-75-secondary-absent.frag secondary-absent
+glsl sentry-75-secondary-masked.frag secondary-masked
+glsl sentry-75-secondary-array.frag secondary-array
+assemble sentry-75-secondary-entry.frag.spvasm secondary-entry
+assemble sentry-75-secondary-composite.frag.spvasm secondary-composite
+xcrun -sdk macosx clang++ -std=c++14 -I"$src" "$here/sentry_75_secondary.cpp" \
+    "$build/libspirv-cross-msl.a" "$build/libspirv-cross-glsl.a" "$build/libspirv-cross-core.a" -o "$work/secondary-mask"
+"$work/secondary-mask" "$work/secondary-absent.spv" main 0 \
+    "$work/secondary-masked.spv" main 0 "$work/secondary-array.spv" main 1 \
+    "$work/secondary-composite.spv" main 14 \
+    "$work/secondary-entry.spv" first 1 "$work/secondary-entry.spv" second 0 \
+    "$work/dual-source/dual-source-0-0.spv" main 1 "$work/dual-source/dual-source-1-1.spv" main 1
+
+# 8J: M1 projected sample-rate interpolation must link without changing interpolation pixels.
+sh "$here/sentry-8j-projected.sh" "$src" "$build" "$work/projected-sampling"
+
+# 87/88/2M candidate: block flattening must retain explicit locations after gaps.
+sh "$here/sentry-block-locations.sh" "$spvc" "$work/block-locations"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'
