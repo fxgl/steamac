@@ -1,0 +1,28 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] Diagnose unsupported tessellation plus geometry before Metal compilation
+
+STEAMAC-83: Aliens Dark Descent submits a depth-only VS/TCS/TES/GS
+pipeline. Our mesh emulation takes vertex output, not TES output. The
+geometry setup discards the vertex capture slot, then the tessellation
+path emits spvOut [[buffer(255)]]. A four-stage regression reproduces
+the exact error. Reject this unsupported combination explicitly instead
+of emitting invalid MSL or silently dropping the required geometry stage.
+This does not add tessellation-to-geometry support or fix the game hang.
+
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -891,6 +891,14 @@
+ 			default:
+ 				break;
+ 		}
++	}
++	// The mesh-based geometry path consumes a vertex object stage, not tessellation
++	// evaluation output. Do not select the tessellation path and silently omit GS,
++	// or hand its unassigned vertex output buffer (255) to Metal (STEAMAC-83).
++	if (pGeometrySS && pTessCtlSS && pTessEvalSS) {
++		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT,
++			"Tessellation pipelines with a geometry shader are not supported by the Metal mesh emulation path."));
++		return;
+ 	}
+ 
+ 	_vertexModule = getOrCreateShaderModule(device, pVertexSS, _ownsVertexModule);
