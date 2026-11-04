@@ -16,7 +16,7 @@ enum Keymap {
     }
 
     /// Every code the keyboard device can emit (advertised in EV_KEY bits).
-    static var allCodes: [UInt16] { Array(Set(table.values).union([KEY.GRAVE, KEY._102ND])) }
+    static var allCodes: [UInt16] { Array(Set(table.values).union(windows.values).union([KEY.GRAVE, KEY._102ND, KEY.KPENTER])) }
 
     static let table: [UInt16: UInt16] = {
         let pairs: [(Int, UInt16)] = [
@@ -66,6 +66,58 @@ enum Keymap {
         ]
         var t: [UInt16: UInt16] = [:]
         for (mac, linux) in pairs { t[UInt16(mac)] = linux }
+        return t
+    }()
+
+    /// Moonlight sends Windows VK codes, independent of the Mac's keyboard layout.
+    static func windowsKey(_ vk: UInt16, extended: Bool) -> UInt16? {
+        let vk = vk & 0xff
+        if extended {
+            switch vk {
+            case 0x0d: return KEY.KPENTER
+            case 0x10: return KEY.RIGHTSHIFT
+            case 0x11: return KEY.RIGHTCTRL
+            case 0x12: return KEY.RIGHTALT
+            default: break
+            }
+        }
+        return windows[vk]
+    }
+
+    static let windows: [UInt16: UInt16] = {
+        var t: [UInt16: UInt16] = [
+            0x08: KEY.BACKSPACE, 0x09: KEY.TAB, 0x0c: KEY.KP5, 0x0d: KEY.ENTER,
+            0x10: KEY.LEFTSHIFT, 0x11: KEY.LEFTCTRL, 0x12: KEY.LEFTALT, 0x13: KEY.PAUSE,
+            0x14: KEY.CAPSLOCK, 0x15: KEY.HANGEUL, 0x19: KEY.HANJA, 0x1b: KEY.ESC,
+            0x20: KEY.SPACE, 0x21: KEY.PAGEUP, 0x22: KEY.PAGEDOWN, 0x23: KEY.END, 0x24: KEY.HOME,
+            0x25: KEY.LEFT, 0x26: KEY.UP, 0x27: KEY.RIGHT, 0x28: KEY.DOWN,
+            0x2a: KEY.SYSRQ, 0x2c: KEY.SYSRQ, 0x2d: KEY.INSERT, 0x2e: KEY.DELETE, 0x2f: KEY.HELP,
+            0x5b: KEY.LEFTMETA, 0x5c: KEY.RIGHTMETA, 0x5d: KEY.COMPOSE, 0x5f: KEY.SLEEP,
+            0x6a: KEY.KPASTERISK, 0x6b: KEY.KPPLUS, 0x6c: KEY.KPJPCOMMA,
+            0x6d: KEY.KPMINUS, 0x6e: KEY.KPDOT, 0x6f: KEY.KPSLASH, 0x90: KEY.NUMLOCK, 0x91: KEY.SCROLLLOCK,
+            0xa0: KEY.LEFTSHIFT, 0xa1: KEY.RIGHTSHIFT, 0xa2: KEY.LEFTCTRL, 0xa3: KEY.RIGHTCTRL,
+            0xa4: KEY.LEFTALT, 0xa5: KEY.RIGHTALT,
+            0xa6: KEY.BACK, 0xa7: KEY.FORWARD, 0xa8: KEY.REFRESH, 0xa9: KEY.STOP,
+            0xaa: KEY.SEARCH, 0xab: KEY.BOOKMARKS, 0xac: KEY.HOMEPAGE,
+            0xad: KEY.MUTE, 0xae: KEY.VOLUMEDOWN, 0xaf: KEY.VOLUMEUP,
+            0xb0: KEY.NEXTSONG, 0xb1: KEY.PREVIOUSSONG, 0xb2: KEY.STOPCD, 0xb3: KEY.PLAYPAUSE,
+            0xb4: KEY.MAIL, 0xb5: KEY.MEDIA, 0xb6: KEY.COMPUTER, 0xb7: KEY.COMPUTER,
+            0xba: KEY.SEMICOLON, 0xbb: KEY.EQUAL, 0xbc: KEY.COMMA, 0xbd: KEY.MINUS,
+            0xbe: KEY.DOT, 0xbf: KEY.SLASH, 0xc0: KEY.GRAVE, 0xdb: KEY.LEFTBRACE,
+            0xdc: KEY.BACKSLASH, 0xdd: KEY.RIGHTBRACE, 0xde: KEY.APOSTROPHE, 0xe2: KEY._102ND,
+        ]
+        let letters = [KEY.A, KEY.B, KEY.C, KEY.D, KEY.E, KEY.F, KEY.G, KEY.H, KEY.I, KEY.J,
+                       KEY.K, KEY.L, KEY.M, KEY.N, KEY.O, KEY.P, KEY.Q, KEY.R, KEY.S, KEY.T,
+                       KEY.U, KEY.V, KEY.W, KEY.X, KEY.Y, KEY.Z]
+        let digits = [KEY._0, KEY._1, KEY._2, KEY._3, KEY._4, KEY._5, KEY._6, KEY._7, KEY._8, KEY._9]
+        let keypad = [KEY.KP0, KEY.KP1, KEY.KP2, KEY.KP3, KEY.KP4, KEY.KP5, KEY.KP6, KEY.KP7, KEY.KP8, KEY.KP9]
+        let functions = [KEY.F1, KEY.F2, KEY.F3, KEY.F4, KEY.F5, KEY.F6, KEY.F7, KEY.F8,
+                         KEY.F9, KEY.F10, KEY.F11, KEY.F12, KEY.F13, KEY.F14, KEY.F15, KEY.F16,
+                         KEY.F17, KEY.F18, KEY.F19, KEY.F20, KEY.F21, KEY.F22, KEY.F23, KEY.F24]
+        for (i, code) in letters.enumerated() { t[0x41 + UInt16(i)] = code }
+        for (i, code) in digits.enumerated() { t[0x30 + UInt16(i)] = code }
+        for (i, code) in keypad.enumerated() { t[0x60 + UInt16(i)] = code }
+        for (i, code) in functions.enumerated() { t[0x70 + UInt16(i)] = code }
         return t
     }()
 

@@ -102,7 +102,8 @@ dxmt-payload:
 PREFIX ?= ../work/out/host
 install: $(OUT)/libwmtr_host.dylib
 	install -d $(PREFIX)/lib
-	install -m 755 $< $(PREFIX)/lib/libwmtr_host.dylib
+	@tmp=$$(mktemp "$(PREFIX)/lib/.libwmtr_host.XXXXXX"); \
+	  install -m 755 $< "$$tmp" && mv -f "$$tmp" "$(PREFIX)/lib/libwmtr_host.dylib"
 
 clean:
 	rm -rf $(OUT)

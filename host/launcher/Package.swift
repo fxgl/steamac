@@ -17,9 +17,27 @@ let package = Package(
         .systemLibrary(name: "CKrun", path: "Sources/CKrun"),
         // zstd decoder (sources fetched by fetch-zstd.sh into Sources/CZstd/zstd, included by czstd.c).
         .target(name: "CZstd", path: "Sources/CZstd", exclude: ["zstd"]),
+        // ENet for the Moonlight host's control stream (fetch-enet.sh: sources into Sources/CEnet/enet,
+        // headers into Sources/CEnet/include/enet).
+        .target(
+            name: "CEnet",
+            path: "Sources/CEnet",
+            exclude: ["enet/LICENSE", "enet/VERSION"],
+            sources: ["enet"],
+            cSettings: [.unsafeFlags(["-w"])]
+        ),
+        // nanors Reed-Solomon for the Moonlight host's video/audio FEC (fetch-nanors.sh into
+        // Sources/CNanors/nanors, included by cnanors.c).
+        .target(
+            name: "CNanors",
+            path: "Sources/CNanors",
+            exclude: ["nanors"],
+            sources: ["cnanors.c"],
+            cSettings: [.headerSearchPath("nanors"), .headerSearchPath("nanors/deps/obl"), .unsafeFlags(["-w"])]
+        ),
         .executableTarget(
             name: "steamac-vm",
-            dependencies: ["CKrun", "CZstd", .product(name: "Sentry", package: "sentry-cocoa"),
+            dependencies: ["CKrun", "CZstd", "CEnet", "CNanors", .product(name: "Sentry", package: "sentry-cocoa"),
                            .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/steamac-vm",
             linkerSettings: [
@@ -32,6 +50,13 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("Security"),
+                // Moonlight streaming host (Stream/): listeners and Bonjour, hardware encoding, Opus.
+                .linkedFramework("Network"),
+                .linkedFramework("VideoToolbox"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("IOSurface"),
+                .linkedFramework("AudioToolbox"),
             ]
         ),
     ],

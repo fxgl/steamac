@@ -43,7 +43,11 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>The SteamOS virtual machine records from the microphone while a game or Steam voice chat in it uses one.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Discover Steam Link and Remote Play devices on your local network and connect them to Steam in the SteamOS virtual machine when LAN Remote Play is enabled.</string>
+    <string>Connect Moonlight devices to this Mac when Streaming is enabled, and discover and connect Steam Link and Remote Play devices to SteamOS when LAN Remote Play is enabled.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_nvstream._tcp</string>
+    </array>
     <key>SteamacGameStatsURL</key>
     <string>https://steamac-game-stats.steamac-game-stats.workers.dev</string>
 </dict>

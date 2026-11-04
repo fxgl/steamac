@@ -33,19 +33,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discover Steam Link and Remote Play devices on your local network and connect them to Steam in the SteamOS virtual machine when LAN Remote Play is enabled."
+            "value" : "Connect Moonlight devices to this Mac when Streaming is enabled, and discover and connect Steam Link and Remote Play devices to SteamOS when LAN Remote Play is enabled."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Находить устройства Steam Link и Remote Play в локальной сети и подключать их к Steam в виртуальной машине SteamOS, когда включён Remote Play по локальной сети."
+            "value" : "Подключать устройства Moonlight к этому Mac, когда включена трансляция, а также находить и подключать устройства Steam Link и Remote Play к SteamOS, когда включён Remote Play по локальной сети."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在启用局域网 Remote Play 时，发现本地网络上的 Steam Link 和 Remote Play 设备，并将其连接到 SteamOS 虚拟机中的 Steam。"
+            "value" : "启用串流时将 Moonlight 设备连接到此 Mac，并在启用局域网 Remote Play 时发现 Steam Link 和 Remote Play 设备并将其连接到 SteamOS。"
           }
         }
       }

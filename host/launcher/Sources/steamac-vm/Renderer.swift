@@ -122,6 +122,14 @@ final class Renderer {
                         mipmapLevel: 0, withBytes: src, bytesPerRow: b.stride)
     }
 
+    /// Use the window queue so the next upload waits for every reader of the shared scanout.
+    func submitCapture(_ encode: (MTLCommandBuffer) -> Void) {
+        guard let cb = queue.makeCommandBuffer() else { return }
+        encode(cb)
+        cb.commit()
+        lastCommandBuffer = cb
+    }
+
     func dropTexture() {
         texture = nil
         textureGeneration = -1

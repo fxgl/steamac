@@ -73,8 +73,50 @@ static const uint32_t call_params_size[WMTR_NCALLS] = {
 }
 @end
 
+static pthread_mutex_t stream_capture_lock = PTHREAD_MUTEX_INITIALIZER;
+static wmtr_stream_capture_callback stream_capture_callback;
+static void *stream_capture_userdata;
+static atomic_bool stream_capture_active;
+
+__attribute__((visibility("default"))) void
+wmtr_stream_capture_set(wmtr_stream_capture_callback callback, void *userdata) {
+  pthread_mutex_lock(&stream_capture_lock);
+  stream_capture_callback = callback;
+  stream_capture_userdata = userdata;
+  atomic_store_explicit(&stream_capture_active, callback != NULL, memory_order_relaxed);
+  pthread_mutex_unlock(&stream_capture_lock);
+}
+
+static void stream_capture_present(id<MTLCommandBuffer> cb, id drawable) {
+  if (!atomic_load_explicit(&stream_capture_active, memory_order_relaxed)) return;
+  pthread_mutex_lock(&stream_capture_lock);
+  if (stream_capture_callback)
+    stream_capture_callback(stream_capture_userdata, (void *)cb, (void *)drawable);
+  pthread_mutex_unlock(&stream_capture_lock);
+}
+
+@protocol WMTRStreamLayerObserver
+- (void)streamLayerChanged:(CAMetalLayer *)layer framebufferOnly:(NSNumber *)requested;
+@end
+
+static void stream_capture_layer_changed(uint16_t call, uint8_t *params) {
+  CAMetalLayer *layer = (CAMetalLayer *)((struct unixcall_generic_obj_noret *)params)->handle;
+  NSNumber *requested = nil;
+  if (call == 70) {
+    const struct WMTLayerProps *props = ((struct unixcall_generic_obj_constptr_noret *)params)->arg.ptr;
+    requested = @(props->framebuffer_only);
+  }
+  void (^notify)(void) = ^{
+    id view = layer.superlayer.delegate;
+    if ([view respondsToSelector:@selector(streamLayerChanged:framebufferOnly:)])
+      [(id<WMTRStreamLayerObserver>)view streamLayerChanged:layer framebufferOnly:requested];
+  };
+  if ([NSThread isMainThread]) notify();
+  else dispatch_sync(dispatch_get_main_queue(), notify);
+}
+
 #ifdef WMTR_TESTING
-/* Only the loopback executable replaces presentation; the installed library has no hook or extra ops. */
+/* Only the loopback executable replaces view creation; production uses real Metal layers. */
 extern uint64_t wmtr_test_present_create_view(void *, uint64_t, void *, uint64_t *);
 extern void wmtr_test_present_release_view(void *, uint64_t);
 #define wmtr_present_create_view wmtr_test_present_create_view
@@ -911,10 +953,12 @@ host_call(struct wmtr_host *h, uint16_t call, uint8_t *params, const struct wmtr
     id<MTLCommandBuffer> cb = (id<MTLCommandBuffer>)((struct unixcall_generic_obj_obj_noret *)params)->handle;
     if (frames_out()) frame_record_on_completion(cb); /* record when the frame is done */
     layer_policy_on_present(cb, (id)((struct unixcall_generic_obj_obj_noret *)params)->arg);
+    stream_capture_present(cb, (id)((struct unixcall_generic_obj_obj_noret *)params)->arg);
     double duration = call == 48 ? ((struct unixcall_generic_obj_obj_double_noret *)params)->arg1 : 0;
     trace_drawable_present((id)((struct unixcall_generic_obj_obj_noret *)params)->arg, duration);
   }
   NTSTATUS st = f(params);
+  if (st == STATUS_SUCCESS && (call == 70 || call == 93)) stream_capture_layer_changed(call, params);
   keep_autoreleased(h, r->h.slot, call, params);
   return st;
 }

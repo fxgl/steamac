@@ -1,0 +1,5 @@
+// ENet (fetch-enet.sh puts the pinned headers into ./enet) for the streaming host's control stream.
+module CEnet {
+    header "enet/enet.h"
+    export *
+}

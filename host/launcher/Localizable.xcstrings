@@ -1,7 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "" : {},
+    "" : {
+
+    },
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
@@ -744,6 +746,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许 DXMT…"
+          }
+        }
+      }
+    },
+    "Allow Local Network access when macOS asks. Streaming stops while SteamOS is suspended or asleep and can be started again after it resumes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите доступ к локальной сети по запросу macOS. При приостановке или сне SteamOS трансляция прекращается; после возобновления её можно запустить снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 macOS 提示时允许本地网络访问。SteamOS 挂起或睡眠时串流会停止，恢复后可重新开始串流。"
           }
         }
       }
@@ -2381,6 +2399,22 @@
         }
       }
     },
+    "Enable Moonlight streaming" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить трансляцию Moonlight"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用 Moonlight 串流"
+          }
+        }
+      }
+    },
     "Enable SSH" : {
       "localizations" : {
         "ru" : {
@@ -2397,6 +2431,22 @@
         }
       }
     },
+    "End stream" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить трансляцию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束串流"
+          }
+        }
+      }
+    },
     "Enter a valid email address." : {
       "localizations" : {
         "ru" : {
@@ -2409,6 +2459,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请输入有效的电子邮件地址。"
+          }
+        }
+      }
+    },
+    "Enter the four-digit PIN shown by Moonlight on %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите четырёхзначный PIN, показанный Moonlight на %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入 %@ 上的 Moonlight 显示的四位 PIN。"
           }
         }
       }
@@ -2624,6 +2690,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "失败"
+          }
+        }
+      }
+    },
+    "Failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失败：%@"
           }
         }
       }
@@ -3153,7 +3235,9 @@
         }
       }
     },
-    "H" : {},
+    "H" : {
+
+    },
     "Help" : {
       "comment" : "Application help menu",
       "localizations" : {
@@ -3540,6 +3624,22 @@
         }
       }
     },
+    "Listening as %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание подключений: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在以 %@ 的名称监听"
+          }
+        }
+      }
+    },
     "Little to upscale while Retina resolution is on." : {
       "localizations" : {
         "ru" : {
@@ -3860,6 +3960,22 @@
         }
       }
     },
+    "Moonlight streaming is available while SteamOS is running in a window. It is unavailable in headless mode or without a running VM." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трансляция Moonlight доступна, когда SteamOS работает в окне. Она недоступна в режиме без окна или без запущенной ВМ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moonlight 串流仅在 SteamOS 以窗口模式运行时可用。无窗口模式或未运行虚拟机时不可用。"
+          }
+        }
+      }
+    },
     "More than this Mac's %lld performance cores. The extra vCPUs run on efficiency cores, which slows the guest down and leaves fewer cores for the Mac's GPU work." : {
       "localizations" : {
         "ru" : {
@@ -4126,6 +4242,22 @@
         }
       }
     },
+    "No paired clients" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет сопряжённых клиентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚无已配对客户端"
+          }
+        }
+      }
+    },
     "No release notes." : {
       "localizations" : {
         "ru" : {
@@ -4293,6 +4425,7 @@
       }
     },
     "Off" : {
+      "comment" : "Moonlight host status",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -4404,6 +4537,22 @@
         }
       }
     },
+    "Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откройте Moonlight на устройстве и выберите этот Mac. Введите четырёхзначный PIN из Moonlight в окне сопряжения на Mac, затем выберите SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在设备上打开 Moonlight 并选择此 Mac。在 Mac 的配对窗口中输入 Moonlight 显示的四位 PIN，然后选择 SteamOS。"
+          }
+        }
+      }
+    },
     "Open Releases Page" : {
       "localizations" : {
         "ru" : {
@@ -4480,6 +4629,102 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "输出设备"
+          }
+        }
+      }
+    },
+    "PIN" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PIN"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PIN"
+          }
+        }
+      }
+    },
+    "Pair" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопрячь"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对"
+          }
+        }
+      }
+    },
+    "Pair Moonlight" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжение Moonlight"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对 Moonlight"
+          }
+        }
+      }
+    },
+    "Pair a device" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжение устройства"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对设备"
+          }
+        }
+      }
+    },
+    "Paired %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжение: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对时间：%@"
+          }
+        }
+      }
+    },
+    "Paired clients" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжённые клиенты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配对客户端"
           }
         }
       }
@@ -5422,6 +5667,38 @@
         }
       }
     },
+    "Revoke" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отозвать доступ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销访问权限"
+          }
+        }
+      }
+    },
+    "Revoke this client's access?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отозвать доступ этого клиента?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销此客户端的访问权限？"
+          }
+        }
+      }
+    },
     "Runs well" : {
       "comment" : "Game rating",
       "localizations" : {
@@ -6167,6 +6444,22 @@
         }
       }
     },
+    "Status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояние"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状态"
+          }
+        }
+      }
+    },
     "Steam Controller" : {
       "localizations" : {
         "ru" : {
@@ -6783,6 +7076,60 @@
         }
       }
     },
+    "Stream SteamOS and its games directly from this Mac. Off by default; only enabled hosts listen on the network." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Транслировать SteamOS и игры прямо с этого Mac. По умолчанию выключено; сервер слушает сеть только после включения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接从此 Mac 串流 SteamOS 及其游戏。默认关闭；仅在启用时监听网络。"
+          }
+        }
+      }
+    },
+    "Streaming" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трансляция"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "串流"
+          }
+        }
+      }
+    },
+    "Streaming to %@ at %lld×%lld@%lld %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Streaming to %1$@ at %2$lld×%3$lld@%4$lld %5$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трансляция на %@: %lld×%lld@%lld %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在向 %@ 串流：%lld×%lld@%lld %@"
+          }
+        }
+      }
+    },
     "Suspend" : {
       "comment" : "App menu: freeze the VM in memory",
       "localizations" : {
@@ -7042,6 +7389,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "随附的 libwmtr_host.dylib 在 Mac 上执行 DXMT 的 Metal 调用。请仅在信任其他执行器库的情况下选择它。"
+          }
+        }
+      }
+    },
+    "The device must pair again to connect. Its current stream will end." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для подключения потребуется повторное сопряжение устройства. Его текущая трансляция завершится."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备须重新配对才能连接。其当前串流将结束。"
           }
         }
       }
@@ -7901,7 +8264,9 @@
         }
       }
     },
-    "W" : {},
+    "W" : {
+
+    },
     "Waiting for SteamOS to draw…" : {
       "localizations" : {
         "ru" : {

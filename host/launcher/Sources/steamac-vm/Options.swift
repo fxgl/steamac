@@ -95,6 +95,7 @@ struct Options {
     var network = true
     var lanRemotePlay = false
     var selftestRemotePlay = false
+    var selftestStream = false
     var selftestPointer = false
     var selftestGameLayers = false
     var sound = true
@@ -174,6 +175,7 @@ struct Options {
            steamac-vm --selftest-settings [--selftest-out DIR]
            steamac-vm --selftest-provision [--reference-disk IMG]
            steamac-vm --selftest-remote-play
+           steamac-vm --selftest-stream
            steamac-vm --selftest-metal-cache
            steamac-vm --selftest-pointer
            steamac-vm --create-disk PATH [--branch stable|rc] [--home-gib N]
@@ -460,6 +462,7 @@ struct Options {
             case "--selftest-pill": o.selftestPill = true
             case "--selftest-settings": o.selftestSettings = true
             case "--selftest-remote-play": o.selftestRemotePlay = true
+            case "--selftest-stream": o.selftestStream = true
             case "--selftest-provision": o.selftestProvision = true
             case "--selftest-metal-cache": o.selftestMetalCache = true
             case "--selftest-pointer": o.selftestPointer = true
@@ -505,7 +508,7 @@ struct Options {
 
     var isSelftest: Bool {
         selftestDisplay || selftestOverlay || selftestStall || selftestPill || selftestSettings || selftestProvision || selftestRemotePlay
-            || selftestMetalCache || selftestPointer || selftestGameLayers || createDisk != nil || growDisk != nil
+            || selftestMetalCache || selftestPointer || selftestGameLayers || selftestStream || createDisk != nil || growDisk != nil
             || showSSHPassword != nil
     }
 
