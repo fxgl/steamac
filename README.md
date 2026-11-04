@@ -832,7 +832,7 @@ layer.
 
 | Option | What it is | Pros and cons |
 |---|---|---|
-| **Steam Deck client** (`deck`, by default) | public ARM64 Steam Deck client, `steamdeck_stable` branch (the same build as the public `steam_client_linuxarm64`; not officially announced for ARM) | normal sign-in with an on-screen QR code; a public client branch rather than an internal beta |
+| **Steam Deck client** (`deck`, by default) | public ARM64 Steam Deck client, `steamdeck_stable` branch (the same build as the public `steam_client_linuxarm64`; not officially announced for ARM) | normal sign-in with an on-screen QR code; a public client branch rather than an internal beta; **Proton Experimental (ARM64)** is a separate compatibility choice from x86-64 **Proton Experimental** |
 | **Steam Deck client (beta)** (`deckbeta`) | `steamdeck_publicbeta` branch | like `deck`, but beta |
 | **Steam Frame client** (`frame`) | Valve's beta client for Steam Frame (`linux_arm64_beta_<hash>`, flags `-deckard -vrgamepadui`) — as in the image | the client the image ships; an internal beta for a device not yet released; signing in uses sign-in mode (below) |
 
@@ -935,8 +935,13 @@ This is not just a DLL choice: some games crash under x86-64 Proton 10.0 + FEX r
 DLLs used. Stellar Blade Demo (3564860), for example, ends SEH recursion with
 `virtual_setup_exception stack overflow` there, but runs on Proton 11.0 ARM64.
 Steam downloads Proton 10.0 (x86-64, under FEX in Steam Linux Runtime 3.0) on the first DXMT game
-launch, and `steam-gfx-path --watch` puts DXMT into it. Proton Experimental and x86-64 Proton 11.0
-need Steam Linux Runtime 4.0, which the arm64 client refuses to install ("Invalid platform").
+launch, and `steam-gfx-path --watch` puts DXMT into it. The **x86-64** builds of Proton Experimental
+and Proton 11.0 need the x86-64 Steam Linux Runtime 4.0 (`SteamLinuxRuntime_4`, app 4183110).
+Do not confuse them with **Proton Experimental (ARM64)** or **Proton 11.0 (ARM64)**: these use
+the separate ARM64 runtime
+(`SteamLinuxRuntime_4-arm64`, app 4185400), which Steam installs on ARM64. Select the tool whose
+name explicitly ends in **(ARM64)** in the game's **Properties → Compatibility**; the Steam Deck
+client also offers ARM64 Experimental, so switching to the Frame client is not required for it.
 The wildcard entry ("0") is never used: Steam applies a high-priority wildcard to its own tools
 as well and emptied the FEX tool that way. Turning Allow DXMT off removes the script's mappings.
 D3D12 on Proton 10.0 runs Wine under FEX instead of ARM64EC, costing CPU time.

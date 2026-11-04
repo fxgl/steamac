@@ -830,7 +830,7 @@ CMS/squashfs против кеша `work/cache/rootfs`, cpio, SHA-512 crypt.
 
 | Вариант | Что это | Плюсы и минусы |
 |---|---|---|
-| **Клиент Steam Deck** (`deck`, по умолчанию) | публичный ARM64-клиент Steam Deck, ветка `steamdeck_stable` (та же сборка, что публичный `steam_client_linuxarm64`; официально для ARM не объявлен) | обычный вход с QR-кодом на экране; публичная ветка клиента, а не внутренняя бета |
+| **Клиент Steam Deck** (`deck`, по умолчанию) | публичный ARM64-клиент Steam Deck, ветка `steamdeck_stable` (та же сборка, что публичный `steam_client_linuxarm64`; официально для ARM не объявлен) | обычный вход с QR-кодом на экране; публичная ветка клиента, а не внутренняя бета; **Proton Experimental (ARM64)** — отдельный вариант совместимости, не x86-64 **Proton Experimental** |
 | **Клиент Steam Deck (бета)** (`deckbeta`) | ветка `steamdeck_publicbeta` | как `deck`, но бета |
 | **Клиент Steam Frame** (`frame`) | бета-клиент Valve для Steam Frame (`linux_arm64_beta_<hash>`, флаги `-deckard -vrgamepadui`) — как в образе | клиент, который идёт в образе; внутренняя бета ещё не вышедшего устройства; вход — через режим входа (ниже) |
 
@@ -925,8 +925,12 @@ linux), если пользователь не выбрал свой инстр�
 Например, у Stellar Blade Demo (3564860) рекурсия SEH заканчивается
 `virtual_setup_exception stack overflow`, а на Proton 11.0 ARM64 игра работает.
 Steam скачивает Proton 10.0 (x86-64, под FEX в Steam Linux Runtime 3.0) при первом запуске игры с
-DXMT, и `steam-gfx-path --watch` кладёт в него DXMT. Proton Experimental и x86-64 Proton 11.0 требуют
-Steam Linux Runtime 4.0, который клиент для arm64 ставить отказывается («Invalid platform»).
+DXMT, и `steam-gfx-path --watch` кладёт в него DXMT. Сборкам **x86-64** Proton Experimental и
+Proton 11.0 нужен x86-64 Steam Linux Runtime 4.0 (`SteamLinuxRuntime_4`, приложение 4183110).
+Не путайте их с **Proton Experimental (ARM64)** и **Proton 11.0 (ARM64)**: им нужен отдельный ARM64 runtime
+(`SteamLinuxRuntime_4-arm64`, приложение 4185400), который Steam устанавливает на ARM64.
+В **Свойствах → Совместимость** игры выбирайте инструмент с явным **(ARM64)** в конце названия;
+клиент Steam Deck тоже предлагает ARM64 Experimental, переходить на Frame ради него не нужно.
 Общая запись («0») не используется: Steam применяет приоритетный wildcard и к своим инструментам
 и так опустошил инструмент FEX. Выключение «Разрешить DXMT» удаляет назначения скрипта.
 D3D12 на Proton 10.0 выполняет часть Wine под FEX, а не ARM64EC, что стоит процессорного времени.

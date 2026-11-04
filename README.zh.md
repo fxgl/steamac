@@ -567,7 +567,7 @@ SteamOS 启动哪个 Steam 客户端由启动器选择：首次启动窗口、**
 
 | 选项 | 是什么 | 利弊 |
 |---|---|---|
-| **Steam Deck 客户端**（`deck`，默认） | 公开 ARM64 Steam Deck 客户端，`steamdeck_stable` 分支（与公开 `steam_client_linuxarm64` 同构建；ARM 版未官宣） | 屏幕二维码正常登录（Steam 手机 App → Steam 令牌 → 扫码）外加密码表单；公开客户端分支而非内部测试版 |
+| **Steam Deck 客户端**（`deck`，默认） | 公开 ARM64 Steam Deck 客户端，`steamdeck_stable` 分支（与公开 `steam_client_linuxarm64` 同构建；ARM 版未官宣） | 屏幕二维码正常登录（Steam 手机 App → Steam 令牌 → 扫码）外加密码表单；公开客户端分支而非内部测试版；**Proton Experimental (ARM64)** 是单独的兼容性选项，并非 x86-64 **Proton Experimental** |
 | **Steam Deck 客户端（测试版）**（`deckbeta`） | `steamdeck_publicbeta` 分支 | 同 `deck`，测试版 |
 | **Steam Frame 客户端**（`frame`） | Valve 的 Steam Frame 测试版客户端（`linux_arm64_beta_<hash>`，参数 `-deckard -vrgamepadui`）——如映像自带 | 映像自带客户端；未发售设备的内部测试版；登录走下述登录模式 |
 
@@ -619,8 +619,12 @@ Steam 启动时应用，用户在 Steam 中的修改保持不变。这不只是 
 下无论使用什么 DLL 都会崩溃。例如 Stellar Blade Demo（3564860）的 SEH 递归最终导致
 `virtual_setup_exception stack overflow`，但它能在 Proton 11.0 ARM64 上运行。
 Steam 在首次启动 DXMT 游戏时下载 Proton 10.0（x86-64，在 Steam Linux Runtime 3.0 中经 FEX 运行），
-`steam-gfx-path --watch` 随后放入 DXMT。Proton Experimental 与 x86-64 Proton 11.0 需要 Steam Linux
-Runtime 4.0，arm64 客户端拒绝安装（“Invalid platform”）。从不使用通配条目（“0”）：Steam 也会把高优先级
+`steam-gfx-path --watch` 随后放入 DXMT。**x86-64** 版 Proton Experimental 与 Proton 11.0 需要
+x86-64 Steam Linux Runtime 4.0（`SteamLinuxRuntime_4`，应用 4183110）。不要将它们与
+**Proton Experimental (ARM64)** 或 **Proton 11.0 (ARM64)** 混淆：后两者使用单独的 ARM64
+运行时（`SteamLinuxRuntime_4-arm64`，应用 4185400），Steam 可在 ARM64 上安装。
+在游戏的**属性 → 兼容性**中选择名称明确以 **(ARM64)** 结尾的工具；Steam Deck 客户端也提供 ARM64
+Experimental，无需为此切换至 Frame 客户端。从不使用通配条目（“0”）：Steam 也会把高优先级
 通配应用到自身工具上，曾因此清空 FEX 工具。关闭“允许 DXMT”会删除脚本管理的映射。
 Proton 10.0 上的 D3D12 的 Wine 部分改在 FEX 下而非 ARM64EC 运行，会消耗更多 CPU。
 已在 M1 Max 上端到端验证：Death's Door（Unity，D3D11）在 Proton 10.0 上启动，渲染器显示
