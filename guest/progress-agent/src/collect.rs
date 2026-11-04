@@ -220,6 +220,12 @@ fn gather(dir: &Path, steam: &Path, home: &Path) -> Result<(), String> {
     // Game/compositor waits distinguish a live guest waiting for GPU fences from a CPU stall
     // (STEAMAC-4F/3P). Command names only: never include arguments or environment variables.
     out("threads.txt", &["ps", "-eLo", "pid,tid,stat,pcpu,wchan:32,comm"], 256 << 10);
+    // Lepton/Android launches (STEAMAC-8E) can wait in a Podman child without ever
+    // starting Wine. Keep parent relationships and container state, not arguments,
+    // environment, container contents or arbitrary container logs.
+    out("process-tree.txt", &["ps", "--forest", "-eo", "pid,ppid,stat,etime,wchan:32,comm"], 256 << 10);
+    out("podman-version.txt", &["podman", "--version"], 4096);
+    out("podman-containers.txt", &["podman", "ps", "--all", "--format", "{{.ID}} {{.Image}} {{.Status}}"], 64 << 10);
     for (name, path) in [
         ("os-release.txt", "/etc/os-release"),
         ("layer-release.txt", "/usr/lib/steamac/layer-release"),
@@ -745,6 +751,20 @@ mod tests {
     fn tails() {
         assert_eq!(tail("aaa\nbbb\nccc\n", 6), "ccc\n");
         assert_eq!(tail("short", 100), "short");
+    }
+
+    #[test]
+    fn runtime_command_output_is_bounded_and_scrubbed() {
+        let dir = std::env::temp_dir().join(format!("fx-runtime-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Scrubber::with_names(&[("bob", "<account>")]);
+        let fixture = format!("{}\nbob@example.com bob 192.168.1.20\n", "old\n".repeat(100));
+        let note = run(&dir, "runtime.txt", &["printf", "%s", &fixture], 64, &s);
+        assert!(note.ends_with("exit 0"), "{note}");
+        let text = std::fs::read_to_string(dir.join("runtime.txt")).unwrap();
+        assert!(text.len() <= 64);
+        assert!(text.ends_with("<email> <account> <ip>\n"), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
