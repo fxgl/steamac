@@ -490,14 +490,17 @@ at once. Off by default (no folder chosen). Command line: `--share DIR`, `--shar
 The launcher adds the device with `krun_add_virtiofs4` (`KRUN_SEMANTICS_LINUX_SIMPLIFIED`: the
 guest sees its own uid/gid on every file, so the `steamos` user reads and writes without ownership
 mapping; no DAX window) and passes `steamac.share=PATH` on the kernel command line. The initramfs
-("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, `/mnt/` or
-`/media/`, no empty, `.` or `..` components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount
-unit (`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`)
-wanted by `local-fs.target`: systemd creates the directory and mounts it; a boot without the
-device still completes. The unit lives for that boot only, like the runtime unit masks. A folder
-that is not there at start (external drive unplugged, renamed) is logged and skipped — the
-launcher starts without the share; only an explicit `--share` refuses to start. The Settings row
-shows it in red as not found.
+("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, no empty, `.` or `..`
+components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount unit
+(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`) wanted by
+`multi-user.target`. It requires and runs after `steamos-create-homedir.service`, before user
+sessions: on a fresh disk SteamOS must create and populate the user's home before systemd creates
+the mount point, otherwise the home would be root-owned and its skeleton skipped. The unit has
+`DefaultDependencies=no` to avoid ordering it before `local-fs.target` (home creation runs later);
+it retains the usual unmount-on-shutdown ordering. A failed share does not prevent boot. The unit
+lives for that boot only, like the runtime unit masks. A folder that is not there at start
+(external drive unplugged, renamed) is logged and skipped — the launcher starts without the share;
+only an explicit `--share` refuses to start. The Settings row shows it in red as not found.
 
 **Security.** Per libkrun's security model, virtio-fs does not confine the guest to the shared
 directory: on macOS the lookup does not filter `..`, and the launcher is not sandboxed. With a

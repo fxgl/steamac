@@ -1083,7 +1083,7 @@ private struct AdvancedTab: View {
                     }
                     HStack {
                         Label2(title: "Mount point in SteamOS",
-                               detail: String(localized: "A new subdirectory of /home/steamos/, /mnt/ or /media/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
+                               detail: String(localized: "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
                                now: false, key: .sharedMount)
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {

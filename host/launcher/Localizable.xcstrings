@@ -8669,22 +8669,6 @@
         }
       }
     },
-    "A new subdirectory of /home/steamos/, /mnt/ or /media/ (letters, digits, / _ . -). Saved when you press Return or leave the field." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Новый подкаталог в /home/steamos/, /mnt/ или /media/ (буквы, цифры, / _ . -). Сохраняется по Return или при выходе из поля."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/home/steamos/、/mnt/ 或 /media/ 下的新子目录（字母、数字、/ _ . -）。按 Return 或离开该字段时保存。"
-          }
-        }
-      }
-    },
     "Choose Folder…" : {
       "localizations" : {
         "ru" : {
@@ -8777,6 +8761,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "共享文件夹"
+          }
+        }
+      }
+    },
+    "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый подкаталог в /home/steamos/ (буквы, цифры, / _ . -). Сохраняется по Return или при выходе из поля."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/home/steamos/ 下的新子目录（字母、数字、/ _ . -）。按 Return 或离开该字段时保存。"
           }
         }
       }

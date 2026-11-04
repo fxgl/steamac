@@ -377,12 +377,15 @@ SteamOS，每次启动时挂载到 **SteamOS 中的挂载点**（默认 `/home/s
 
 启动器通过 `krun_add_virtiofs4` 添加设备（`KRUN_SEMANTICS_LINUX_SIMPLIFIED`：客户机在每个文件上看到自己的
 uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗口），并在内核命令行传入
-`steamac.share=PATH`。initramfs（“shared folder” 一节）检查路径——`/home/steamos/`、`/mnt/` 或 `/media/`
-的子目录，无空组件、`.` 或 `..`，仅 `[A-Za-z0-9/_.-]`——并写入运行时挂载单元
+`steamac.share=PATH`。initramfs（“shared folder” 一节）检查路径——`/home/steamos/` 的子目录，
+无空组件、`.` 或 `..`，仅 `[A-Za-z0-9/_.-]`——并写入运行时挂载单元
 （`/run/systemd/system/<path>.mount`，`What=macshare`、`Type=virtiofs`、`TimeoutSec=15`），由
-`local-fs.target` wanted：systemd 创建目录并挂载；没有该设备也能正常启动。该单元仅在本次启动期间存在，
-与运行时单元屏蔽相同。启动时不存在的文件夹（外置硬盘已拔出、已改名）会记入日志并跳过——启动器不带共享
-启动；只有显式的 `--share` 才会拒绝启动。设置中该行以红色显示为未找到。
+`multi-user.target` wanted。它依赖并等待 `steamos-create-homedir.service`，在用户会话之前挂载：
+新磁盘上必须先让 SteamOS 创建并填充用户主目录，再让 systemd 创建挂载点，否则主目录会属于 root，
+且跳过模板复制。`DefaultDependencies=no` 取消在 `local-fs.target` 之前的隐式顺序（主目录创建较晚），
+同时保留关机时的正常卸载顺序。共享挂载失败不阻止启动。该单元仅在本次启动期间存在，与运行时单元屏蔽相同。
+启动时不存在的文件夹（外置硬盘已拔出、已改名）会记入日志并跳过——启动器不带共享启动；
+只有显式的 `--share` 才会拒绝启动。设置中该行以红色显示为未找到。
 
 **安全。** 按 libkrun 的安全模型，virtio-fs 不会把客户机限制在共享目录内：在 macOS 上 lookup 不过滤 `..`，
 启动器也未沙箱化。设置了共享后，SteamOS 中的 root（在其中取得 root 的任何东西：游戏、Flatpak、Proton

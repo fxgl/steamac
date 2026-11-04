@@ -46,7 +46,7 @@
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
 #   steamac.clock24=0|1  Mac 12/24-hour format (layer mac-clock-format before Steam/Plasma)
 #   steamac.share=PATH mount the launcher's virtio-fs "macshare" at PATH, a subdirectory of
-#                      /home/steamos/, /mnt/ or /media/ (see "shared folder")
+#                      /home/steamos/ (see "shared folder")
 #   init=PATH          init in the new root (default /sbin/init)
 
 PATH=/bin
@@ -919,26 +919,35 @@ fi
 # Contract "shared folder": with Settings > Advanced "Shared folder" the launcher adds
 # a virtio-fs device tagged macshare (krun_add_virtiofs4) and passes
 # steamac.share=<guest path>. A runtime mount unit (lives only for this boot, like
-# the masks above) mounts it there; systemd creates the directory. Wanted, not
-# required, by local-fs.target: a boot without the device still completes.
+# the masks above) mounts it after SteamOS has populated the home. Wanted, not
+# required, by multi-user.target: a boot without the device still completes.
 SHARE=$(getarg steamac.share)
 if [ -n "$SHARE" ]; then
-    # Same rule as the launcher (Options.isValidShareMount): a subdirectory of /home/steamos/,
-    # /mnt/ or /media/ (never one of those themselves, so no system directory is mounted
-    # over), no empty, "." or ".." components, [A-Za-z0-9/_.-] only.
+    # Same rule as the launcher (Options.isValidShareMount): a subdirectory of /home/steamos/
+    # (never the home itself), no empty, "." or ".." components, [A-Za-z0-9/_.-] only.
     _ok=0
     case $SHARE in
         */|*//*|*/.|*/..|*/./*|*/../*|*[!A-Za-z0-9/_.-]*) ;;
-        /home/steamos/?*|/mnt/?*|/media/?*) _ok=1 ;;
+        /home/steamos/?*) _ok=1 ;;
     esac
     if [ $_ok = 1 ]; then
         # systemd-escape --path: strip the leading /, "-" -> \x2d, "/" -> "-", a leading "." -> \x2e
         _unit=$(printf %s "${SHARE#/}" | sed 's/-/\\x2d/g; s,/,-,g; s/^\./\\x2e/').mount
-        mkdir -p /run/systemd/system/local-fs.target.wants
+        # steamos-create-homedir exits if the home already exists. Do not let
+        # systemd create a root-owned home first and skip its skeleton/ownership.
+        # That service runs after basic.target: opt out of mount units' implicit
+        # Before=local-fs.target to avoid a cycle, preserving shutdown ordering.
+        mkdir -p /run/systemd/system/multi-user.target.wants
         cat > "/run/systemd/system/$_unit" <<EOF
 [Unit]
 Description=Shared Mac folder (steamac.share)
 Documentation=https://github.com/fxgl/steamac
+DefaultDependencies=no
+Requires=steamos-create-homedir.service
+After=steamos-create-homedir.service
+RequiresMountsFor=/home
+Before=systemd-user-sessions.service umount.target
+Conflicts=umount.target
 
 [Mount]
 What=macshare
@@ -947,10 +956,10 @@ Type=virtiofs
 Options=defaults
 TimeoutSec=15
 EOF
-        ln -sfn "../$_unit" "/run/systemd/system/local-fs.target.wants/$_unit"
+        ln -sfn "../$_unit" "/run/systemd/system/multi-user.target.wants/$_unit"
         msg "shared folder: virtio-fs macshare at $SHARE ($_unit)"
     else
-        warn "ignoring steamac.share='$SHARE' (a subdirectory of /home/steamos/, /mnt/ or /media/, no . or .. components, [A-Za-z0-9/_.-] only)"
+        warn "ignoring steamac.share='$SHARE' (a subdirectory of /home/steamos/, no . or .. components, [A-Za-z0-9/_.-] only)"
     fi
 fi
 

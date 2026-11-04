@@ -36,9 +36,8 @@ struct Options {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             && FileManager.default.isReadableFile(atPath: path)
     }
-    /// Where a share may be mounted: a subdirectory of one of these (never the directory itself,
-    /// so no system directory is mounted over).
-    static let shareMountRoots = ["/home/steamos/", "/mnt/", "/media/"]
+    /// A subdirectory of the writable home, never the home itself.
+    static let shareMountRoots = ["/home/steamos/"]
     /// The same check as the initramfs ("shared folder" section): a subdirectory of
     /// `shareMountRoots`, no empty, "." or ".." components, only [A-Za-z0-9/_.-].
     static func isValidShareMount(_ p: String) -> Bool {
@@ -52,14 +51,15 @@ struct Options {
     /// --selftest-settings: the validator agrees with the initramfs on what it accepts.
     static func shareMountSelfCheck() -> [String] {
         var failures: [String] = []
-        for good in ["/home/steamos/MacShare", "/home/steamos/Games/Mac-1", "/mnt/mac", "/media/mac/.cache"] where !isValidShareMount(good) {
+        for good in ["/home/steamos/MacShare", "/home/steamos/Games/Mac-1", "/home/steamos/.cache"] where !isValidShareMount(good) {
             failures.append("share mount: \(good) rejected")
         }
-        for bad in ["", "/", "/home", "/home/steamos", "/home/steamos/", "/mnt", "/usr/mac", "/etc", "/home/steamos//x",
+        for bad in ["", "/", "/home", "/home/steamos", "/home/steamos/", "/mnt", "/mnt/mac", "/media/mac", "/usr/mac", "/etc", "/home/steamos//x",
                     "/home/steamos/../x", "/home/steamos/./x", "/home/steamos/My Games", "~/Games", "/home/steamos/x/",
                     "/home/steamos/é", "/home/steamos/a:b", "/home/steamosx"] where isValidShareMount(bad) {
             failures.append("share mount: \(bad) accepted")
         }
+        log("selftest-settings: share mount: \(failures.isEmpty ? "ok" : "FAIL: \(failures.joined(separator: "; "))")")
         return failures
     }
     /// Settings > Advanced, --cpus / --mem, else automatic for this Mac (VMSizing; applySettings).
@@ -196,7 +196,7 @@ struct Options {
                            (default: Settings > Advanced "Shared folder", none unless chosen). virtio-fs does
                            not confine the guest to DIR: root in SteamOS may reach what this Mac user can read
       --share-mount PATH   where SteamOS mounts the shared folder (default: Settings > Advanced "Mount point in
-                           SteamOS", /home/steamos/MacShare): a subdirectory of /home/steamos/, /mnt/ or /media/;
+                           SteamOS", /home/steamos/MacShare): a subdirectory of /home/steamos/;
                            kernel cmdline steamac.share=PATH, the initramfs creates a mount unit for it on every boot
       --no-share           no shared folder this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
@@ -610,7 +610,7 @@ struct Options {
             if !s.sharedFolder.isEmpty {
                 if Options.isReadableFolder(s.sharedFolder) {
                     share = s.sharedFolder
-                } else {
+                } else if !isSelftest {
                     log("shared folder \(s.sharedFolder): not a readable folder; booting without the share")
                 }
             }
