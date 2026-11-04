@@ -268,7 +268,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Games | **Share game statistics** (off until you agree, see “Game statistics”); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
-| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”) |
+| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS (`--share`, `--share-mount`, `--no-share`, see “Shared folder”) |
 
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
@@ -477,6 +477,33 @@ gamescope, KWin or Klipper re-announce it. The selection present when a display 
 Klipper's restored history) is not sent to the Mac; the shared content is offered there instead.
 `--control-fifo` has `chord KEYCODE ctrl` (e.g. `chord 9 ctrl` = Ctrl+V in the guest) and
 `set shareClipboard on|off`.
+
+## Shared folder
+
+**Settings → Advanced → Shared folder** (next start) exposes one Mac folder to SteamOS as a
+virtio-fs device tagged `macshare`, mounted at **Mount point in SteamOS** (default
+`/home/steamos/MacShare`) on every boot. Files are read and written in place, nothing is copied:
+games stored on the Mac load at the Mac disk's speed, and what SteamOS writes there is on the Mac
+at once. Off by default (no folder chosen). Command line: `--share DIR`, `--share-mount PATH`,
+`--no-share` for one launch.
+
+The launcher adds the device with `krun_add_virtiofs4` (`KRUN_SEMANTICS_LINUX_SIMPLIFIED`: the
+guest sees its own uid/gid on every file, so the `steamos` user reads and writes without ownership
+mapping; no DAX window) and passes `steamac.share=PATH` on the kernel command line. The initramfs
+("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, `/mnt/` or
+`/media/`, no empty, `.` or `..` components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount
+unit (`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`)
+wanted by `local-fs.target`: systemd creates the directory and mounts it; a boot without the
+device still completes. The unit lives for that boot only, like the runtime unit masks. A folder
+that is not there at start (external drive unplugged, renamed) is logged and skipped — the
+launcher starts without the share; only an explicit `--share` refuses to start. The Settings row
+shows it in red as not found.
+
+**Security.** Per libkrun's security model, virtio-fs does not confine the guest to the shared
+directory: on macOS the lookup does not filter `..`, and the launcher is not sandboxed. With a
+share set, root in SteamOS (anything that gains root there: a game, a Flatpak, a Proton exploit)
+can potentially read anything your Mac user can read, and write where that user can write. Share
+only with a SteamOS you trust, and keep the share off when you do not need it. SSH is not involved.
 
 ## Controller
 
@@ -1298,7 +1325,7 @@ then it closes on its own; `STEAMAC_REPORT_TEST_SEND=1` also sends a test report
 | `host/launcher/` | `steamac-vm` (Swift/AppKit): Metal window (optional MetalFX super resolution), “FX STEAM LAUNCHER” overlay with boot/shutdown progress, guest resolution = window size (× the screen's backing scale with Retina resolution) at constant DPI (EDID from the physical screen size), keyboard/mouse/tablet, the guest's Xbox 360 / DualSense / DualShock 4 pad from GameController.framework with rumble or a DualSense passed through as raw HID (`fx.pad`), network via gvproxy, VM restart on guest reboot, `--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9, everything built in, 4K pages, 16K blob-node alignment, Apple TSO for FEX; uhid, hidraw and `hid-playstation` (with the LED classes it needs) for the passed-through DualSense |
 | `guest/mesa/` | From the pinned Mesa: Venus ICD for aarch64 (Proton, gamescope, zink) and x86_64/i386 (FEX graphics provider); zink GL stack (libgallium, GLX/EGL/GBM) over the stock one in both, with backports in `guest/mesa/patches/` (Mesa 6abefa51: zink rebuilds the pipeline when only the vertex layout changes; without `VK_EXT_vertex_input_dynamic_state`, which Venus on Metal lacks, GL games otherwise draw with stale vertex formats); x86_64 fault reporter for emulated games (`/usr/lib/steamac/x86_64/fault-report.so`) |
-| `guest/initramfs/` | boot stage = “bootloader”: A/B slot selection with attempt counter, partsets, overlays for `/etc` and `/usr`; initial provisioning of the launcher-created disk (`steamac.provision=1`: static mkfs.fat, mke2fs, btrfstune in initramfs); `steamac.ssh=0` — no SSH server; launcher config payload (`steamac.config=1`) — new `steamos` password; `steamac.tz=` — the Mac's time zone in `/etc/localtime`; untouched procfs at `/run/steamac/proc` for Flatpak sandboxes |
+| `guest/initramfs/` | boot stage = “bootloader”: A/B slot selection with attempt counter, partsets, overlays for `/etc` and `/usr`; initial provisioning of the launcher-created disk (`steamac.provision=1`: static mkfs.fat, mke2fs, btrfstune in initramfs); `steamac.ssh=0` — no SSH server; launcher config payload (`steamac.config=1`) — new `steamos` password; `steamac.tz=` — the Mac's time zone in `/etc/localtime`; untouched procfs at `/run/steamac/proc` for Flatpak sandboxes; `steamac.share=` — runtime mount unit for the shared folder (virtio-fs `macshare`, see “Shared folder”) |
 | `guest/layer/` | VM layer over `/usr` (read-only erofs): file-based `splctl`, safe post-install for RAUC, `VARIANT_ID=steamdeck`, gamescope session on DRM, Desktop Mode (Plasma nested in gamescope), masks for Frame hardware services, `fx-progress-agent` progress agent (Rust, `guest/progress-agent/`, `fx.progress` virtio-console port) and its root services (`fx.clock`, `fx.sleep`, the uinput or uhid gamepad on `fx.pad`), short shutdown timeouts, QR-code Steam sign-in mode (Steam Deck client, while there is no remembered account), optional Steam client branch (`/etc/steamac/steam-client-branch`), Steam's background shader processing on by default (`steam-shader-defaults`), Steam's idle screensaver off by default (`steam-idle-screensaver`), reset of fixed system/user manager CPU affinity masks so services inherit the VM’s available vCPUs on the next layer boot |
 | `scripts/` | build of `work/out/steamos.img`: GPT with Valve's partition layout (esp, efi-A/B, rootfs-A/B, var-A/B, home); `scripts/test/provision-test-disk.sh` — dev test of provisioning against a disk from Docker; `scripts/test/vkd3d-tiled.sh` — dev end-to-end check of D3D12 tiled resources and the feature level (vkd3d-proton tests of Proton 11.0, `d3d12-caps`, `vk-minmax`) in a throwaway VM |
 

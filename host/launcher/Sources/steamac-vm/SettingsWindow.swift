@@ -891,6 +891,9 @@ private struct AdvancedTab: View {
     @EnvironmentObject var context: SettingsContext
     @State private var confirmReset = false
     @StateObject private var password = GuestPasswordModel()
+    /// The mount point as typed; saved on submit or focus loss, only when valid (never a prefix of it).
+    @State private var mountText = ""
+    @FocusState private var mountFocused: Bool
     static let maxCPUs = ProcessInfo.processInfo.activeProcessorCount
     static let maxGiB = max(4, Int(ProcessInfo.processInfo.physicalMemory >> 30) - 4)
     static let host = VMSizing.Host.current
@@ -911,6 +914,20 @@ private struct AdvancedTab: View {
         }
         if let d = AppBundle.defaultDisk() { return (String(localized: "Default: \((d as NSString).abbreviatingWithTildeInPath)"), true) }
         return (String(localized: "Default: none found"), false)
+    }
+
+    /// The shared folder as shown (red when it is not a readable folder, like the disk image).
+    private var shareStatus: (String, Bool) {
+        if settings.sharedFolder.isEmpty { return (String(localized: "None"), true) }
+        let ok = Options.isReadableFolder(settings.sharedFolder)
+        let path = (settings.sharedFolder as NSString).abbreviatingWithTildeInPath
+        return (ok ? path : String(localized: "\(path) (not found)"), ok)
+    }
+
+    private var mountTextValid: Bool { Options.isValidShareMount(mountText) }
+
+    private func commitMount() {
+        if mountTextValid { settings.sharedMount = mountText }
     }
 
     /// The executor library the next start offers (bundled unless chosen) and whether it loads.
@@ -1052,6 +1069,38 @@ private struct AdvancedTab: View {
                         Button("Use Default") { settings.diskImage = "" }.disabled(settings.diskImage.isEmpty)
                     }
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label2(title: "Shared folder",
+                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust."),
+                           now: false, key: .sharedFolder)
+                    HStack {
+                        Text(verbatim: shareStatus.0)
+                            .font(.callout).foregroundStyle(shareStatus.1 ? Color.secondary : Color.red)
+                            .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        Spacer()
+                        Button("Choose Folder…") { chooseSharedFolder() }
+                        Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
+                    }
+                    HStack {
+                        Label2(title: "Mount point in SteamOS",
+                               detail: String(localized: "A new subdirectory of /home/steamos/, /mnt/ or /media/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
+                               now: false, key: .sharedMount)
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            TextField("", text: $mountText)
+                                .font(.body.monospaced()).frame(width: 260).multilineTextAlignment(.trailing)
+                                .focused($mountFocused)
+                                .onSubmit(commitMount)
+                                .onChange(of: mountFocused) { if !mountFocused { commitMount(); mountText = settings.sharedMount } }
+                                .onChange(of: settings.sharedMount) { if !mountFocused { mountText = settings.sharedMount } }
+                                .onAppear { mountText = settings.sharedMount }
+                            if !mountTextValid {
+                                Text("Not a valid mount point; not saved").font(.caption).foregroundStyle(.red)
+                            }
+                        }
+                    }
+                    .disabled(settings.sharedFolder.isEmpty)
+                }
                 Picker(selection: $settings.steamClient) {
                     ForEach(LauncherSettings.SteamClient.allCases) { Text(verbatim: SteamClientPicker.itemTitle($0)).tag($0) }
                 } label: {
@@ -1163,6 +1212,16 @@ private struct AdvancedTab: View {
         if panel.runModal() == .OK, let url = panel.url, AppBundle.acceptDiskSelection(url.path) {
             settings.diskImage = url.path
         }
+    }
+
+    private func chooseSharedFolder() {
+        let panel = NSOpenPanel()
+        panel.title = String(localized: "Choose a folder to share with SteamOS")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if !settings.sharedFolder.isEmpty { panel.directoryURL = URL(fileURLWithPath: settings.sharedFolder) }
+        if panel.runModal() == .OK, let url = panel.url { settings.sharedFolder = url.path }
     }
 
     private func chooseWmtrLibrary() {

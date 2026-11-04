@@ -8636,6 +8636,150 @@
           }
         }
       }
+    },
+    "%@ (not found)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (не найдено)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（未找到）"
+          }
+        }
+      }
+    },
+    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. Безопасность: virtio-fs не ограничивает SteamOS этой папкой; с включённой общей папкой root в SteamOS потенциально может прочитать всё, что доступно вашему пользователю Mac. Открывайте папку только той SteamOS, которой доверяете."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。安全：virtio-fs 不会把 SteamOS 限制在此文件夹内；设置共享后，SteamOS 中的 root 可能读取你的 Mac 用户能读取的任何内容。仅与你信任的 SteamOS 共享。"
+          }
+        }
+      }
+    },
+    "A new subdirectory of /home/steamos/, /mnt/ or /media/ (letters, digits, / _ . -). Saved when you press Return or leave the field." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый подкаталог в /home/steamos/, /mnt/ или /media/ (буквы, цифры, / _ . -). Сохраняется по Return или при выходе из поля."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/home/steamos/、/mnt/ 或 /media/ 下的新子目录（字母、数字、/ _ . -）。按 Return 或离开该字段时保存。"
+          }
+        }
+      }
+    },
+    "Choose Folder…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать папку…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择文件夹…"
+          }
+        }
+      }
+    },
+    "Choose a folder to share with SteamOS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите папку для общего доступа из SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择要与 SteamOS 共享的文件夹"
+          }
+        }
+      }
+    },
+    "Mount point in SteamOS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Точка монтирования в SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 中的挂载点"
+          }
+        }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无"
+          }
+        }
+      }
+    },
+    "Not a valid mount point; not saved" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недопустимая точка монтирования; не сохранено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挂载点无效；未保存"
+          }
+        }
+      }
+    },
+    "Shared folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общая папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享文件夹"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
