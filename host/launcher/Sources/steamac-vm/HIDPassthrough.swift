@@ -99,6 +99,7 @@ final class HIDPassthrough {
         /// delivered on the main run loop, which this unschedules before the buffer goes.
         deinit {
             IOHIDDeviceUnscheduleFromRunLoop(ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDDeviceClose(ref, IOOptionBits(kIOHIDOptionsTypeNone))
             inputBuffer.deallocate()
         }
     }
@@ -148,7 +149,7 @@ final class HIDPassthrough {
     func start() -> Bool {
         failedOpenCount = 0
         loggedOpenFailures = false
-        let m = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        let m = IOHIDManagerCreate(kCFAllocatorDefault, IOHIDManagerOptions.independentDevices.rawValue)
         IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterDeviceMatchingCallback(m, { ctx, result, _, device in
@@ -218,6 +219,7 @@ final class HIDPassthrough {
     private func added(_ ref: IOHIDDevice, result: IOReturn) {
         guard let id = HIDPassthrough.registryID(ref),
               !devices.contains(where: { $0.registryID == id }) else { return }
+        let result = result == kIOReturnSuccess ? IOHIDDeviceOpen(ref, IOOptionBits(kIOHIDOptionsTypeNone)) : result
         // A device that did not open cannot be passed through (its reports are unavailable): a
         // Steam Controller opens only with Input Monitoring. Skip it; a grant recreates the
         // manager and this callback fires again with success.
@@ -237,7 +239,10 @@ final class HIDPassthrough {
             if result == kIOReturnNotPermitted { awaitPermission() }
             return
         }
-        guard let d = HIDPassthrough.device(ref, registryID: id) else { return }
+        guard let d = HIDPassthrough.device(ref, registryID: id) else {
+            IOHIDDeviceClose(ref, IOOptionBits(kIOHIDOptionsTypeNone))
+            return
+        }
         devices.append(d)
         d.owner = self
         watch(d)
@@ -271,6 +276,7 @@ final class HIDPassthrough {
             let d = Unmanaged<Device>.fromOpaque(ctx).takeUnretainedValue()
             d.owner?.removed(d.ref)
         }, ctx)
+        IOHIDDeviceScheduleWithRunLoop(d.ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDDeviceRegisterInputReportCallback(d.ref, d.inputBuffer, d.maxInput, { ctx, result, _, _, _, report, length in
             guard let ctx, result == kIOReturnSuccess, length > 0 else { return }
             let d = Unmanaged<Device>.fromOpaque(ctx).takeUnretainedValue()
