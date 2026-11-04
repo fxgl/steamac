@@ -1,0 +1,10 @@
+# Watch for a compact-disk request from the session agent (no polkit / sudo).
+[Unit]
+Description=FX Steam Launcher compact-disk request
+
+[Path]
+PathExists=/home/steamos/.local/share/steamac/compact-request
+Unit=fx-compact-disk.service
+
+[Install]
+WantedBy=multi-user.target

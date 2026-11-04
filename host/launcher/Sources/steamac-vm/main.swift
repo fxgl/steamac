@@ -328,9 +328,14 @@ do {
         GameSessionTracker.consoleLine(line)
     }
     let progressPort = try ProgressPort()
-    // Log bundles requested by Report a Problem arrive on the same port.
+    // Log bundles and compact-disk replies share fx.progress with BootProgress.
     let guestLogs = GuestLogs(port: progressPort)
-    progressPort.start { line in if !guestLogs.handle(line) { progress.guestLine(line) } }
+    let diskCompact = DiskCompact(port: progressPort)
+    progressPort.start { line in
+        if guestLogs.handle(line) { return }
+        if diskCompact.handle(line) { return }
+        progress.guestLine(line)
+    }
     progress.onRebootIntent = {
         // A prepared update installs instead and Sparkle opens the new launcher (SparkleUpdates).
         if UpdateChecker.shared.takeOverReboot() { return }
@@ -543,7 +548,8 @@ do {
     wc.onGuestSizeRequest = { w, h in vm.resizeDisplay(width: w, height: h) }
     let settingsContext = SettingsContext(settings: settings, sound: sound, restart: { lifecycle.requestRestart() },
                                           vmHasPad: gamepad != nil, vmHasSound: vm.hasSound,
-                                          diskPath: options.disks.first?.path, streamHost: streamHost)
+                                          diskPath: options.disks.first?.path, streamHost: streamHost,
+                                          compactDisk: diskCompact)
     let settingsWindow = SettingsWindowController(context: settingsContext)
     lifecycle.settingsContext = settingsContext
     lifecycle.settingsWindow = settingsWindow

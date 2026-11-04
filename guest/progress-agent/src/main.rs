@@ -42,9 +42,11 @@
 //!
 //! Host -> guest (same port): `collect-logs <id>`, served at any point of the
 //! lifecycle below (worker thread; the bundle goes out from the main loop);
-//! `freeze-game <appid>` / `thaw-game` / `still-background` (freeze.rs: pause
-//! the focused game while the launcher is in the background); `profiles <base64-json>`,
-//! `launch <appid>`, `restart-steam` (profiles.rs: serialized background worker);
+//! `compact-disk <id>` (compact.rs: root fstrim via fx-compact-disk.service so
+//! the Mac's sparse steamos.img reclaims SSD space); `freeze-game <appid>` /
+//! `thaw-game` / `still-background` (freeze.rs: pause the focused game while the
+//! launcher is in the background); `profiles <base64-json>`, `launch <appid>`,
+//! `restart-steam` (profiles.rs: serialized background worker);
 //! `keyboard-layout <index> <layout[(variant)]>...` (keyboard.rs: latest-only worker);
 //! `cursor-track 1|0` enables/disables cursor X work (default off); enable also
 //! resynchronizes the full snapshot after the host/agent connection restarts.
@@ -103,6 +105,7 @@ mod clipx11;
 mod appname;
 mod codec;
 mod collect;
+mod compact;
 mod cursor;
 mod focus;
 mod pad;
@@ -328,7 +331,8 @@ fn ready_marker() -> String {
 
 /// Host -> guest requests on the port: `<command> [args]`, one per line,
 /// never blocking (each handler only starts work or answers right away).
-fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut freeze::Freezer, focus: &focus::Focus, profiles: &profiles::Requests, cursor: &mut cursor::Cursor) {
+fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut freeze::Freezer, focus: &focus::Focus,
+              profiles: &profiles::Requests, compact: &compact::Compact, cursor: &mut cursor::Cursor) {
     for line in port.read_lines() {
         let line = line.trim();
         if let Some(enabled) = port::cursor_tracking(line) {
@@ -340,6 +344,7 @@ fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut
         let (cmd, arg) = line.split_once(' ').map_or((line, ""), |(c, a)| (c, a.trim()));
         match cmd {
             "collect-logs" => collector.request(arg, port),
+            "compact-disk" => compact.request(arg),
             "profiles" | "launch" | "restart-steam" => profiles.request(cmd, arg),
             "freeze-game" => match arg.parse::<u32>() {
                 // Only the game that has the focus (the host may be a step behind).
@@ -357,6 +362,7 @@ fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut
     freezer.pump(focus.game());
     freezer.send_replies(port);
     profiles.pump(port);
+    compact.pump(port);
 }
 
 /// Boot progress until `ready` (or give-up / SIGTERM); focus changes are
@@ -370,6 +376,7 @@ fn report_boot(
     games: &mut games::Games,
     names: &mut appname::Names,
     profiles: &profiles::Requests,
+    compact: &compact::Compact,
     cursor: &mut cursor::Cursor,
 ) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/steamos".into());
@@ -427,7 +434,7 @@ fn report_boot(
             }
         }
         rep.port.flush();
-        serve_host(&mut rep.port, collector, freezer, focus, profiles, cursor);
+        serve_host(&mut rep.port, collector, freezer, focus, profiles, compact, cursor);
         collector.pump(&mut rep.port);
         focus.pump(&mut rep.port, false, names);
         cursor.pump(&mut rep.port);
@@ -487,6 +494,7 @@ fn main() {
     let mut games = games::Games::new();
     let mut cursor_state = cursor::Cursor::new();
     let profiles = profiles::Requests::new();
+    let compact = compact::Compact::new();
     let mut names = appname::Names::new(appname::steam_root(),
         format!("/tmp/.fx-progress-named-{}", unsafe { libc::getuid() }).into());
     let force = std::env::var("FX_PROGRESS_FORCE").map_or(false, |v| v == "1");
@@ -500,7 +508,7 @@ fn main() {
         rep.stage(Stage::Session, 100, "Session started");
         desktop_ready_pending = true;
     } else {
-        report_boot(&mut rep, &mut focus, heartbeat.as_ref(), &mut collector, &mut freezer, &mut games, &mut names, &profiles, &mut cursor_state);
+        report_boot(&mut rep, &mut focus, heartbeat.as_ref(), &mut collector, &mut freezer, &mut games, &mut names, &profiles, &compact, &mut cursor_state);
     }
     // Once after `ready` (or at agent start on a later session): current focus.
     focus.pump(&mut rep.port, true, &mut names);
@@ -522,7 +530,7 @@ fn main() {
         let mut pfds = Vec::with_capacity(8);
         while !terminated() {
             rep.port.flush();
-            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &mut cursor_state);
+            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &compact, &mut cursor_state);
             collector.pump(&mut rep.port);
             focus.pump(&mut rep.port, false, &mut names);
             cursor_state.pump(&mut rep.port);
@@ -544,6 +552,7 @@ fn main() {
                 libc::pollfd { fd: rep.port.read_fd().unwrap_or(-1), events: libc::POLLIN, revents: 0 },
                 libc::pollfd { fd: collector.wake_fd(), events: libc::POLLIN, revents: 0 },
                 libc::pollfd { fd: profiles.wake_fd(), events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: compact.wake_fd(), events: libc::POLLIN, revents: 0 },
             ]);
             cursor_state.poll_fds(&mut pfds);
             let mut wait_ms: i64 = if focus.connected() { -1 } else { 1000 };

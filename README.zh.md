@@ -279,6 +279,12 @@ home 容量在创建磁盘时固定。**设置 → 高级 → 扩展磁盘…** 
 exFAT 立即分配全部新增容量，故先检查其空闲空间。终端（SteamOS 停止时）：
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`。
 
+**回收 Mac 上的空间：** 卸载游戏（或大幅扩容）后，稀疏的 `steamos.img` 在磁盘上仍可能很大，
+尽管 SteamOS 已不再需要那些块。**设置 → 高级 → 回收磁盘空间…**（需 SteamOS 运行中）让客户机对
+`/home`（以及已挂载的 `/var`）执行 `fstrim`；virtio-blk DISCARD 在 Mac 映像上打洞。容量不变——
+仅 APFS / Mac OS 扩展格式上的已分配大小可能下降。exFAT 无稀疏空洞，无法回收宿主空间。这不是
+缩小 GPT/home（仍只增不减）。
+
 测试用：`STEAMAC_DEFAULTS_DOMAIN=<domain>` 替换设置域；`--selftest-settings
 --selftest-out DIR` 无虚拟机打开窗口并为每选项卡写 PNG；`--control-fifo` 支持
 `settings TAB`、`settings-dump PNG`、`set KEY VALUE`（与窗口等效）、`restart`。
