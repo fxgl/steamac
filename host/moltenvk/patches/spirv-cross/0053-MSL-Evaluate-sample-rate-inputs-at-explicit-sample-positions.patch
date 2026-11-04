@@ -1,0 +1,276 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] MSL: evaluate sample-rate inputs at explicit sample positions
+
+STEAMAC-8J reproduces on M1 as missing llvm.agx2.sample.itrproj.1xf
+for sample-qualified projected sampling, including ordinary texture and
+compare samples in all math modes. Explicit sample-position offset
+interpolation avoids the broken fusion without changing division or
+interpolation positions. Keep native behavior by default; affect only
+Sample inputs and explicit InterpolateAtSample when the option is enabled.
+Preserve flat inputs, composite/helper paths, and per-sample invocation.
+
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -543,6 +543,11 @@
+ 		// expected to be needed until the bug is fixed in Metal; it is provided as an option
+ 		// so it can be enabled only when the bug is present.
+ 		bool sample_dref_lod_array_as_grad = false;
++
++		// Avoid broken sample-rate projected-texture fusion on affected Metal backends.
++		// Evaluate sample-qualified inputs at get_sample_position(sample_id) using
++		// pull-model offset interpolation, preserving the original arithmetic.
++		bool sample_rate_interpolation_as_offset = false;
+ 
+ 		// Apply a workaround to prevent uses of bitwise not from crashing the AMD backend compiler
+ 		bool bitwise_not_causes_ice = false;
+@@ -1580,6 +1585,8 @@
+ 	std::string to_vertex_input_value(const SPIRType &type, SPIRType::BaseType physical_basetype,
+ 	                                  const std::string &expr);
+ 	uint32_t build_msl_interpolant_type(uint32_t type_id, bool is_noperspective);
++	bool uses_pull_model_interpolation(uint32_t id, bool is_sample, bool is_flat) const;
++	std::string default_interpolation_method(bool is_centroid, bool is_sample);
+ 
+ 	bool suppress_missing_prototypes = false;
+ 	bool suppress_incompatible_pointer_types_discard_qualifiers = false;
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -3272,7 +3272,7 @@
+ 	// before then so that gl_SampleID will get added; so we also need to check if
+ 	// that function would add gl_FragCoord.
+ 	if (preproc.needs_sample_id || msl_options.force_sample_rate_shading ||
+-	    (is_sample_rate() && (active_input_builtins.get(BuiltInFragCoord) ||
++	    (is_sample_rate() && (msl_options.sample_rate_interpolation_as_offset || active_input_builtins.get(BuiltInFragCoord) ||
+ 	                          (need_subpass_input_ms && !msl_options.use_framebuffer_fetch_subpasses))))
+ 		needs_sample_id = true;
+ 	if (preproc.needs_helper_invocation || active_input_builtins.get(BuiltInHelperInvocation))
+@@ -4219,6 +4219,25 @@
+ 	if (is_noperspective)
+ 		set_decoration(new_type_id, DecorationNoPerspective);
+ 	return new_type_id;
++}
++
++bool CompilerMSL::uses_pull_model_interpolation(uint32_t id, bool is_sample, bool is_flat) const
++{
++	return pull_model_inputs.count(id) ||
++	       (msl_options.sample_rate_interpolation_as_offset && is_sample && !is_flat);
++}
++
++string CompilerMSL::default_interpolation_method(bool is_centroid, bool is_sample)
++{
++	if (is_centroid)
++		return ".interpolate_at_centroid()";
++	if (is_sample)
++	{
++		if (msl_options.sample_rate_interpolation_as_offset)
++			return join(".interpolate_at_offset(get_sample_position(", to_expression(builtin_sample_id_id), "))");
++		return join(".interpolate_at_sample(", to_expression(builtin_sample_id_id), ")");
++	}
++	return ".interpolate_at_center()";
+ }
+ 
+ bool CompilerMSL::add_component_variable_to_interface_block(StorageClass storage, const std::string &ib_var_ref,
+@@ -4370,7 +4389,7 @@
+ 	if (converted_output)
+ 		type_id = build_fragment_output_type(type_id, get<SPIRType>(type_id).vecsize, out_basetype);
+ 
+-	if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++	if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 		ib_type.member_types.push_back(build_msl_interpolant_type(type_id, is_noperspective));
+ 	else
+ 		ib_type.member_types.push_back(type_id);
+@@ -4382,15 +4401,8 @@
+ 	// Update the original variable reference to include the structure reference
+ 	string qual_var_name = ib_var_ref + "." + mbr_name;
+ 	// If using pull-model interpolation, need to add a call to the correct interpolation method.
+-	if (storage == StorageClassInput && pull_model_inputs.count(var.self))
+-	{
+-		if (is_centroid)
+-			qual_var_name += ".interpolate_at_centroid()";
+-		else if (is_sample)
+-			qual_var_name += join(".interpolate_at_sample(", to_expression(builtin_sample_id_id), ")");
+-		else
+-			qual_var_name += ".interpolate_at_center()";
+-	}
++	if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
++		qual_var_name += default_interpolation_method(is_centroid, is_sample);
+ 
+ 	if (padded_output || padded_input || converted_output)
+ 	{
+@@ -4458,7 +4470,7 @@
+ 			type_id = get_pointee_type_id(type_id);
+ 			if (meta.strip_array && is_array(get<SPIRType>(type_id)))
+ 				type_id = get<SPIRType>(type_id).parent_type;
+-			if (pull_model_inputs.count(var.self))
++			if (uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 				ib_type.member_types[ib_mbr_idx] = build_msl_interpolant_type(type_id, is_noperspective);
+ 			else
+ 				ib_type.member_types[ib_mbr_idx] = type_id;
+@@ -4506,7 +4518,7 @@
+ 	}
+ 
+ 	// Copy interpolation decorations if needed
+-	if (storage != StorageClassInput || !pull_model_inputs.count(var.self))
++	if (storage != StorageClassInput || !uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 	{
+ 		if (is_flat)
+ 			set_member_decoration(ib_type.self, ib_mbr_idx, DecorationFlat);
+@@ -4623,7 +4635,7 @@
+ 		if (out_basetype != usable_type->basetype)
+ 			type_id = build_fragment_output_type(type_id, get<SPIRType>(type_id).vecsize, out_basetype);
+ 
+-		if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++		if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 			ib_type.member_types.push_back(build_msl_interpolant_type(get_pointee_type_id(type_id), is_noperspective));
+ 		else
+ 			ib_type.member_types.push_back(get_pointee_type_id(type_id));
+@@ -4641,7 +4653,7 @@
+ 			{
+ 				var.basetype = ensure_correct_input_type(var.basetype, locn, comp, 0, meta.strip_array);
+ 				uint32_t mbr_type_id = ensure_correct_input_type(usable_type->self, locn, comp, 0, meta.strip_array);
+-				if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++				if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 					ib_type.member_types[ib_mbr_idx] = build_msl_interpolant_type(mbr_type_id, is_noperspective);
+ 				else
+ 					ib_type.member_types[ib_mbr_idx] = mbr_type_id;
+@@ -4676,7 +4688,7 @@
+ 			set_member_decoration(ib_type.self, ib_mbr_idx, DecorationIndex, index);
+ 		}
+ 
+-		if (storage != StorageClassInput || !pull_model_inputs.count(var.self))
++		if (storage != StorageClassInput || !uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 		{
+ 			// Copy interpolation decorations if needed
+ 			if (is_flat)
+@@ -4699,15 +4711,9 @@
+ 			{
+ 			case StorageClassInput:
+ 				entry_func.fixup_hooks_in.push_back([=, &var]() {
+-					if (pull_model_inputs.count(var.self))
++					if (uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 					{
+-						string lerp_call;
+-						if (is_centroid)
+-							lerp_call = ".interpolate_at_centroid()";
+-						else if (is_sample)
+-							lerp_call = join(".interpolate_at_sample(", to_expression(builtin_sample_id_id), ")");
+-						else
+-							lerp_call = ".interpolate_at_center()";
++						string lerp_call = default_interpolation_method(is_centroid, is_sample);
+ 						statement(to_name(var.self), "[", i, "] = ", ib_var_ref, ".", mbr_name, lerp_call, ";");
+ 					}
+ 					else
+@@ -4881,7 +4887,7 @@
+ 	{
+ 		// Add a reference to the variable type to the interface struct.
+ 		uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+-		if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++		if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 			ib_type.member_types.push_back(build_msl_interpolant_type(usable_type->self, is_noperspective));
+ 		else
+ 			ib_type.member_types.push_back(usable_type->self);
+@@ -4938,7 +4944,7 @@
+ 			if (mbr_type_id != orig_mbr_type_id)
+ 				orig_vecsize = get<SPIRType>(orig_mbr_type_id).vecsize;
+ 
+-			if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++			if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 				ib_type.member_types[ib_mbr_idx] = build_msl_interpolant_type(mbr_type_id, is_noperspective);
+ 			else
+ 				ib_type.member_types[ib_mbr_idx] = mbr_type_id;
+@@ -4960,7 +4966,7 @@
+ 		if (has_member_decoration(var_type.self, mbr_idx, DecorationComponent))
+ 			SPIRV_CROSS_THROW("DecorationComponent on matrices and arrays is not supported.");
+ 
+-		if (storage != StorageClassInput || !pull_model_inputs.count(var.self))
++		if (storage != StorageClassInput || !uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 		{
+ 			// Copy interpolation decorations if needed
+ 			if (is_flat)
+@@ -4990,15 +4996,8 @@
+ 				entry_func.fixup_hooks_in.push_back([=, &var]() {
+ 					string lerp_call;
+ 					string swizzle;
+-					if (pull_model_inputs.count(var.self))
+-					{
+-						if (is_centroid)
+-							lerp_call = ".interpolate_at_centroid()";
+-						else if (is_sample)
+-							lerp_call = join(".interpolate_at_sample(", to_expression(builtin_sample_id_id), ")");
+-						else
+-							lerp_call = ".interpolate_at_center()";
+-					}
++					if (uses_pull_model_interpolation(var.self, is_sample, is_flat))
++						lerp_call = default_interpolation_method(is_centroid, is_sample);
+ 					if (orig_vecsize != UINT32_MAX)
+ 						swizzle = vector_swizzle(orig_vecsize, 0);
+ 					auto physical_basetype = this->get<SPIRType>(mbr_type_id).basetype;
+@@ -5056,7 +5055,7 @@
+ 	uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+ 	mbr_type_id = ensure_correct_builtin_type(mbr_type_id, builtin);
+ 	var_type.member_types[mbr_idx] = mbr_type_id;
+-	if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++	if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 		ib_type.member_types.push_back(build_msl_interpolant_type(mbr_type_id, is_noperspective));
+ 	else
+ 		ib_type.member_types.push_back(mbr_type_id);
+@@ -5068,15 +5067,8 @@
+ 	// Update the original variable reference to include the structure reference
+ 	string qual_var_name = ib_var_ref + "." + mbr_name;
+ 	// If using pull-model interpolation, need to add a call to the correct interpolation method.
+-	if (storage == StorageClassInput && pull_model_inputs.count(var.self))
+-	{
+-		if (is_centroid)
+-			qual_var_name += ".interpolate_at_centroid()";
+-		else if (is_sample)
+-			qual_var_name += join(".interpolate_at_sample(", to_expression(builtin_sample_id_id), ")");
+-		else
+-			qual_var_name += ".interpolate_at_center()";
+-	}
++	if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
++		qual_var_name += default_interpolation_method(is_centroid, is_sample);
+ 
+ 	// The SPIRV location of interface variable, used to obtain the initial
+ 	// MSL location (the location variable) and interface matching
+@@ -5121,7 +5113,7 @@
+ 		if (mbr_type_id != orig_mbr_type_id)
+ 			orig_vecsize = get<SPIRType>(orig_mbr_type_id).vecsize;
+ 
+-		if (storage == StorageClassInput && pull_model_inputs.count(var.self))
++		if (storage == StorageClassInput && uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 			ib_type.member_types[ib_mbr_idx] = build_msl_interpolant_type(mbr_type_id, is_noperspective);
+ 		else
+ 			ib_type.member_types[ib_mbr_idx] = mbr_type_id;
+@@ -5218,7 +5210,7 @@
+ 		}
+ 	}
+ 
+-	if (storage != StorageClassInput || !pull_model_inputs.count(var.self))
++	if (storage != StorageClassInput || !uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 	{
+ 		// Copy interpolation decorations if needed
+ 		if (is_flat)
+@@ -14039,9 +14031,12 @@
+ 			else
+ 				component = join(".", index_to_swizzle(c->scalar()));
+ 		}
++		string interpolation = msl_options.sample_rate_interpolation_as_offset ?
++		                           join(".interpolate_at_offset(get_sample_position(", to_expression(args[1]), "))") :
++		                           join(".interpolate_at_sample(", to_expression(args[1]), ")");
+ 		emit_op(result_type, id,
+ 		        join(to_name(stage_in_var_id), ".", to_member_name(get_stage_in_struct_type(), interface_index),
+-		             ".interpolate_at_sample(", to_expression(args[1]), ")", component),
++		             interpolation, component),
+ 		        should_forward(args[0]) && should_forward(args[1]));
+ 		break;
+ 	}
+@@ -19084,7 +19079,9 @@
+ 		}
+ 	}
+ 	else if (!type_is_image && !type_is_tlas &&
+-	         (!pull_model_inputs.count(var.basevariable) || type.basetype == SPIRType::Struct))
++	         (!(var.basevariable && uses_pull_model_interpolation(var.basevariable,
++	               has_decoration(var.basevariable, DecorationSample), has_decoration(var.basevariable, DecorationFlat))) ||
++	          type.basetype == SPIRType::Struct))
+ 	{
+ 		// If this is going to be a reference to a variable pointer, the address space
+ 		// for the reference has to go before the '&', but after the '*'.

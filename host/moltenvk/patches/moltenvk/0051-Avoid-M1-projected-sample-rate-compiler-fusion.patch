@@ -1,0 +1,52 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] Avoid M1 projected sample-rate compiler fusion
+
+STEAMAC-8J reports the exact AGXMetalG13X missing itrproj symbol reproduced
+on this M1 Max. Enable SPIRV-Cross explicit sample-position interpolation
+only for Apple7 devices without Apple8 (M1 family), with MSL2.3+. Retain
+the new option in pipeline cache configuration serialization. No math
+approximation, retry, or changes to other GPU families.
+
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -2307,6 +2307,11 @@
+ 		if (mtlFeats.needsSampleDrefLodArrayWorkaround) {
+ 			shaderConfig.options.mslOptions.sample_dref_lod_array_as_grad = true;
+ 		}
++		// AGXMetalG13X (M1) cannot link projected sampling of sample-rate varyings.
++		// Preserve interpolation/arithmetic, but avoid the broken itrproj fusion.
++		const auto& gpuCaps = getPhysicalDevice()->getMTLDeviceCapabilities();
++		shaderConfig.options.mslOptions.sample_rate_interpolation_as_offset =
++			gpuCaps.supportsApple7 && !gpuCaps.supportsApple8 && mtlFeats.mslVersion >= 20300;
+ 		shaderConfig.options.mslOptions.for_mesh_pipeline = false;
+ 		if (_isRasterizing && pCreateInfo->pMultisampleState) {		// Must ignore allowed bad pMultisampleState pointer if rasterization disabled
+ #if MVK_USE_METAL_PRIVATE_API
+@@ -3722,6 +3727,7 @@
+ 				opt.manual_helper_invocation_updates,
+ 				opt.check_discarded_frag_stores,
+ 				opt.sample_dref_lod_array_as_grad,
++				opt.sample_rate_interpolation_as_offset,
+ 				opt.readwrite_texture_fences,
+ 				opt.replace_recursive_inputs,
+ 				opt.agx_manual_cube_grad_fixup,
+@@ -4042,17 +4048,17 @@
+ 
+ void mvkValidateCeralArchiveDefinitions() {
+ 	[[maybe_unused]] size_t missingBytes = 0;
+-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(8);
++	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(7);
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>(3);
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLResourceBinding>();
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLConstexprSampler>();
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
+-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(30);			// Contains string
++	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(29);			// Contains string
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(6);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
+-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(110);	// Contains collection
++	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(109);	// Contains collection
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(59);		// Contains collections
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
+ 	missingBytes += mvkValidateCerealArchiveSize<MVKShaderModuleKey>();

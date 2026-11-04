@@ -1,6 +1,7 @@
 // API-only options and specialization reflection used by sentry-msl.sh.
 #include "spirv_msl.hpp"
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -18,7 +19,11 @@ int main(int argc, char **argv)
     spirv_cross::CompilerMSL compiler(std::move(words));
     auto options = compiler.get_msl_options();
     options.msl_version = argc > 3 ? static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 10)) : 30000;
-    options.null_descriptor = argc > 4;
+    if (argc > 4) {
+        if (!std::strcmp(argv[4], "null")) options.null_descriptor = true;
+        else if (!std::strcmp(argv[4], "sample-offset")) options.sample_rate_interpolation_as_offset = true;
+        else return 2;
+    }
     compiler.set_msl_options(options);
     std::ofstream output(argv[2]);
     output << compiler.compile();
