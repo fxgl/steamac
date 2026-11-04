@@ -1,0 +1,59 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FX Steam Launcher</title>
+        <item>
+            <title>1.9.11</title>
+            <pubDate>Wed, 04 Nov 2026 22:59:11 +0300</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.11</sparkle:version>
+            <sparkle:shortVersionString>1.9.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.10.
+
+- **Updates install in the app.** From this version on, FX Steam Launcher updates itself. When a new version is out, **Install Update** downloads it in the background while SteamOS keeps running; then **Install and Relaunch** shuts SteamOS down normally, installs the update and opens the launcher again, or **Install on Quit** installs it the next time you quit. Every update is signed and verified before it is installed, and usually only the changed files are downloaded. Built on Sparkle; proposed by @pythoninthegrass (#77). This version itself still needs the DMG once.
+- **Fewer Metal pipeline errors on MoltenVK.** Blending with a second fragment output that the shader doesn't write is accepted again instead of failing in Metal.
+- **M1:** shaders that sample textures with per-sample perspective projection no longer fail to compile (MoltenVK).
+- **Shader translation fix** for interface blocks whose locations have gaps (MoltenVK).
+- **Damaged installations explained.** If the app's SteamOS download tool is missing or blocked (for example by security software), creating a disk now says so and how to fix it.
+- **Better diagnostics** in crash reports for shader compiler failures.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.11-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.10.
+
+- **Обновления устанавливаются в приложении.** Начиная с этой версии FX Steam Launcher обновляется сам. Когда выходит новая версия, **Установить** загружает её в фоне, пока SteamOS работает; затем **Установить и перезапустить** штатно выключает SteamOS, устанавливает обновление и снова открывает лаунчер, а **Установить при выходе** установит его, когда вы в следующий раз завершите лаунчер. Каждое обновление подписано и проверяется перед установкой; обычно загружаются только изменённые файлы. Работает на Sparkle; предложил @pythoninthegrass (#77). Саму эту версию ещё нужно один раз установить из DMG.
+- **Меньше ошибок конвейеров Metal на MoltenVK.** Смешивание со вторым выходом фрагментного шейдера, который шейдер не записывает, снова принимается, а не завершается ошибкой Metal.
+- **M1:** шейдеры, которые читают текстуры с перспективной проекцией по сэмплам, больше не падают при компиляции (MoltenVK).
+- **Исправление трансляции шейдеров** для интерфейсных блоков с пропусками в location (MoltenVK).
+- **Понятнее при повреждённой установке.** Если инструмент загрузки SteamOS в приложении отсутствует или заблокирован (например, защитной программой), при создании диска лаунчер скажет об этом и объяснит, что делать.
+- **Больше диагностики** в отчётах о сбоях для ошибок компилятора шейдеров.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.11-gpl-sources.tar`.
+
+---
+
+1.9.10 以来的新内容。
+
+- **应用内安装更新。** 从此版本起，FX Steam Launcher 会自行更新。有新版本时，**安装更新**会在后台下载，SteamOS 照常运行；随后 **安装并重新启动** 会正常关闭 SteamOS、安装更新并重新打开启动器，**退出时安装** 则在你下次退出时安装。每个更新都经过签名并在安装前校验，通常只下载变化的文件。基于 Sparkle；由 @pythoninthegrass 提议（#77）。本版本本身仍需从 DMG 安装一次。
+- **MoltenVK 上更少的 Metal 管线错误。** 使用着色器未写入的第二个片段输出进行混合时，重新被接受，不再在 Metal 中失败。
+- **M1：** 按采样进行透视投影纹理采样的着色器不再编译失败（MoltenVK）。
+- **着色器转换修复：** location 有间隔的接口块（MoltenVK）。
+- **安装损坏时给出说明。** 如果应用内的 SteamOS 下载工具缺失或被阻止（例如被安全软件阻止），创建磁盘时会说明原因及解决方法。
+- **更多诊断信息：** 崩溃报告中的着色器编译失败。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.11-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.11/FX-Steam-Launcher-1.9.11.dmg" length="95302497" type="application/octet-stream" sparkle:edSignature="U+/jgCfGQQll4aJBMMF37bgHEk/L7QoZOGjTS4TKGntGo/D/PoM1xiYmuEwuqvPCB3ILn85QW1w2jRrEkOxzCQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: Ds1mecTY7U2OclCgmFRlTj0G+Pmyc15PhoIWd4rG8ZeGJXL5w4sLTa02yR4sr10waegEksxq6puskLzWu5ZqDg==
+length: 6923
+-->
