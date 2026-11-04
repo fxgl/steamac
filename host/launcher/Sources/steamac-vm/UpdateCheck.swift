@@ -2,7 +2,13 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// New-version check: the latest GitHub release of fxgl/steamac against this launcher's
+/// New-version check. Release builds that can replace themselves (dist.sh's SUFeedURL and
+/// SUPublicEDKey in Info.plist, not translocated, not on a read-only volume) use Sparkle
+/// (SparkleUpdates): the same window and menu item, but the update downloads and installs in the
+/// app. Every other build (source builds, the dev launcher, copies Sparkle cannot replace) uses
+/// the flow below.
+///
+/// The latest GitHub release of fxgl/steamac against this launcher's
 /// CFBundleShortVersionString. Runs in the VM process of the first boot (once per app launch, not
 /// per VM reboot) a few seconds after the window is up, at most every 6 h (also across launches),
 /// never in development builds (work/out/steamac-vm), and only while Settings > General "Check for
@@ -15,7 +21,8 @@ import SwiftUI
 ///
 /// Test hooks: STEAMAC_UPDATE_URL (another release JSON, http(s):// or file://: a /releases/latest
 /// object or a /releases array; also enables the startup check of the dev launcher) and
-/// STEAMAC_FAKE_VERSION (the version this launcher pretends to be).
+/// STEAMAC_FAKE_VERSION (the version this launcher pretends to be); STEAMAC_UPDATE_FEED (another
+/// Sparkle appcast URL).
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
@@ -43,8 +50,10 @@ final class UpdateChecker {
         let page: URL?
         /// The .dmg asset.
         let dmg: URL?
+        /// Sparkle downloads and installs it in the app (Install Update instead of Download).
+        var inApp = false
 
-        var versionString: String { UpdateChecker.format(version) }
+        var versionString: String { version.isEmpty ? tag : UpdateChecker.format(version) }
         /// Download: the .dmg, else the release page, else the releases list.
         var downloadURL: URL { dmg ?? page ?? UpdateChecker.releasesPage }
     }
@@ -58,11 +67,17 @@ final class UpdateChecker {
     private var defaults: UserDefaults { LauncherSettings.shared.defaults }
     /// Requests not answered yet (a startup check does not start while one runs).
     private var pending = 0
-    /// A newer release this process found (and the user did not skip): the menu offers it.
-    private(set) var available: Release?
+    /// A newer release this process found (and the user did not skip).
+    private var found: Release?
+    /// The newer version the menu offers ("Update Available: X…").
+    var available: Release? { sparkle.map { $0.available } ?? found }
     private var panel: UpdatePanel?
     private var vmWindow: () -> NSWindow? = { nil }
     private var subscription: AnyCancellable?
+    /// In-app updates (release builds that can replace themselves); nil: the GitHub check below.
+    private var sparkle: SparkleUpdates?
+    /// The update feed's host when Sparkle updates this copy in the app (Settings text).
+    var inAppFeedHost: String? { sparkle?.feedHost }
 
     // MARK: versions
 
@@ -145,6 +160,7 @@ final class UpdateChecker {
         let md = "## What's new\r\n* **Faster** boot\n- see [notes](https://e)\n\n\n\nend<!-- hidden -->\n---\n```\ncode\n```\n"
         let notes = String(releaseNotesText(md).characters)
         if notes != "What's new\n• Faster boot\n• see notes\n\nend\n──────────\ncode" { failures.append("update: release notes \(notes.debugDescription)") }
+        failures += SparkleUpdates.selfCheck()
         log("selftest-settings: update check: \(failures.isEmpty ? "ok" : failures.joined(separator: "; "))")
         return failures
     }
@@ -152,9 +168,23 @@ final class UpdateChecker {
     // MARK: checks
 
     /// VM process, once the window is up: the startup check (first boot of this launch only) and
-    /// Settings > General "Check for updates at startup" turned on later (applies now).
-    func start(vmWindow: @escaping () -> NSWindow?) {
+    /// Settings > General "Check for updates at startup" turned on later (applies now). Sparkle
+    /// (when this copy can replace itself) schedules its own checks on every boot; `shutdownForUpdate`
+    /// powers SteamOS off before it installs (Lifecycle.shutdownForUpdate).
+    func start(vmWindow: @escaping () -> NSWindow?, shutdownForUpdate: @escaping () -> Void) {
         self.vmWindow = vmWindow
+        if let blocker = SparkleUpdates.blocker {
+            log("update: in-app updates off (\(blocker)); checking GitHub releases")
+        } else {
+            let s = SparkleUpdates(checker: self, shutdownForUpdate: shutdownForUpdate)
+            if s.start() {
+                sparkle = s
+                subscription = LauncherSettings.shared.$checkForUpdates.dropFirst().sink { on in
+                    DispatchQueue.main.async { s.setAutomaticChecks(on) }
+                }
+                return
+            }
+        }
         subscription = LauncherSettings.shared.$checkForUpdates.dropFirst().sink { [weak self] on in
             guard on else { return }
             DispatchQueue.main.async { self?.automaticCheck() }
@@ -163,8 +193,18 @@ final class UpdateChecker {
         DispatchQueue.main.asyncAfter(deadline: .now() + UpdateChecker.startupDelay) { [weak self] in self?.automaticCheck() }
     }
 
+    /// SteamOS is about to restart (the guest, or Restart VM) while Sparkle has an update prepared:
+    /// true when that update installs instead and opens the launcher again (no reboot marker).
+    func takeOverReboot() -> Bool {
+        sparkle?.takeOverReboot() ?? false
+    }
+
     /// The startup check: setting, build kind, 6 h limit and Skip This Version apply; errors only logged.
     func automaticCheck() {
+        if let sparkle {
+            sparkle.checkInBackground()
+            return
+        }
         guard LauncherSettings.shared.checkForUpdates else { log("update: startup check off (Settings > General)"); return }
         let testURL = ProcessInfo.processInfo.environment[UpdateChecker.urlEnv].map { !$0.isEmpty } ?? false
         guard CrashReporting.buildKind != .development || testURL else {
@@ -188,7 +228,7 @@ final class UpdateChecker {
                     log("update: \(r.tag) available, skipped by the user (Skip This Version)")
                     return
                 }
-                self.available = r
+                self.found = r
                 guard LauncherSettings.shared.checkForUpdates else { return }   // turned off meanwhile
                 if self.panel?.window.isVisible == true { return }   // a manual check shows it already
                 self.show(.available(r, current: UpdateChecker.currentVersion), activate: false)
@@ -203,7 +243,11 @@ final class UpdateChecker {
     /// App menu "Check for Updates…" (or "Update Available…"): the found release, else a check
     /// now that ignores the 6 h limit and skipped versions and reports the result.
     func menuAction() {
-        if let r = available {
+        if let sparkle {
+            sparkle.menuAction()
+            return
+        }
+        if let r = found {
             show(.available(r, current: UpdateChecker.currentVersion), activate: true)
             return
         }
@@ -219,11 +263,11 @@ final class UpdateChecker {
             }
             switch outcome {
             case .newer(let r):
-                self.available = r
+                self.found = r
                 self.show(.available(r, current: UpdateChecker.currentVersion), activate: false)
             case .upToDate(let latest):
                 log("update: up to date (\(UpdateChecker.currentVersion); latest release \(latest?.tag ?? "none"))")
-                self.show(.upToDate(current: UpdateChecker.currentVersion), activate: false)
+                self.show(.upToDate(current: UpdateChecker.currentVersion, note: nil), activate: false)
             case .failed(let message, let localized):
                 log("update: check failed: \(message)")
                 self.show(.failed(localized), activate: false)
@@ -309,38 +353,61 @@ final class UpdateChecker {
 
     // MARK: panel
 
-    private func show(_ state: UpdatePanel.State, activate: Bool) {
+    /// The update window in `state` (created on first use); Sparkle's states route their buttons to it.
+    func show(_ state: UpdatePanel.State, activate: Bool) {
         let panel = self.panel ?? UpdatePanel(actions: .init(
             download: { [weak self] r in
+                guard let self else { return }
+                if let sparkle = self.sparkle {
+                    sparkle.install(r)
+                    return
+                }
                 log("update: download \(r.tag): opening \(r.downloadURL.absoluteString)")
                 NSWorkspace.shared.open(r.downloadURL)
-                self?.panel?.window.close()
+                self.panel?.window.close()
             },
             skip: { [weak self] r in
                 guard let self else { return }
                 log("update: skipping \(r.tag)")
-                self.defaults.set(r.versionString, forKey: Store.skipped)
-                self.available = nil
+                if let sparkle = self.sparkle { sparkle.skip() } else { self.defaults.set(r.versionString, forKey: Store.skipped) }
+                self.found = nil
                 self.panel?.window.close()
             },
             later: { [weak self] in
                 log("update: remind me later")
-                self?.panel?.window.close()
+                self?.panel?.window.close()   // Sparkle: closing answers "later" (panelClosed)
             },
             releases: { [weak self] in
                 NSWorkspace.shared.open(UpdateChecker.releasesPage)
                 self?.panel?.window.close()
             },
-            dismiss: { [weak self] in self?.panel?.window.close() }))
+            dismiss: { [weak self] in self?.panel?.window.close() },
+            cancelDownload: { [weak self] in self?.sparkle?.cancel() },
+            installNow: { [weak self] in self?.sparkle?.installNow(origin: "Install and Relaunch") },
+            installOnQuit: { [weak self] in
+                self?.sparkle?.installOnQuit()
+                self?.panel?.window.close()
+            },
+            closed: { [weak self] in self?.sparkle?.panelClosed() }))
         self.panel = panel
         if case .available(let r, let current) = state { log("update: \(r.tag) available (this launcher: \(current)); showing the update window") }
         panel.show(state, beside: vmWindow(), activate: activate)
     }
 
+    /// The window's current state, if it is on screen.
+    var shownState: UpdatePanel.State? {
+        panel.flatMap { $0.window.isVisible ? $0.model.state : nil }
+    }
+
+    func closePanel() {
+        panel?.window.close()
+    }
+
     // MARK: control FIFO (`update …`)
 
-    /// check (menu) | startup (the startup check now) | press download|skip|later|ok|releases |
-    /// dump PNG (the window; PNG-with-vm.png: the window and the VM window as on screen) | state
+    /// check (menu) | startup (the startup check now) | press
+    /// download|skip|later|ok|releases|cancel|hide|install|quit | dump PNG (the window;
+    /// PNG-with-vm.png: the window and the VM window as on screen) | state
     func control(_ args: [String]) {
         switch args.first {
         case "check": menuAction()
@@ -355,8 +422,9 @@ final class UpdateChecker {
             let visible = panel?.window.isVisible == true
             let title = available.map { "Update Available: \($0.versionString)…" } ?? "Check for Updates…"
             log("control: update: window \(visible ? "shown (\(panel!.model.state.name))" : "hidden"), menu \"\(title)\""
-                + ", skipped \(defaults.string(forKey: Store.skipped) ?? "none")"
-                + (available.map { ", download \($0.downloadURL.absoluteString)" } ?? ""))
+                + (sparkle.map { ", in-app (\($0.stateDescription))" }
+                   ?? ", skipped \(defaults.string(forKey: Store.skipped) ?? "none")"
+                      + (available.map { ", download \($0.downloadURL.absoluteString)" } ?? "")))
         default: log("control: update: unknown command")
         }
     }
@@ -369,8 +437,15 @@ final class UpdatePanel {
     enum State {
         case checking
         case available(UpdateChecker.Release, current: String)
-        case upToDate(current: String)
+        /// `note`: why a newer version is not offered (Sparkle: it needs another macOS).
+        case upToDate(current: String, note: String?)
         case failed(String)
+        // Sparkle (in-app updates):
+        case downloading(UpdateChecker.Release, received: UInt64, expected: UInt64)
+        case preparing(UpdateChecker.Release, progress: Double)
+        case ready(UpdateChecker.Release)
+        case installing(UpdateChecker.Release)
+        case installFailed(String)
 
         var name: String {
             switch self {
@@ -378,17 +453,29 @@ final class UpdatePanel {
             case .available(let r, _): return "available \(r.tag)"
             case .upToDate: return "up to date"
             case .failed: return "failed"
+            case .downloading(let r, let received, let expected): return "downloading \(r.tag) \(received)/\(expected)"
+            case .preparing(let r, let progress): return "preparing \(r.tag) \(Int(progress * 100))%"
+            case .ready(let r): return "ready \(r.tag)"
+            case .installing(let r): return "installing \(r.tag)"
+            case .installFailed: return "install failed"
             }
         }
     }
 
     struct Actions {
+        /// Download (GitHub: the DMG in the browser) / Install Update (Sparkle).
         let download: (UpdateChecker.Release) -> Void
         let skip: (UpdateChecker.Release) -> Void
         let later: () -> Void
         let releases: () -> Void
-        /// Cancel / OK: close the window.
+        /// Cancel / OK / Hide: close the window.
         let dismiss: () -> Void
+        let cancelDownload: () -> Void
+        /// Install and Relaunch / Install on Quit (a prepared Sparkle update).
+        let installNow: () -> Void
+        let installOnQuit: () -> Void
+        /// The window closed (any button, its close button, Escape).
+        let closed: () -> Void
     }
 
     final class Model: ObservableObject {
@@ -399,6 +486,7 @@ final class UpdatePanel {
     let model = Model()
     private let actions: Actions
     private let host: NSHostingView<UpdateView>
+    private var closeObserver: NSObjectProtocol?
     static let width: CGFloat = 540
 
     init(actions: Actions) {
@@ -412,6 +500,8 @@ final class UpdatePanel {
         window.isFloatingPanel = false
         window.becomesKeyOnlyIfNeeded = true
         window.contentView = host
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                               queue: .main) { _ in actions.closed() }
     }
 
     func show(_ state: State, beside vm: NSWindow?, activate: Bool) {
@@ -466,8 +556,11 @@ final class UpdatePanel {
         case ("download", .available(let r, _)): actions.download(r)
         case ("skip", .available(let r, _)): actions.skip(r)
         case ("later", .available): actions.later()
-        case ("releases", .failed): actions.releases()
-        case ("ok", _), ("cancel", _): actions.dismiss()
+        case ("releases", .failed), ("releases", .installFailed): actions.releases()
+        case ("cancel", .downloading): actions.cancelDownload()
+        case ("install", .ready): actions.installNow()
+        case ("quit", .ready): actions.installOnQuit()
+        case ("ok", _), ("cancel", _), ("hide", _): actions.dismiss()
         default: log("control: update: no \(button) button in state \(model.state.name)")
         }
     }
@@ -577,32 +670,94 @@ struct UpdateView: View {
                         Button("Skip This Version") { actions.skip(r) }
                         Spacer()
                         Button("Remind Me Later") { actions.later() }.keyboardShortcut(.cancelAction)
-                        Button("Download") { actions.download(r) }.keyboardShortcut(.defaultAction)
+                        if r.inApp {
+                            Button("Install Update") { actions.download(r) }.keyboardShortcut(.defaultAction)
+                        } else {
+                            Button("Download") { actions.download(r) }.keyboardShortcut(.defaultAction)
+                        }
                     }
-                case .upToDate(let current):
+                case .upToDate(let current, let note):
                     Text("You're up to date").font(.headline)
                     Text("FX Steam Launcher \(current) is the newest version available.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let note {
+                        Text(verbatim: note)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack {
                         Spacer()
                         Button("OK") { actions.dismiss() }.keyboardShortcut(.defaultAction)
                     }
                 case .failed(let message):
                     Text("Couldn't check for updates").font(.headline)
-                    Text(verbatim: message)
+                    failure(message)
+                case .downloading(let r, let received, let expected):
+                    Text("Downloading FX Steam Launcher \(r.versionString)…").font(.headline)
+                    if expected > 0 {
+                        ProgressView(value: Double(min(received, expected)), total: Double(expected)).progressViewStyle(.linear)
+                        Text("\(bytes(received)) of \(bytes(expected))").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ProgressView().progressViewStyle(.linear)
+                    }
+                    Text("SteamOS keeps running; the download continues when this window is hidden.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
-                        Button("Open Releases Page") { actions.releases() }
+                        Button("Cancel") { actions.cancelDownload() }
+                        Spacer()
+                        Button("Hide") { actions.dismiss() }.keyboardShortcut(.defaultAction)
+                    }
+                case .preparing(let r, let progress):
+                    Text("Preparing FX Steam Launcher \(r.versionString)…").font(.headline)
+                    ProgressView(value: progress).progressViewStyle(.linear)
+                    HStack {
+                        Spacer()
+                        Button("Hide") { actions.dismiss() }.keyboardShortcut(.defaultAction)
+                    }
+                case .ready(let r):
+                    Text("FX Steam Launcher \(r.versionString) is ready to install").font(.headline)
+                    Text("Install and Relaunch shuts SteamOS down cleanly (as Shut Down SteamOS does), installs the update and opens FX Steam Launcher again. Install on Quit installs it when you quit FX Steam Launcher or SteamOS restarts.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button("Install on Quit") { actions.installOnQuit() }.keyboardShortcut(.cancelAction)
+                        Button("Install and Relaunch") { actions.installNow() }.keyboardShortcut(.defaultAction)
+                    }
+                case .installing(let r):
+                    Text("Installing FX Steam Launcher \(r.versionString)…").font(.headline)
+                    Text("SteamOS is shutting down. FX Steam Launcher opens again once the update is installed.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
                         Spacer()
                         Button("OK") { actions.dismiss() }.keyboardShortcut(.defaultAction)
                     }
+                case .installFailed(let message):
+                    Text("Couldn't install the update").font(.headline)
+                    failure(message)
                 }
             }
         }
         .padding(20)
         .frame(width: UpdatePanel.width, alignment: .topLeading)
+    }
+
+    @ViewBuilder private func failure(_ message: String) -> some View {
+        Text(verbatim: message)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        HStack {
+            Button("Open Releases Page") { actions.releases() }
+            Spacer()
+            Button("OK") { actions.dismiss() }.keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func bytes(_ n: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: n), countStyle: .file)
     }
 
     private func subtitle(_ r: UpdateChecker.Release) -> String? {

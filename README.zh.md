@@ -700,8 +700,8 @@ ARM64 Steam Deck 客户端（`steamdeck_stable`），登录显示屏幕二维码
 
 `host/launcher/dist.sh` 把构建好的 `work/out/FX Steam Launcher.app` 做成可下载的
 `work/out/dist/FX-Steam-Launcher-<version>.dmg`（应用 + `/Applications` 链接）。去掉 `SteamacBuildOut` 键（本构建树路径）的包拷贝用 Developer ID
-重签，hardened runtime，安全时间戳：先签全部内嵌 Mach-O（`Frameworks/*.dylib`、`Resources` 中辅助程序），
-再用 `steamac-vm.entitlements` 签包（hypervisor、
+重签，hardened runtime，安全时间戳，由内向外：先签全部独立内嵌 Mach-O（`Frameworks/*.dylib`、`Resources` 中辅助程序、Sparkle 的 `Autoupdate`），
+再由深到浅签内嵌包（Sparkle 的 `Updater.app`、`Sparkle.framework`），最后用 `steamac-vm.entitlements` 签包（hypervisor、
 disable-library-validation 与音频输入——缺后者 hardened runtime 会静默挡住麦克风）。应用公证并装订，DMG 签名、公证、装订——
 Gatekeeper 离线也放行（首次打开仍有常规“来自互联网”提示）。
 
@@ -723,6 +723,32 @@ host/launcher/dist.sh       # 签名、公证、DMG
 （带补丁与配置的内核、Debian 快照 busybox、
 dosfstools、e2fsprogs、btrfs-progs、构建脚本、`README.txt`）；随 GitHub release 附 DMG 发布。
 旧版本：`scripts/gpl-sources.sh v1.2`。
+
+应用内更新（[更新检查](#更新检查)）：`dist.sh` 写入 `SUFeedURL`（`SPARKLE_FEED_URL`，默认
+`https://fxgl.github.io/steamac/appcast.xml`）、`SUPublicEDKey`（`SPARKLE_PUBLIC_KEY`，默认钥匙串中的密钥，`generate_keys -p`）、
+`SUVerifyUpdateBeforeExtraction` 与 `SURequireSignedFeed`；公证构建缺密钥即失败，`--no-notarize` 构建则保留 GitHub 检查。
+EdDSA 密钥对只需创建一次：`host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys`（Sparkle 工具随 SwiftPM 包提供，
+与内嵌框架同版本）；私钥留在登录钥匙串，绝不进仓库或 CI。请离线备份（`generate_keys -x <file>`；另一台 Mac 用
+`generate_keys -f <file>` 导入）：丢失后已安装的副本再也收不到更新。`build.sh` 令 `CFBundleVersion` 等于
+`CFBundleShortVersionString`（Sparkle 按它比较版本）。发布须按此顺序（feed 不得指向尚未上传的文件）：
+
+```sh
+host/launcher/dist.sh
+gh release create v<version> work/out/dist/FX-Steam-Launcher-<version>.dmg \
+    work/out/dist/FX-Steam-Launcher-<version>-gpl-sources.tar --notes-file <notes.md>
+host/launcher/appcast.sh    # docs/appcast.xml，增量更新附到 release
+git commit -m "appcast: <version>" docs/appcast.xml && git push    # GitHub Pages 发布 feed
+```
+
+`appcast.sh` 先确认 release 中的 DMG 就是本地文件（大小相同），再对 `work/out/updates`（旧版本归档；feed 取自
+`docs/appcast.xml`）运行 Sparkle 的 `generate_appcast`：新条目含 DMG 的 EdDSA 签名、取自 `LSMinimumSystemVersion` 的最低 macOS、
+GitHub release 说明（Markdown，内嵌）与该 release 的下载地址；对 `work/out/updates` 中至多 3 个旧版本 DMG 生成增量更新
+（内核与多数辅助程序很少变化），改为不含空格的文件名（GitHub 会改名此类文件）并上传到 release；整个 feed 签名。
+其余参数交给 `generate_appcast`，如 `--phased-rollout-interval 86400`（7 天内逐步推送）或 `--critical-update-version ''`。
+不要手改 `docs/appcast.xml`：签名覆盖整个文件。本地端到端测试：两个版本各用 `dist.sh --no-notarize`，带
+`SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast.xml` 与 `SPARKLE_PUBLIC_KEY=<测试公钥>`，每次之后运行
+`SPARKLE_KEY_FILE=<测试私钥> host/launcher/appcast.sh --local http://127.0.0.1:8765`，并在 `work/out/updates-local` 中运行
+`python3 -m http.server 8765`。
 
 ## 崩溃报告（Sentry）
 
@@ -786,23 +812,46 @@ Resources 中的辅助程序；每个都须通过 `sentry-cli debug-files check`
 
 ## 更新检查
 
-应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
-地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
-（`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，在虚拟机窗口旁边（屏幕有空间则不压住；不抢焦点——键盘与捕获鼠标留给虚拟机）出现窗口：“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
-附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
-**稍后提醒**（下次检查再提示）。应用菜单 **检查更新…**
-项（可用版本未被跳过时显示“有可用更新：X.Y…”带 新 角标，
-打开此窗口）立即检查——无 6 小时限制且含已跳过版本——
-报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
-（`update: …`）。设置 → 通用中 **启动时检查更新**复选框可关（立即生效）。开发版启动器 `work/out/steamac-vm` 启动时不检查（菜单可用）；源码构建（`bundle.sh`）与 release 会检查。
+release 在应用内自行更新（Sparkle）；其他构建检查 GitHub 最新 release 并提供 DMG。两者共用：虚拟机窗口旁的窗口
+（屏幕有空间则不压住；不抢焦点——键盘与捕获鼠标留给虚拟机）、应用菜单 **检查更新…** 项（发现版本后显示“有可用更新：X.Y…”带 新 角标），
+以及设置 → 通用中的 **启动时检查更新** 复选框（立即生效）。
 
-隐私：请求只发 `api.github.com`（GitHub），只带 `User-Agent:
+**应用内更新（release）。** release（`dist.sh` 把 feed 与 EdDSA 公钥写入 Info.plist）使用
+[Sparkle](https://sparkle-project.org) 2.10.1（`Contents/Frameworks/Sparkle.framework`，不含 XPC 服务：应用未沙盒化），
+以上述窗口取代其自带界面。复选框开启时，至多每 6 小时请求一次 `https://fxgl.github.io/steamac/appcast.xml`，运行期间也会检查。
+feed 整体签名，每个更新另有 EdDSA 签名，解包前都用应用内公钥校验（`SURequireSignedFeed`、`SUVerifyUpdateBeforeExtraction`）；
+Sparkle 还要求新应用的代码签名一致。需要更新 macOS（或其他 Mac）的版本不会提供；菜单检查会说明原因。新版本显示说明与按钮
+**安装更新**（后台下载——SteamOS 继续运行，**隐藏** 关闭窗口，**取消** 停止下载——随后由 Sparkle 安装器准备）、**跳过此版本**、
+**稍后提醒**。已准备好的更新提供 **安装并重新启动**：SteamOS 完全按“关闭 SteamOS”关机（电源键，至多 180 秒，绝不强制退出），
+随后 Sparkle 安装器在运行中的进程之外替换应用并重新打开；以及 **退出时安装**（关闭窗口亦然）：启动器退出时安装。
+feed 中有从已安装版本出发的增量更新（仅变化文件）时使用增量，否则下载完整 DMG。
+
+Sparkle 运行在虚拟机进程中（唯一运行 NSApplication 的进程）；退出从不经过 AppKit（客户机关机后 libkrun 结束进程），
+而客户机重启后监管进程会从包中启动新的虚拟机进程，这会与正在替换它的安装器竞争。因此，更新准备好后虚拟机进程在 run dir
+留下 `update` 标记，监管进程不再启动虚拟机；SteamOS 重启（来自 SteamOS 或“重启虚拟机”）改为“安装并重新启动”。
+Sparkle 自己的退出请求（在启动器发起的关机之后到来）被忽略，以免变成强制退出；用户第二次退出仍会强制退出。
+
+无法自我替换的副本保留下述 GitHub 检查（日志 `update: in-app updates off (…)`）：源码构建（`bundle.sh`）、开发版启动器、
+直接从 DMG 运行或被 Gatekeeper 转移（未移入“应用程序”）的应用，以及只读卷上的副本。
+
+隐私：Sparkle 的请求只发往 `fxgl.github.io`（feed）与 GitHub release 下载，带标准 `User-Agent`（应用与 Sparkle 版本）；
+无系统概况、Mac 或用户标识，无 Sentry。Sparkle 的状态（检查时间、跳过的版本）存于应用设置（`SU…` 键）。
+
+**GitHub release 检查（其他构建）。** 应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
+地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
+（`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，窗口显示“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
+附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
+**稍后提醒**（下次检查再提示）。菜单项立即检查——无 6 小时限制且含已跳过版本——
+报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
+（`update: …`）。开发版启动器 `work/out/steamac-vm` 启动时不检查（菜单可用）；源码构建（`bundle.sh`）会检查。
+
+GitHub 检查的隐私：请求只发 `api.github.com`（GitHub），只带 `User-Agent:
 FXSteamLauncher/<version>`（加标准 HTTP 头与上次应答 ETag，以便 GitHub 回“未修改”）；无 Mac 或用户标识、cookie 或 Sentry。检查时间、ETag、应答与跳过版本存于设置（`updateLastCheck`、`updateETag`、`updateCachedBody`、
 `updateCachedURL`、`updateSkippedVersion`）。
 
 测试：`STEAMAC_UPDATE_URL` 覆盖 URL（release JSON 或 `/releases` 数组，`http(s)://` 或
-`file://`；同时为开发版启动器启用启动检查），`STEAMAC_FAKE_VERSION` 覆盖启动器版本；FIFO `--control-fifo`：`update check|startup|state`、`update press
-download|skip|later|ok|releases`、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。
+`file://`；同时为开发版启动器启用启动检查），`STEAMAC_FAKE_VERSION` 覆盖启动器版本，`STEAMAC_UPDATE_FEED` 覆盖应用内更新的 feed；FIFO `--control-fifo`：`update check|startup|state`、`update press
+download|skip|later|ok|releases|cancel|hide|install|quit`（`install` / `quit`：安装并重新启动 / 退出时安装）、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。本地 feed：见[分发](#分发dmg)。
 
 ## 游戏统计
 

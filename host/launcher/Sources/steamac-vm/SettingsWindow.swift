@@ -354,7 +354,9 @@ private struct GeneralTab: View {
                 CrashReportsToggle(settings: settings, showsApplies: true)
                 Toggle(isOn: $settings.checkForUpdates) {
                     Label2(title: "Check for updates at startup",
-                           detail: String(localized: "Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app version is sent.")
+                           detail: (UpdateChecker.shared.inAppFeedHost.map {
+                                       String(localized: "Asks \($0) for the newest version, at most every 6 hours; only the app version is sent. Updates download and install in the app.")
+                                   } ?? String(localized: "Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app version is sent."))
                                + " " + (CrashReporting.buildKind == .development
                                    ? String(localized: "This development build never checks at startup; FX Steam Launcher > Check for Updates… does.")
                                    : String(localized: "FX Steam Launcher > Check for Updates… checks at any time.")),

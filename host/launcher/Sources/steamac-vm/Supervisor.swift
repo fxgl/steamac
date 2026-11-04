@@ -22,6 +22,9 @@ enum Supervisor {
     static var bootNumber: Int { Int(ProcessInfo.processInfo.environment[bootEnv] ?? "1") ?? 1 }
     static var windowFrame: String? { ProcessInfo.processInfo.environment[frameEnv] }
     static func rebootMarker(_ dir: String) -> String { dir + "/reboot" }
+    /// Sparkle prepared an update (SparkleUpdates): it installs once this launcher exits, so no
+    /// VM process boots from the bundle again.
+    static func updateMarker(_ dir: String) -> String { dir + "/update" }
     private static let profileDriverEnv = "STEAMAC_PROFILE_DRIVER"
     private static let profileLaunchEnv = "STEAMAC_PROFILE_LAUNCH"
     static var profileDriver: LauncherSettings.VulkanDriver? {
@@ -201,6 +204,10 @@ enum Supervisor {
             CrashReporting.vmExited(vmExit)
 
             let marker = rebootMarker(dir)
+            if FileManager.default.fileExists(atPath: updateMarker(dir)), FileManager.default.fileExists(atPath: marker) {
+                try? FileManager.default.removeItem(atPath: marker)
+                log("update: not booting again: the prepared update installs now that the launcher exits")
+            }
             if let contents = try? String(contentsOfFile: marker, encoding: .utf8) {
                 try? FileManager.default.removeItem(atPath: marker)
                 let text = contents.trimmingCharacters(in: .whitespacesAndNewlines)

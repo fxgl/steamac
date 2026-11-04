@@ -57,7 +57,7 @@ Valve's signed image from Valve's servers after the user accepts Valve's End Use
 Agreement for SteamOS and Steam Client Back-Up Image and the Steam Subscriber Agreement.
 
 Third-party software distributed in the app (FX Steam Launcher.app/Contents/Resources/licenses):
-libkrun, virglrenderer, MoltenVK, libepoxy, gvproxy, desync, zstd, sentry-cocoa, DXMT, LLVM, wmtr,
+libkrun, virglrenderer, MoltenVK, libepoxy, gvproxy, desync, zstd, sentry-cocoa, Sparkle, DXMT, LLVM, wmtr,
 the Linux kernel, busybox, dosfstools, e2fsprogs, btrfs-progs, Mesa and their dependencies, each
 under its own license. Complete corresponding source for the GPL and LGPL components of each release is attached
 to that release on GitHub (FX-Steam-Launcher-<version>-gpl-sources.tar).

@@ -1,28 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Установка FX Steam Launcher неполная: инструмент загрузки SteamOS (desync) отсутствует, недоступен для чтения или запуска. Скачайте последнюю версию DMG заново и скопируйте FX Steam Launcher в «Программы», заменив старую копию. Проверьте, не заблокировала или не удалила ли desync защитная программа, затем повторите попытку."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "FX Steam Launcher 安装不完整：SteamOS 下载工具（desync）缺失、无法读取或无法执行。请重新下载最新的 DMG，将 FX Steam Launcher 复制到“应用程序”并替换旧副本。请检查安全软件是否阻止或删除了 desync 文件，然后重试。"
-          }
-        }
-      }
-    },
     "" : {},
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
@@ -89,6 +67,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@（未连接）"
+          }
+        }
+      }
+    },
+    "%@ (not found)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (не найдено)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（未找到）"
           }
         }
       }
@@ -213,6 +207,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 位于只读宗卷上：请为 SteamOS 磁盘选择可写入的位置"
+          }
+        }
+      }
+    },
+    "%@ of %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ из %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ / %@"
           }
         }
       }
@@ -492,6 +508,22 @@
         }
       }
     },
+    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. Безопасность: virtio-fs не ограничивает SteamOS этой папкой; с включённой общей папкой root в SteamOS потенциально может прочитать всё, что доступно вашему пользователю Mac. Открывайте папку только той SteamOS, которой доверяете."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。安全：virtio-fs 不会把 SteamOS 限制在此文件夹内；设置共享后，SteamOS 中的 root 可能读取你的 Mac 用户能读取的任何内容。仅与你信任的 SteamOS 共享。"
+          }
+        }
+      }
+    },
     "A disk-creation file or folder is no longer available. Reconnect the drive and check that the destination and download cache have not been moved or deleted, then try again." : {
       "localizations" : {
         "ru" : {
@@ -552,6 +584,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "同名文件已存在，且不会被覆盖。请选择其他名称。"
+          }
+        }
+      }
+    },
+    "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый подкаталог в /home/steamos/ (буквы, цифры, / _ . -). Сохраняется по Return или при выходе из поля."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/home/steamos/ 下的新子目录（字母、数字、/ _ . -）。按 Return 或离开该字段时保存。"
           }
         }
       }
@@ -829,6 +877,22 @@
         }
       }
     },
+    "Asks %@ for the newest version, at most every 6 hours; only the app version is sent. Updates download and install in the app." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяет наличие новой версии на %@ не чаще одного раза в 6 часов; отправляется только версия приложения. Обновления загружаются и устанавливаются в приложении."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多每 6 小时向 %@ 查询一次最新版本；仅发送应用版本号。更新在应用内下载并安装。"
+          }
+        }
+      }
+    },
     "Asks GitHub (api.github.com) for the newest release, at most every 6 hours; only the app version is sent." : {
       "localizations" : {
         "ru" : {
@@ -1017,6 +1081,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "内置：%@"
+          }
+        }
+      }
+    },
+    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through). Automatic also passes generic HID joysticks and gamepads unsupported by macOS through as themselves, on a free HID-capable player. They yield to GameController controllers; multi-axis devices are not matched. Turn off Virtual controller to disable this; configure their layout and calibration in SteamOS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую). Режим «Автоматически» также передаёт обычные HID-джойстики и геймпады, не поддерживаемые macOS, как есть свободному игроку с поддержкой HID. Они уступают место контроллерам GameController; многоосевые устройства не сопоставляются. Чтобы отключить это, выключите «Виртуальный контроллер»; раскладка и калибровка настраиваются в SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。自动模式还会将 macOS 不支持的通用 HID 操纵杆和手柄按其本身直通给支持 HID 的空闲玩家。它们会让位给 GameController 控制器；不匹配多轴设备。关闭“虚拟控制器”可停用此功能；请在 SteamOS 中设置布局和校准。"
           }
         }
       }
@@ -1267,6 +1347,22 @@
         }
       }
     },
+    "Choose Folder…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать папку…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择文件夹…"
+          }
+        }
+      }
+    },
     "Choose Library…" : {
       "localizations" : {
         "ru" : {
@@ -1295,6 +1391,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择 SteamOS 磁盘映像"
+          }
+        }
+      }
+    },
+    "Choose a folder to share with SteamOS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите папку для общего доступа из SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择要与 SteamOS 共享的文件夹"
           }
         }
       }
@@ -1543,6 +1655,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法检查更新"
+          }
+        }
+      }
+    },
+    "Couldn't install the update" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось установить обновление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法安装更新"
           }
         }
       }
@@ -2076,6 +2204,22 @@
         }
       }
     },
+    "Downloading FX Steam Launcher %@…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка FX Steam Launcher %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在下载 FX Steam Launcher %@…"
+          }
+        }
+      }
+    },
     "Downloading Steam update" : {
       "localizations" : {
         "ru" : {
@@ -2352,6 +2496,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "FX Steam Launcher %@ 已发布 — 当前版本为 %@"
+          }
+        }
+      }
+    },
+    "FX Steam Launcher %@ is ready to install" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher %@ готов к установке"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher %@ 已可安装"
           }
         }
       }
@@ -3140,6 +3300,86 @@
         }
       }
     },
+    "Install Update" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装更新"
+          }
+        }
+      }
+    },
+    "Install and Relaunch" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить и перезапустить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装并重新启动"
+          }
+        }
+      }
+    },
+    "Install and Relaunch shuts SteamOS down cleanly (as Shut Down SteamOS does), installs the update and opens FX Steam Launcher again. Install on Quit installs it when you quit FX Steam Launcher or SteamOS restarts." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Установить и перезапустить» штатно выключает SteamOS (как «Выключить SteamOS»), устанавливает обновление и снова открывает FX Steam Launcher. «Установить при выходе» установит его, когда вы завершите FX Steam Launcher или SteamOS перезагрузится."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“安装并重新启动”会正常关闭 SteamOS（与“关闭 SteamOS”相同），安装更新并重新打开 FX Steam Launcher。“退出时安装”会在你退出 FX Steam Launcher 或 SteamOS 重启时安装。"
+          }
+        }
+      }
+    },
+    "Install on Quit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить при выходе"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出时安装"
+          }
+        }
+      }
+    },
+    "Installing FX Steam Launcher %@…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установка FX Steam Launcher %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在安装 FX Steam Launcher %@…"
+          }
+        }
+      }
+    },
     "Installing Steam update" : {
       "localizations" : {
         "ru" : {
@@ -3660,6 +3900,22 @@
         }
       }
     },
+    "Mount point in SteamOS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Точка монтирования в SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 中的挂载点"
+          }
+        }
+      }
+    },
     "Mounting SteamOS (slot %@)…" : {
       "localizations" : {
         "ru" : {
@@ -3886,6 +4142,22 @@
         }
       }
     },
+    "None" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无"
+          }
+        }
+      }
+    },
     "Normal (20 ms)" : {
       "localizations" : {
         "ru" : {
@@ -3920,6 +4192,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "不是可用的 SteamOS 磁盘"
+          }
+        }
+      }
+    },
+    "Not a valid mount point; not saved" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недопустимая точка монтирования; не сохранено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挂载点无效；未保存"
           }
         }
       }
@@ -4417,6 +4705,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已关机"
+          }
+        }
+      }
+    },
+    "Preparing FX Steam Launcher %@…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подготовка FX Steam Launcher %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备 FX Steam Launcher %@…"
           }
         }
       }
@@ -5423,6 +5727,22 @@
         }
       }
     },
+    "Shared folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общая папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享文件夹"
+          }
+        }
+      }
+    },
     "Short fade; the volume comes back when you switch back." : {
       "localizations" : {
         "ru" : {
@@ -6205,6 +6525,22 @@
         }
       }
     },
+    "SteamOS is shutting down. FX Steam Launcher opens again once the update is installed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS выключается. FX Steam Launcher откроется снова, когда обновление будет установлено."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 正在关闭。更新安装完成后 FX Steam Launcher 会重新打开。"
+          }
+        }
+      }
+    },
     "SteamOS is sleeping" : {
       "localizations" : {
         "ru" : {
@@ -6234,6 +6570,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SteamOS 已挂起"
+          }
+        }
+      }
+    },
+    "SteamOS keeps running; the download continues when this window is hidden." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS продолжает работать; загрузка продолжится и при скрытом окне."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 继续运行；隐藏此窗口后下载仍会继续。"
           }
         }
       }
@@ -6620,6 +6972,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Mac 上拷贝的文本和图像可粘贴到 SteamOS（Ctrl+V），反之亦然；文本最大 1 MB，图像最大 16 MB。也支持桌面模式。"
+          }
+        }
+      }
+    },
+    "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установка FX Steam Launcher неполная: инструмент загрузки SteamOS (desync) отсутствует, недоступен для чтения или запуска. Скачайте последнюю версию DMG заново и скопируйте FX Steam Launcher в «Программы», заменив старую копию. Проверьте, не заблокировала или не удалила ли desync защитная программа, затем повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher 安装不完整：SteamOS 下载工具（desync）缺失、无法读取或无法执行。请重新下载最新的 DMG，将 FX Steam Launcher 复制到“应用程序”并替换旧副本。请检查安全软件是否阻止或删除了 desync 文件，然后重试。"
           }
         }
       }
@@ -8639,166 +9013,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "you@example.com"
-          }
-        }
-      }
-    },
-    "%@ (not found)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ (не найдено)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@（未找到）"
-          }
-        }
-      }
-    },
-    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. Безопасность: virtio-fs не ограничивает SteamOS этой папкой; с включённой общей папкой root в SteamOS потенциально может прочитать всё, что доступно вашему пользователю Mac. Открывайте папку только той SteamOS, которой доверяете."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。安全：virtio-fs 不会把 SteamOS 限制在此文件夹内；设置共享后，SteamOS 中的 root 可能读取你的 Mac 用户能读取的任何内容。仅与你信任的 SteamOS 共享。"
-          }
-        }
-      }
-    },
-    "Choose Folder…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрать папку…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择文件夹…"
-          }
-        }
-      }
-    },
-    "Choose a folder to share with SteamOS" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите папку для общего доступа из SteamOS"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择要与 SteamOS 共享的文件夹"
-          }
-        }
-      }
-    },
-    "Mount point in SteamOS" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Точка монтирования в SteamOS"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 中的挂载点"
-          }
-        }
-      }
-    },
-    "None" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нет"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无"
-          }
-        }
-      }
-    },
-    "Not a valid mount point; not saved" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Недопустимая точка монтирования; не сохранено"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "挂载点无效；未保存"
-          }
-        }
-      }
-    },
-    "Shared folder" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Общая папка"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "共享文件夹"
-          }
-        }
-      }
-    },
-    "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Новый подкаталог в /home/steamos/ (буквы, цифры, / _ . -). Сохраняется по Return или при выходе из поля."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "/home/steamos/ 下的新子目录（字母、数字、/ _ . -）。按 Return 或离开该字段时保存。"
-          }
-        }
-      }
-    },
-    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through). Automatic also passes generic HID joysticks and gamepads unsupported by macOS through as themselves, on a free HID-capable player. They yield to GameController controllers; multi-axis devices are not matched. Turn off Virtual controller to disable this; configure their layout and calibration in SteamOS." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую). Режим «Автоматически» также передаёт обычные HID-джойстики и геймпады, не поддерживаемые macOS, как есть свободному игроку с поддержкой HID. Они уступают место контроллерам GameController; многоосевые устройства не сопоставляются. Чтобы отключить это, выключите «Виртуальный контроллер»; раскладка и калибровка настраиваются в SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。自动模式还会将 macOS 不支持的通用 HID 操纵杆和手柄按其本身直通给支持 HID 的空闲玩家。它们会让位给 GameController 控制器；不匹配多轴设备。关闭“虚拟控制器”可停用此功能；请在 SteamOS 中设置布局和校准。"
           }
         }
       }

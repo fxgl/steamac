@@ -156,6 +156,15 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
         requestShutdown()
     }
 
+    /// Sparkle's Install and Relaunch (SparkleUpdates): SteamOS powers off as with Shut Down
+    /// (power key, grace period, never a force quit); Sparkle installs once the launcher is gone.
+    /// A shutdown or restart already under way serves (a restart became the update's relaunch).
+    func shutdownForUpdate() {
+        if requestedAt != nil { log("update: SteamOS is already shutting down"); return }
+        if let progress, case .shutdown = progress.state.phase { log("update: SteamOS is already shutting down"); return }
+        requestShutdown()
+    }
+
     /// "Restart VM" (menu / Settings): power the guest off cleanly, then the supervisor boots it
     /// again with the current settings.
     func requestRestart() {
@@ -217,12 +226,24 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// a user's Quit asks first (the suspended state is lost; SuspendController.askQuit, answered
     /// later without a modal loop); logout / restart / shutdown of the Mac does not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Sparkle's installer asks the app to quit once the update is handed over; SteamOS's
+        // shutdown for it is under way (shutdownForUpdate): another request would force-quit.
+        if Lifecycle.quitByUpdater {
+            log("update: quit request from Sparkle's installer: SteamOS's shutdown for the update is under way")
+            return .terminateCancel
+        }
         if requestedAt == nil, let suspender, suspender.suspended, !Lifecycle.quitBySystem {
             suspender.askQuit { [weak self] in self?.requestShutdown() }
             return .terminateCancel
         }
         requestShutdown()
         return .terminateCancel
+    }
+
+    private static var quitByUpdater: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              let pid = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))?.int32Value, pid > 0 else { return false }
+        return SparkleUpdates.isUpdater(pid: pid)
     }
 
     /// The quit Apple event comes from a logout, restart or shutdown of the Mac.
@@ -310,6 +331,8 @@ do {
     let guestLogs = GuestLogs(port: progressPort)
     progressPort.start { line in if !guestLogs.handle(line) { progress.guestLine(line) } }
     progress.onRebootIntent = {
+        // A prepared update installs instead and Sparkle opens the new launcher (SparkleUpdates).
+        if UpdateChecker.shared.takeOverReboot() { return }
         // Tell the supervisor to boot again once libkrun exits; remember where the window was
         // (unless Settings changed the default window size: then the next boot opens at that).
         guard let dir = Supervisor.runDir else { return }
@@ -540,7 +563,7 @@ do {
     if options.fullscreen && !wc.window.styleMask.contains(.fullScreen) { wc.window.toggleFullScreen(nil) }
     gamepad?.start()
     // New-version check (first boot of this launch; Settings > General), after the window is up.
-    UpdateChecker.shared.start { [weak wc] in wc?.window }
+    UpdateChecker.shared.start(vmWindow: { [weak wc] in wc?.window }, shutdownForUpdate: { lifecycle.shutdownForUpdate() })
     if let d = options.inputSelftestDelay { InputSelfTest.schedule(after: d, window: wc, gamepad: gamepad) }
     if let d = options.resizeSelftestDelay {
         ResizeSelfTest.start(after: d, window: wc, display: display, progress: progress,

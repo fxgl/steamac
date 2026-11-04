@@ -164,6 +164,9 @@ source('libepoxy', epoxy_version.group(1), 'MIT', host + '/libepoxy.0.dylib',
 sentry = root / 'host/launcher/.build/checkouts/sentry-cocoa'
 source('sentry-cocoa', '9.30.0', None, launcher,
        'https://github.com/getsentry/sentry-cocoa/tree/9.30.0', sentry)
+# MIT, plus the notices of the code it includes (bsdiff, sais-lite, ed25519, SUSignatureVerifier).
+source('Sparkle', '2.10.1', 'MIT AND BSD-2-Clause AND Zlib', host + '/Sparkle.framework',
+       'https://github.com/sparkle-project/Sparkle/tree/2.10.1', root / 'host/launcher/.build/checkouts/Sparkle')
 zstd = root / 'host/launcher/Sources/CZstd/zstd'
 zstd_version = require(zstd / 'VERSION').read_text().split()[0]
 source('zstd', zstd_version, 'BSD-3-Clause', launcher,

@@ -1043,8 +1043,9 @@ the client reconnects.
 `host/launcher/dist.sh` turns the built `work/out/FX Steam Launcher.app` into the downloadable
 `work/out/dist/FX-Steam-Launcher-<version>.dmg` (the app + a link to `/Applications`). A copy of the
 bundle without the `SteamacBuildOut` key (the path to this build tree) is re-signed with Developer ID,
-hardened runtime, and a secure timestamp: first all nested Mach-O files (`Frameworks/*.dylib`, helper
-programs in `Resources`), then the bundle with `steamac-vm.entitlements` (hypervisor,
+hardened runtime, and a secure timestamp, inside-out: first all loose nested Mach-O files
+(`Frameworks/*.dylib`, helper programs in `Resources`, Sparkle's `Autoupdate`), then nested bundles
+deepest first (Sparkle's `Updater.app`, `Sparkle.framework`), then the bundle with `steamac-vm.entitlements` (hypervisor,
 disable-library-validation, and audio-input — without the latter, hardened runtime silently blocks the
 microphone). The app is notarized and stapled, then the DMG is signed, notarized, and stapled —
 Gatekeeper allows it through even offline (the usual “downloaded from the Internet” prompt still
@@ -1070,6 +1071,39 @@ gvproxy/desync) in `Contents/Resources/licenses`, plus the project's `LICENSE` a
 code of GPL components (the kernel with patches and configuration, busybox from the Debian snapshot,
 dosfstools, e2fsprogs, btrfs-progs, build scripts, `README.txt`); attach it to the GitHub release
 alongside the DMG. For an older release: `scripts/gpl-sources.sh v1.2`.
+
+In-app updates ([Update check](#update-check)): `dist.sh` adds `SUFeedURL` (`SPARKLE_FEED_URL`, by default
+`https://fxgl.github.io/steamac/appcast.xml`), `SUPublicEDKey` (`SPARKLE_PUBLIC_KEY`, by default the
+Keychain's key, `generate_keys -p`), `SUVerifyUpdateBeforeExtraction`, and `SURequireSignedFeed`; a
+notarized build fails without a key, a `--no-notarize` one then keeps the GitHub check. Create the EdDSA key
+pair once with `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` (Sparkle's tools
+come with the SwiftPM package, the same version as the embedded framework): the private key stays in the
+login Keychain, never in the repository or CI. Back it up offline (`generate_keys -x <file>`;
+`generate_keys -f <file>` imports it on another Mac): without it, no update can reach installed copies
+any more. `build.sh` sets `CFBundleVersion` to `CFBundleShortVersionString` (Sparkle orders versions by it).
+A release, in this order (the feed must never point at assets that are not uploaded yet):
+
+```sh
+host/launcher/dist.sh
+gh release create v<version> work/out/dist/FX-Steam-Launcher-<version>.dmg \
+    work/out/dist/FX-Steam-Launcher-<version>-gpl-sources.tar --notes-file <notes.md>
+host/launcher/appcast.sh    # docs/appcast.xml, delta updates attached to the release
+git commit -m "appcast: <version>" docs/appcast.xml && git push    # GitHub Pages publishes the feed
+```
+
+`appcast.sh` checks that the release's DMG is the local one (same size), then runs Sparkle's
+`generate_appcast` on `work/out/updates` (the archives of earlier versions; the feed is taken from
+`docs/appcast.xml`): the new item with the DMG's EdDSA signature, the minimum macOS from
+`LSMinimumSystemVersion`, the release notes of the GitHub release (Markdown, embedded) and the download
+URL on that release; delta updates from up to 3 earlier versions whose DMGs are in `work/out/updates`
+(the kernel and most helpers rarely change), renamed without spaces (GitHub renames such assets) and
+uploaded to the release; the whole feed signed. Further arguments go to `generate_appcast`, e.g.
+`--phased-rollout-interval 86400` (the update reaches users over 7 days) or `--critical-update-version ''`.
+Never edit `docs/appcast.xml` by hand: its signature covers the whole file. A local end-to-end test:
+`dist.sh --no-notarize` with `SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast.xml` and
+`SPARKLE_PUBLIC_KEY=<test key>` for two versions, `SPARKLE_KEY_FILE=<test private key>
+host/launcher/appcast.sh --local http://127.0.0.1:8765` after each, and
+`python3 -m http.server 8765` in `work/out/updates-local`.
 
 ## Crash reports (Sentry)
 
@@ -1165,24 +1199,58 @@ out): 1.9 shipped without an upload, and crashes in `steamac-vm` and libkrun sta
 
 ## Update check
 
-When the app starts (once per launch, not on every VM reboot, and no more than once every 6 hours —
-even across launches), the launcher requests the latest release in the background without delaying
-startup from `https://api.github.com/repos/fxgl/steamac/releases/latest` (unauthenticated, 10 s
-timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with its own version
-(`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is available, a window
-appears next to the VM window (not over it if there is room on screen; without taking focus — the
-keyboard and captured mouse remain with the VM): “FX Steam Launcher X.Y is available — you have …”,
-with the release description and buttons **Download** (opens the release's `.dmg` in a browser, or
-the release page otherwise), **Skip This Version** (this version is no longer offered at startup),
-and **Remind Me Later** (offers it again at the next check). The app menu's **Check for Updates…**
-item (while the available version has not been skipped, “Update Available: X.Y…” with a New badge,
-opens this window) checks immediately — without the 6-hour limit and including skipped versions —
-and reports “You're up to date” or an error; network and HTTP errors at startup are only logged
-(`update: …`). Disable it with the **Check for updates at startup** checkbox in Settings → General
-(effective immediately). The dev launcher `work/out/steamac-vm` does not check at startup (the menu
-works); source builds (`bundle.sh`) and releases do.
+Releases update themselves in the app (Sparkle); every other build checks GitHub's latest release and
+offers the DMG. Both use the same window next to the VM window (not over it if there is room on screen;
+without taking focus — the keyboard and captured mouse remain with the VM), the app menu's **Check for
+Updates…** item (“Update Available: X.Y…” with a New badge once a version was found), and the **Check for
+updates at startup** checkbox in Settings → General (effective immediately).
 
-Privacy: the request goes only to `api.github.com` (GitHub) and includes only `User-Agent:
+**In-app updates (releases).** A release (`dist.sh` puts the feed and its EdDSA public key into
+Info.plist) runs [Sparkle](https://sparkle-project.org) 2.10.1 (`Contents/Frameworks/Sparkle.framework`,
+without its XPC services: the app is not sandboxed) with its own UI replaced by the window above. While
+the checkbox is on, it fetches `https://fxgl.github.io/steamac/appcast.xml` at most every 6 hours, also
+during a session. The feed is signed as a whole and every update carries its own EdDSA signature, both
+checked against the key in the app before anything is unpacked (`SURequireSignedFeed`,
+`SUVerifyUpdateBeforeExtraction`); Sparkle also requires the new app's code signature to match.
+Versions that need a newer macOS (or another Mac) are not offered; the menu's check says why. A new
+version shows its release notes and **Install Update** (downloads in the background — SteamOS keeps
+running, **Hide** closes the window, **Cancel** stops the download — then Sparkle's installer prepares
+it), **Skip This Version**, and **Remind Me Later**. A prepared update offers **Install and Relaunch**:
+SteamOS shuts down exactly as with Shut Down SteamOS (power key, up to 180 s, never a force quit), then
+Sparkle's installer replaces the app from outside the running process and opens it again; and
+**Install on Quit** (also closing the window): the update installs whenever the launcher exits. A delta
+update (only the changed files) is used when the feed has one for the installed version, else the full DMG.
+
+The VM process hosts Sparkle (it is the only one running NSApplication); quitting never goes through
+AppKit (the guest powers off and libkrun ends the process), and the supervisor starts a new VM process
+from the bundle after a guest reboot, which would race with the installer replacing it. So, while an
+update is prepared, the VM process leaves an `update` marker in the run dir and the supervisor never
+boots again; a SteamOS restart (from SteamOS or Restart VM) becomes Install and Relaunch. Sparkle's own
+quit request (it follows the shutdown the launcher started) is ignored, so it cannot turn into a force
+quit; the user's second quit still force-quits as before.
+
+Copies that cannot replace themselves keep the GitHub check below (logged as `update: in-app updates
+off (…)`): source builds (`bundle.sh`), the dev launcher, an app started from the DMG or translocated by
+Gatekeeper (not moved to Applications), and copies on a read-only volume.
+
+Privacy: Sparkle's requests go only to `fxgl.github.io` (the feed) and GitHub release downloads, with
+its standard `User-Agent` (app and Sparkle versions); no system profile, no Mac or user identifiers, no
+Sentry. Sparkle keeps its state (last check time, skipped version) in the app's defaults (`SU…` keys).
+
+**GitHub release check (other builds).** When the app starts (once per launch, not on every VM reboot,
+and no more than once every 6 hours — even across launches), the launcher requests the latest release in
+the background without delaying startup from `https://api.github.com/repos/fxgl/steamac/releases/latest`
+(unauthenticated, 10 s timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with
+its own version (`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is
+available, the window shows “FX Steam Launcher X.Y is available — you have …”, with the release
+description and buttons **Download** (opens the release's `.dmg` in a browser, or the release page
+otherwise), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
+(offers it again at the next check). The menu item checks immediately — without the 6-hour limit and
+including skipped versions — and reports “You're up to date” or an error; network and HTTP errors at
+startup are only logged (`update: …`). The dev launcher `work/out/steamac-vm` does not check at startup
+(the menu works); source builds (`bundle.sh`) do.
+
+Privacy of the GitHub check: the request goes only to `api.github.com` (GitHub) and includes only `User-Agent:
 FXSteamLauncher/<version>` (plus standard HTTP headers and the previous response's ETag, so GitHub can
 reply “not modified”); no Mac or user identifiers, cookies, or Sentry. The check time, ETag, response,
 and skipped version are stored in settings (`updateLastCheck`, `updateETag`, `updateCachedBody`,
@@ -1190,9 +1258,11 @@ and skipped version are stored in settings (`updateLastCheck`, `updateETag`, `up
 
 Tests: `STEAMAC_UPDATE_URL` overrides the URL (release JSON or a `/releases` array, `http(s)://` or
 `file://`; it also enables the startup check for the dev launcher), `STEAMAC_FAKE_VERSION` overrides
-the launcher version; FIFO `--control-fifo`: `update check|startup|state`, `update press
-download|skip|later|ok|releases`, `update dump PNG` (the window and `-with-vm.png` — together with the
-VM window, as shown on screen).
+the launcher version, `STEAMAC_UPDATE_FEED` the appcast of in-app updates; FIFO `--control-fifo`:
+`update check|startup|state`, `update press download|skip|later|ok|releases|cancel|hide|install|quit`
+(`install` / `quit`: Install and Relaunch / Install on Quit), `update dump PNG` (the window and
+`-with-vm.png` — together with the VM window, as shown on screen). Local feed: see
+[Distribution](#distribution-dmg).
 
 ## Game statistics
 

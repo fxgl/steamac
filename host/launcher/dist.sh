@@ -4,9 +4,12 @@
 # a signed, notarized and stapled DMG with an /Applications link:
 #   work/out/dist/FX Steam Launcher.app
 #   work/out/dist/FX-Steam-Launcher-<CFBundleShortVersionString>.dmg
-# The copy drops the dev-only SteamacBuildOut Info.plist key (this build tree's path). Every nested
-# Mach-O (Frameworks dylibs, helper tools in Resources) is signed before the bundle, so helpers
-# added to bundle.sh later are covered without changes here.
+# The copy drops the dev-only SteamacBuildOut Info.plist key (this build tree's path) and gets the
+# in-app update configuration (SparkleUpdates): SUFeedURL, SUPublicEDKey, SUVerifyUpdateBeforeExtraction
+# and SURequireSignedFeed. Nested code is signed inside-out before the bundle: every loose Mach-O
+# (Frameworks dylibs, helper tools in Resources, Sparkle's Autoupdate), then nested bundles deepest
+# first (Sparkle's Updater.app, Sparkle.framework), so code added to bundle.sh later is covered
+# without changes here. host/launcher/appcast.sh publishes the DMG to the update feed.
 #
 #   host/launcher/dist.sh [--no-notarize] [--no-sentry-upload]
 #
@@ -27,6 +30,12 @@
 #                          signing now, and every shipped Mach-O must pass sentry-cli debug-files check.
 #                          The dSYMs are kept as work/out/dist/FX-Steam-Launcher-<version>-dSYMs (later
 #                          builds replace work/out/dSYMs).
+#   SPARKLE_FEED_URL       the appcast (default https://fxgl.github.io/steamac/appcast.xml)
+#   SPARKLE_PUBLIC_KEY     its EdDSA public key (default: the keychain's, generate_keys -p; Sparkle's
+#                          generate_keys in host/launcher/.build/artifacts/sparkle/Sparkle/bin creates
+#                          the key pair once; back the private key up with generate_keys -x FILE).
+#                          Required for a notarized build; without it a --no-notarize build keeps
+#                          the GitHub release check.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -90,6 +99,17 @@ if [[ $notarize == 1 ]]; then
 (or set NOTARY_PROFILE, or pass --no-notarize for a local test build)"
 fi
 
+# In-app updates (SparkleUpdates): releases always carry the feed and its public key.
+SPARKLE_BIN="$HERE/.build/artifacts/sparkle/Sparkle/bin"
+feed=${SPARKLE_FEED_URL:-https://fxgl.github.io/steamac/appcast.xml}
+ed_key=${SPARKLE_PUBLIC_KEY:-$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null || true)}
+if [[ -z $ed_key ]]; then
+    [[ $notarize == 0 ]] || die "no Sparkle EdDSA key in the keychain (in-app updates); create the key pair once with
+  $SPARKLE_BIN/generate_keys
+back up the private key (generate_keys -x <file>, keep it offline), or set SPARKLE_PUBLIC_KEY"
+    echo "no Sparkle EdDSA key: this test build keeps the GitHub release check"
+fi
+
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SRC/Contents/Info.plist")
 DMG_NAME="FX-Steam-Launcher-$version.dmg"
 mkdir -p "$DIST"
@@ -109,20 +129,38 @@ ditto "$SRC" "$APP"
 if [[ $notarize == 1 ]]; then
     /usr/libexec/PlistBuddy -c "Add :SteamacDistTeamID string $team" "$APP/Contents/Info.plist"
 fi
+if [[ -n $ed_key ]]; then
+    for entry in "SUFeedURL string $feed" "SUPublicEDKey string $ed_key" \
+                 "SUVerifyUpdateBeforeExtraction bool true" "SURequireSignedFeed bool true"; do
+        /usr/libexec/PlistBuddy -c "Add :$entry" "$APP/Contents/Info.plist"
+    done
+    echo "in-app updates from $feed (EdDSA public key $ed_key)"
+fi
 
 echo "=== signing with \"$identity\" (hardened runtime)"
 sign() { codesign --force --timestamp --options runtime --sign "$sign_id" "$@"; }
 main_exe="$APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+bundles=()      # nested bundles, deepest first
+bundle_exes=()  # their main executables (signed with the bundle)
+while IFS= read -r -d '' b; do
+    bundles+=("$b")
+    case $b in
+        *.framework) bundle_exes+=("$b/Versions/$(readlink "$b/Versions/Current")/$(basename "$b" .framework)") ;;
+        *) bundle_exes+=("$b/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$b/Contents/Info.plist")") ;;
+    esac
+done < <(find "$APP/Contents" -depth -type d \( -name '*.app' -o -name '*.framework' -o -name '*.xpc' \) -print0)
 nested=()
 while IFS= read -r -d '' f; do
     [[ $f == "$main_exe" ]] && continue
+    for e in ${bundle_exes[@]+"${bundle_exes[@]}"}; do [[ $f == "$e" ]] && continue 2; done
     file -b "$f" | grep -q '^Mach-O' && nested+=("$f")
 done < <(find "$APP/Contents" -type f -print0)
 for f in "${nested[@]}"; do sign "$f"; done
+for b in ${bundles[@]+"${bundles[@]}"}; do sign "$b"; done
 sign --entitlements "$ENTITLEMENTS" "$APP"
 
 codesign --verify --deep --strict "$APP"
-for f in "$main_exe" "${nested[@]}"; do
+for f in "$main_exe" "${nested[@]}" ${bundles[@]+"${bundles[@]}"}; do
     info=$(codesign -dv "$f" 2>&1)
     grep -q "TeamIdentifier=$team" <<<"$info" || die "${f#"$APP/"}: not signed by team $team"
     grep -q 'flags=0x10000(runtime)' <<<"$info" || die "${f#"$APP/"}: hardened runtime flag missing"
@@ -175,6 +213,7 @@ mv "$WORK/$DMG_NAME" "$DIST/$DMG_NAME"
 echo "built $DIST/$DMG_NAME ($(du -h "$DIST/$DMG_NAME" | cut -f1), sha256 $(shasum -a 256 "$DIST/$DMG_NAME" | cut -d' ' -f1))"
 echo "GPL sources: $GPL_SOURCES ($(du -h "$GPL_SOURCES" | cut -f1), sha256 $(shasum -a 256 "$GPL_SOURCES" | cut -d' ' -f1))"
 [[ $notarize == 1 ]] || echo "NOT notarized (--no-notarize): Gatekeeper blocks this DMG once downloaded"
+[[ -z $ed_key ]] || echo "update feed: after attaching $DMG_NAME to the GitHub release v$version, run host/launcher/appcast.sh"
 
 # Debug files for symbolicated crash reports (CrashReporting.swift). Never a hardcoded token.
 if [[ $sentry_upload == 0 ]]; then

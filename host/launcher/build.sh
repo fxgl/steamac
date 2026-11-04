@@ -30,7 +30,8 @@ ls "$KRUN_PREFIX"/lib/libkrun*.dylib >/dev/null 2>&1 || { echo "missing $KRUN_PR
 # build identity crash reports use (CrashReporting): SteamacGitCommit (release name
 # es.fxgam.steamac@<CFBundleShortVersionString>+<commit>), SteamacMVKPatchRevision (MoltenVK
 # MVK_PATCH_REVISION, from $KRUN_PREFIX/MOLTENVK.txt) and SteamacKosmicKrispRevision (patch revision
-# from $KRUN_PREFIX/KOSMICKRISP.txt, when KosmicKrisp is built).
+# from $KRUN_PREFIX/KOSMICKRISP.txt, when KosmicKrisp is built). CFBundleVersion repeats
+# CFBundleShortVersionString: Sparkle orders updates by it (SparkleUpdates; 1.9.10 > 1.9.9).
 PLIST="$HERE/.build/Info.plist"
 mkdir -p "$HERE/.build"
 commit=$(git -C "$ROOT" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
@@ -43,6 +44,8 @@ cp "$HERE/Info.plist" "$PLIST.new"
 /usr/libexec/PlistBuddy -c "Add :SteamacGitCommit string $commit" "$PLIST.new"
 [[ -z $mvk_rev ]] || /usr/libexec/PlistBuddy -c "Add :SteamacMVKPatchRevision string 0x$mvk_rev" "$PLIST.new"
 [[ -z $kk_rev ]] || /usr/libexec/PlistBuddy -c "Add :SteamacKosmicKrispRevision string 0x$kk_rev" "$PLIST.new"
+version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST.new")
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $version" "$PLIST.new"
 
 SWIFT_FLAGS=(
     -c release
@@ -51,6 +54,7 @@ SWIFT_FLAGS=(
     -Xcc "-I$KRUN_PREFIX/include"
     -Xlinker "-L$KRUN_PREFIX/lib"
     -Xlinker -rpath -Xlinker @executable_path/host/lib
+    -Xlinker -rpath -Xlinker @executable_path/Frameworks
     -Xlinker -rpath -Xlinker "$KRUN_PREFIX/lib"
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$PLIST"
     -Xswiftc -emit-localized-strings -Xswiftc -emit-localized-strings-path -Xswiftc "$HERE/.build/stringsdata"
@@ -103,6 +107,11 @@ for lproj in "$HERE/.build/l10n"/*.lproj; do
     rm -rf "$OUT/$(basename "$lproj")"
     cp -R "$lproj" "$OUT/"
 done
+# Sparkle.framework (SwiftPM binary target, linked by every build): the dev binary loads it from
+# work/out/Frameworks; bundle.sh embeds this copy.
+rm -rf "$OUT/Frameworks/Sparkle.framework"
+mkdir -p "$OUT/Frameworks"
+ditto "$(dirname "$BIN")/Sparkle.framework" "$OUT/Frameworks/Sparkle.framework"
 
 "$HERE/fetch-gvproxy.sh"
 "$HERE/fetch-desync.sh"

@@ -9,6 +9,9 @@ let package = Package(
     dependencies: [
         // Crash/error reporting (CrashReporting.swift). Static Sentry.xcframework (binary target).
         .package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.30.0"),
+        // In-app updates of release builds (SparkleUpdates.swift). Sparkle.framework (dynamic binary
+        // target): build.sh copies it next to the dev launcher, bundle.sh embeds it, dist.sh signs it.
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1"),
     ],
     targets: [
         .systemLibrary(name: "CKrun", path: "Sources/CKrun"),
@@ -16,7 +19,8 @@ let package = Package(
         .target(name: "CZstd", path: "Sources/CZstd", exclude: ["zstd"]),
         .executableTarget(
             name: "steamac-vm",
-            dependencies: ["CKrun", "CZstd", .product(name: "Sentry", package: "sentry-cocoa")],
+            dependencies: ["CKrun", "CZstd", .product(name: "Sentry", package: "sentry-cocoa"),
+                           .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/steamac-vm",
             linkerSettings: [
                 .linkedFramework("AppKit"),
