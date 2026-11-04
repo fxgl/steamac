@@ -1,0 +1,39 @@
+#!/usr/bin/python3
+"""Default Gaming Mode's Steam UI to the virtual display's native resolution.
+
+Steam otherwise requests a 1920x1080 Xwayland surface even when gamescope's
+output follows the launcher's Retina display. GameResolutionGlobal controls
+games, not this surface. This install-scoped setting deliberately lives directly
+under InstallConfigStore/Gamescope (not Software/Valve/Steam/Gamescope).
+Only supply a missing value: an explicit choice in Steam always wins.
+"""
+from pathlib import Path
+import runpy
+import sys
+
+# Share the byte-preserving VDF editor used by the other config.vdf startup hook.
+vdf = runpy.run_path(str(Path(__file__).with_name("steam-idle-screensaver")))
+KEY = ("InstallConfigStore", "Gamescope", "EnableSteamNativeExternalResolution")
+
+
+def native_resolution(text):
+    values, _ = vdf["vdf_entries"](text)
+    if tuple(part.lower() for part in KEY) in values:
+        return text
+    return vdf["vdf_add"](text, KEY, "1")
+
+
+def main():
+    config = Path.home() / ".local/share/Steam/config/config.vdf"
+    text = config.read_text() if config.exists() else ""
+    changed = native_resolution(text if text.strip() else vdf["EMPTY"])
+    if changed != text:
+        vdf["atomic_write"](config, changed)
+        print("steam-native-resolution: default Steam UI to native display resolution", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        print("steam-native-resolution: leaving config.vdf: " + str(error), file=sys.stderr)
