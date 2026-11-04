@@ -171,6 +171,14 @@ zstd = root / 'host/launcher/Sources/CZstd/zstd'
 zstd_version = require(zstd / 'VERSION').read_text().split()[0]
 source('zstd', zstd_version, 'BSD-3-Clause', launcher,
        'https://github.com/facebook/zstd/tree/v' + zstd_version, zstd)
+enet = root / 'host/launcher/Sources/CEnet/enet'
+enet_commit = require(enet / 'VERSION').read_text().split()[0]
+source('enet', enet_commit[:10], 'MIT', launcher,
+       'https://github.com/cgutman/enet/tree/' + enet_commit, enet)
+nanors = root / 'host/launcher/Sources/CNanors/nanors'
+nanors_commit = require(nanors / 'VERSION').read_text().split()[0]
+source('nanors', nanors_commit[:10], 'MIT', launcher,
+       'https://github.com/sleepybishop/nanors/tree/' + nanors_commit, nanors)
 
 # Only resolved target-specific packages count; build dependencies and proc macros are
 # included since their license conditions may apply to generated/embedded code.

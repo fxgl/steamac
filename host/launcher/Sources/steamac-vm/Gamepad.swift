@@ -206,6 +206,8 @@ private final class PadSlot {
     /// The Mac's supported raw HID controllers.
     private let hid: HIDPassthrough?
     private(set) var controller: GCController?
+    private(set) var remote: GamepadBridge.RemotePad?
+    var remoteRumble: ((_ lowFrequency: UInt16, _ highFrequency: UInt16) -> Void)?
     /// The uinput pad the guest has (created over the port), nil = none.
     private var guestPad: GuestPad?
     /// The controller the guest has as itself (a uhid device), nil = none.
@@ -273,6 +275,7 @@ private final class PadSlot {
     func vmPaused(_ paused: Bool) {
         self.paused = paused
         rumble.paused = paused
+        if paused && remote != nil { remoteRumble?(0, 0) }
     }
 
     func hidInput(_ report: UnsafeBufferPointer<UInt8>) {
@@ -301,7 +304,11 @@ private final class PadSlot {
             onHello?()
             reconcile()
         } else if w.count == 3, w[0] == "rumble", let strong = UInt16(w[1]), let weak = UInt16(w[2]) {
-            rumble.set(strong: strong, weak: weak)
+            if let remote {
+                if !paused && remote.capabilities & 2 != 0 { remoteRumble?(strong, weak) }
+            } else {
+                rumble.set(strong: strong, weak: weak)
+            }
         } else if w.count == 3, w[0] == "hid-output", let type = HIDPassthrough.ReportType(rawValue: String(w[1])),
                   let data = HIDPassthrough.unhex(w[2]) {
             if let d = guestHID { hid?.setReport(d, type: type, data: data) }
@@ -369,12 +376,20 @@ private final class PadSlot {
         }
     }
 
+    func setRemote(_ next: GamepadBridge.RemotePad?) {
+        let changed = remote?.number != next?.number || remote?.kind != next?.kind
+        if changed, let pad = guestPad { apply(GamepadBridge.rest(pad)) }
+        remote = next
+        refresh()
+    }
+
     /// What the guest should have: nothing without a controller or with "Virtual controller"
     /// off; the DualSense itself while it drives a DualSense pad and "Pass the DualSense through"
     /// is on (and the guest's service takes uhid devices); else a uinput pad of the kind from
     /// "Appears in SteamOS as" (`--pad`), Automatic = the controller's.
     private func wanted() -> (device: GuestDevice, why: String)? {
         guard settings.virtualPad else { return nil }
+        if let remote { return (.pad(remote.kind), "Moonlight controller \(remote.number + 1)") }
         let type = typeOverride ?? settings.padType
         // A Steam Controller goes through in Automatic / Steam Controller; a generic HID that
         // GameController does not support goes through in Automatic only. Puck slots follow an
@@ -458,7 +473,12 @@ private final class PadSlot {
 
     /// Swap / deadzone changed, new pad: resend the current state with the current mapping.
     func refresh() {
-        if let pad = controller?.extendedGamepad { update(from: pad) }
+        if let remote {
+            apply(GamepadBridge.read(remote, as: guestPad ?? remote.kind, swapABXY: settings.swapABXY,
+                                     deadzone: Float(settings.stickDeadzone) / 100))
+        } else if let pad = controller?.extendedGamepad {
+            update(from: pad)
+        }
     }
 
     private func update(from pad: GCExtendedGamepad) {
@@ -690,6 +710,10 @@ final class GamepadBridge {
     private let hid: HIDPassthrough
     /// Controllers without a GameController object share sticky reservations (BLE and generic).
     private var rawPlayers: [UInt64: Int] = [:]
+    private var localPlayersBeforeStream: (controllers: [GCController?], raw: [UInt64: Int])?
+    private var remotePads: [UInt16: RemotePad] = [:]
+    private var remotePlayers: [UInt16: Int] = [:]
+    private var remoteRumble: ((_ controller: UInt16, _ lowFrequency: UInt16, _ highFrequency: UInt16) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var subscriptions: [AnyCancellable] = []
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
@@ -701,6 +725,104 @@ final class GamepadBridge {
     struct PadState: Equatable {
         var buttons: [UInt16: Bool] = [:]
         var axes: [UInt16: Int32] = [:]
+    }
+
+    struct RemotePad: Equatable {
+        let number: UInt16
+        var kind: GuestPad = .xbox360
+        var capabilities: UInt16 = 3
+        var supportedButtons: UInt32 = 0xffff
+        var buttons: UInt32 = 0
+        var leftTrigger: UInt8 = 0
+        var rightTrigger: UInt8 = 0
+        var leftX: Int16 = 0
+        var leftY: Int16 = 0
+        var rightX: Int16 = 0
+        var rightY: Int16 = 0
+    }
+
+    /// Moonlight's controllers (by controller number). They take the first usable players ahead of
+    /// the Mac's controllers and keep them while present (sticky). Removing the last remote pad
+    /// restores pre-stream local players; newly connected controllers fill the remaining players.
+    func setRemotePads(_ pads: [UInt16: RemotePad],
+                       rumble: @escaping (_ controller: UInt16, _ lowFrequency: UInt16, _ highFrequency: UInt16) -> Void) {
+        remoteRumble = rumble
+        if !pads.isEmpty && localPlayersBeforeStream == nil { saveLocalPlayers() }
+        let topologyChanged = remotePads.count != pads.count
+            || pads.contains { remotePads[$0.key]?.kind != $0.value.kind }
+        remotePads = pads
+        if pads.isEmpty { restoreLocalPlayers(connected: GamepadBridge.connected) }
+        if topologyChanged {
+            assignControllers()
+        } else {
+            for (number, player) in remotePlayers { slots[player].setRemote(pads[number]) }
+        }
+    }
+
+    func removeRemotePads() {
+        remotePads.removeAll()
+        restoreLocalPlayers(connected: GamepadBridge.connected)
+        assignControllers()
+        remoteRumble = nil
+    }
+
+    private func saveLocalPlayers() {
+        localPlayersBeforeStream = (slots.map(\.controller), rawPlayers)
+    }
+
+    private func restoreLocalPlayers(connected: [GCController]) {
+        guard let saved = localPlayersBeforeStream else { return }
+        localPlayersBeforeStream = nil
+        remotePlayers.removeAll()
+        // Clear displaced owners before restoring: a controller has only one profile callback.
+        for slot in slots { slot.setRemote(nil); slot.remoteRumble = nil }
+        for slot in slots { slot.setController(nil) }
+        rawPlayers = saved.raw
+        for (i, controller) in saved.controllers.enumerated() where usable(i) {
+            if let controller, connected.contains(where: { $0 === controller }) {
+                slots[i].setController(controller)
+            }
+        }
+        // assignControllers() filters disconnected HID reservations and fills free players with
+        // controllers connected during the stream, without retaining their temporary player.
+    }
+
+    static func remoteRestorationSelfCheck() -> [String] {
+        var failures: [String] = []
+        do {
+            let ports = try [PadPort(), PadPort(player: 1)]
+            let bridge = GamepadBridge(ports: ports, settings: LauncherSettings.shared, typeOverride: nil)
+            let original = GCController.withExtendedGamepad()
+            let newcomer = GCController.withExtendedGamepad()
+            bridge.slots[0].setController(original)
+            bridge.rawPlayers = [10: 1]
+            bridge.saveLocalPlayers()
+            bridge.slots[0].setController(nil)
+            bridge.slots[1].setController(original)
+            bridge.rawPlayers = [10: 0, 20: 1]
+            bridge.restoreLocalPlayers(connected: [original, newcomer])
+            if bridge.slots[0].controller !== original || bridge.slots[1].controller != nil {
+                failures.append("input: restore Mac controller to pre-stream player")
+            }
+            if bridge.rawPlayers != [10: 1] {
+                failures.append("input: restore pre-stream raw HID reservations")
+            }
+            bridge.saveLocalPlayers()
+            bridge.slots[0].setController(nil)
+            bridge.slots[1].setController(newcomer)
+            bridge.restoreLocalPlayers(connected: [newcomer])
+            if bridge.slots.contains(where: { $0.controller != nil }) {
+                failures.append("input: disconnected pre-stream controllers are not restored")
+            }
+            bridge.slots[0].setController(newcomer)
+            bridge.restoreLocalPlayers(connected: [newcomer])
+            if bridge.slots[0].controller !== newcomer {
+                failures.append("input: no-stream restoration leaves local players unchanged")
+            }
+        } catch {
+            failures.append("input: remote restoration test ports: \(error)")
+        }
+        return failures
     }
 
     static let axisCodes: [UInt16] = GuestPad.axes.map(\.code)
@@ -848,7 +970,7 @@ final class GamepadBridge {
             $0.generic ? matchesGenericControllers
                 : (matchesValveControllers && HIDPassthrough.isLiveSteamController($0) && $0.puckSlot == nil)
         }.map(\.registryID)
-        let available = slots.indices.filter { usable($0) && slots[$0].controller == nil }
+        let available = slots.indices.filter { usable($0) && slots[$0].controller == nil && slots[$0].remote == nil }
         rawPlayers = SteamControllerRouting.rawPlayers(previous: rawPlayers, devices: devices, available: available,
             genericDevices: hid.devices.filter(\.generic).map(\.registryID),
             hidCapable: slots.indices.filter { slots[$0].hidCapable })
@@ -857,7 +979,7 @@ final class GamepadBridge {
     /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
     /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE/generic reserve players.
     private func assignedRawDevice(for index: Int) -> HIDPassthrough.Device? {
-        guard usable(index) else { return nil }
+        guard usable(index), slots[index].remote == nil else { return nil }
         let steamPlayers = matchesValveControllers
             ? slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false } : []
         let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
@@ -881,10 +1003,26 @@ final class GamepadBridge {
     /// and free players get the remaining controllers in connection order.
     private func assignControllers() {
         let candidates = GamepadBridge.connected
+        // Moonlight controllers come first: the remote player is the one using SteamOS during a
+        // stream (with one usable player, a Mac controller waits until the stream ends).
+        remotePlayers = remotePlayers.filter { remotePads[$0.key] != nil && usable($0.value) }
+        for number in remotePads.keys.sorted() where remotePlayers[number] == nil {
+            if let player = slots.indices.first(where: { usable($0) && !remotePlayers.values.contains($0) }) {
+                remotePlayers[number] = player
+            }
+        }
+        for slot in slots {
+            let number = remotePlayers.first { $0.value == slot.index }?.key
+            slot.setRemote(number.flatMap { remotePads[$0] })
+            slot.remoteRumble = { [weak self] low, high in
+                if let number { self?.remoteRumble?(number, low, high) }
+            }
+        }
         updateRawPlayers()
         let genericDevices = hid.devices.filter(\.generic).map(\.registryID)
         func available(_ index: Int) -> Bool {
-            SteamControllerRouting.availableControllerPlayer(index, rawPlayers: rawPlayers, genericDevices: genericDevices)
+            !remotePlayers.values.contains(index)
+                && SteamControllerRouting.availableControllerPlayer(index, rawPlayers: rawPlayers, genericDevices: genericDevices)
         }
         let chosen = settings.controllerID.isEmpty ? nil
             : candidates.first { GamepadBridge.identifier(of: $0) == settings.controllerID }
@@ -892,7 +1030,7 @@ final class GamepadBridge {
         if !slots.indices.dropFirst().contains(where: usable) {
             if available(0) { next[0] = chosen ?? candidates.first }
         } else {
-            for (i, s) in slots.enumerated() where usable(i) {
+            for (i, s) in slots.enumerated() where usable(i) && available(i) {
                 if let c = s.controller, candidates.contains(where: { $0 === c }) { next[i] = c }
             }
             // Two controllers of one model have the same identifier: player 1 keeps a matching one.
@@ -969,6 +1107,33 @@ final class GamepadBridge {
         let d = p.dpad
         s.axes[ABS.HAT0X] = d.left.isPressed ? -1 : (d.right.isPressed ? 1 : 0)
         s.axes[ABS.HAT0Y] = d.up.isPressed ? -1 : (d.down.isPressed ? 1 : 0)
+        return s
+    }
+
+    static func read(_ p: RemotePad, as pad: GuestPad, swapABXY: Bool, deadzone: Float) -> PadState {
+        var s = rest(pad)
+        let flags = p.buttons & p.supportedButtons
+        func down(_ bit: UInt32) -> Bool { flags & bit != 0 }
+        s.buttons[BTN.SOUTH] = down(swapABXY ? 0x2000 : 0x1000)
+        s.buttons[BTN.EAST] = down(swapABXY ? 0x1000 : 0x2000)
+        s.buttons[pad.sony ? BTN.WEST : BTN.NORTH] = down(swapABXY ? 0x8000 : 0x4000)
+        s.buttons[pad.sony ? BTN.NORTH : BTN.WEST] = down(swapABXY ? 0x4000 : 0x8000)
+        for (code, bit): (UInt16, UInt32) in [(BTN.TL, 0x100), (BTN.TR, 0x200), (BTN.SELECT, 0x20),
+                                            (BTN.START, 0x10), (BTN.MODE, 0x400),
+                                            (BTN.THUMBL, 0x40), (BTN.THUMBR, 0x80)] {
+            s.buttons[code] = down(bit)
+        }
+        if pad.sony {
+            s.buttons[BTN.TL2] = p.leftTrigger > 0
+            s.buttons[BTN.TR2] = p.rightTrigger > 0
+        }
+        let l = deadzoned(max(-1, Float(p.leftX) / 32767), max(-1, Float(p.leftY) / 32767), deadzone)
+        let r = deadzoned(max(-1, Float(p.rightX) / 32767), max(-1, Float(p.rightY) / 32767), deadzone)
+        s.axes[ABS.X] = axis(l.0); s.axes[ABS.Y] = -axis(l.1)
+        s.axes[ABS.RX] = axis(r.0); s.axes[ABS.RY] = -axis(r.1)
+        s.axes[ABS.Z] = Int32(p.leftTrigger); s.axes[ABS.RZ] = Int32(p.rightTrigger)
+        s.axes[ABS.HAT0X] = down(4) ? -1 : (down(8) ? 1 : 0)
+        s.axes[ABS.HAT0Y] = down(1) ? -1 : (down(2) ? 1 : 0)
         return s
     }
 

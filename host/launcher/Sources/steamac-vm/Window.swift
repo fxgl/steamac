@@ -90,6 +90,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// `pixelScale`.
     var onGuestSizeRequest: ((Int, Int) -> Void)?
     private var requestedGuestSize: (Int, Int)
+    private var preStreamGuestSize: (Int, Int)
     private var guestResizeWork: DispatchWorkItem?
     private var inFullScreenTransition = false
     static let minGuestSize = NSSize(width: 800, height: 500)
@@ -109,6 +110,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         let guest = WindowController.guestSize(points: CGSize(width: width, height: height), scale: pixelScale)
         self.scanoutSize = guest
         self.requestedGuestSize = guest
+        self.preStreamGuestSize = guest
         let rect = NSRect(x: 0, y: 0, width: width, height: height)
         let screen = WindowController.targetScreen()
         window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -237,7 +239,35 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Set while the VM is paused (suspended, guest asleep): window size changes (leaving full
     /// screen before the window hides, resizes while it sleeps) do not resize the guest until it
     /// runs again.
-    var holdGuestSize = false { didSet { if oldValue && !holdGuestSize { scheduleGuestResize() } } }
+    var holdGuestSize = false {
+        didSet {
+            if oldValue && !holdGuestSize {
+                if restoreStreamDisplay { endStreamDisplay() } else { scheduleGuestResize() }
+            }
+        }
+    }
+    /// Separate from the suspend hold: ending a stream must not release a paused VM's hold.
+    private var streamHoldsGuestSize = false
+    private var restoreStreamDisplay = false
+
+    func beginStreamDisplay(width: Int, height: Int) {
+        if !streamHoldsGuestSize && !restoreStreamDisplay { preStreamGuestSize = requestedGuestSize }
+        streamHoldsGuestSize = true
+        restoreStreamDisplay = false
+        guestResizeWork?.cancel()
+        requestedGuestSize = (width, height)
+        onGuestSizeRequest?(width, height)
+    }
+
+    func endStreamDisplay() {
+        guard streamHoldsGuestSize || restoreStreamDisplay else { return }
+        streamHoldsGuestSize = false
+        restoreStreamDisplay = holdGuestSize
+        guard !holdGuestSize else { return }
+        let size = settings.followWindowSize ? guestSizeForWindow() : preStreamGuestSize
+        requestedGuestSize = size
+        onGuestSizeRequest?(size.0, size.1)
+    }
     /// One-shot: the window has left full screen.
     var onDidExitFullScreen: (() -> Void)?
 
@@ -247,7 +277,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         guestResizeWork?.cancel()
         guard settings.followWindowSize else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.window.inLiveResize, !self.inFullScreenTransition, !self.holdGuestSize else { return }
+            guard let self, !self.window.inLiveResize, !self.inFullScreenTransition,
+                  !self.holdGuestSize, !self.streamHoldsGuestSize else { return }
             let size = self.guestSizeForWindow()
             guard size != self.requestedGuestSize else { return }
             self.requestedGuestSize = size

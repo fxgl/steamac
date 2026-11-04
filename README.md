@@ -250,6 +250,40 @@ Protocol references: [Valve's Remote Play network settings](https://help.steampo
 [Steam remote-client protobufs](https://github.com/SteamDatabase/Protobufs/blob/master/steam/steammessages_remoteclient_discovery.proto),
 and [discovery envelope framing](https://github.com/OpenSourceLAN/steam-discover/blob/master/listener.js).
 
+## Streaming with Moonlight
+
+**Settings → Streaming → Enable Moonlight streaming** turns on the built-in GameStream host
+immediately; it is **off by default** and available only in the windowed VM process. Install
+[Moonlight](https://moonlight-stream.org/) on another device on your trusted local network,
+allow macOS **Local Network** access and incoming connections, and select this Mac in Moonlight
+(or add the Mac's LAN address manually). Enter the four-digit PIN shown on that device in the
+pairing window on the Mac, then launch **SteamOS** in Moonlight.
+
+The Streaming tab shows host/session status and paired devices with their pairing dates.
+**Revoke** removes a device's access and ends its current stream; it must pair again.
+**End stream** disconnects the current session without revoking it. Disabling streaming closes
+the listeners and ends the session. VM suspension or SteamOS sleep also stops streaming and
+closes the listeners; they return after resume if the setting is still enabled.
+While a client streams, the launcher's background-game-pause preference does not freeze the game.
+
+The Mac listens on TCP **47984, 47989** while enabled and TCP **48010** / UDP
+**47998–48000** for a session; Bonjour discovery uses **_nvstream._tcp**. Do not expose these
+ports to the public Internet. This is independent of **Advanced → LAN Remote Play** and does
+not require Steam Link, guest Steam Remote Play, or a virtual display.
+
+The stream contains the guest display, including the visible DXMT game layer, and guest playback
+audio—not the Mac desktop, launcher overlays, or microphone. H.264 / supported hardware HEVC
+and Opus are used without Screen Recording permission or an audio loopback driver. Moonlight's
+requested resolution temporarily owns the guest display (even sizes within the VM's maximum);
+ending the stream restores the window's size, or the previous guest resolution if “Guest display
+follows the window size” is off. One client streams at a time. Keyboard, mouse,
+touch-as-mouse and controllers control the same running guest; local and remote inputs share it.
+Moonlight controllers take the first SteamOS player slots ahead of Mac controllers during the
+session; with **Additional controllers** off, a Mac controller waits until the stream ends.
+The Mac controllers return to their usual slots afterwards.
+No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
+`--selftest-stream` runs the component protocol/media checks without booting a VM.
+
 ## Settings window
 
 **FX Steam Launcher → Settings…** (Cmd+, — also works when the guest has the keyboard). Each field

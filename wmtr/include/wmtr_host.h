@@ -28,6 +28,11 @@ uint64_t wmtr_host_progress(struct wmtr_host *h, uint32_t slot);
 /* Presenter: overlay in the launcher's VMView with WMTR_PRESENT=overlay, otherwise a window per HWND. */
 uint64_t wmtr_present_create_view(void *ctx, uint64_t hwnd, void *mtl_device, uint64_t *layer);
 void wmtr_present_release_view(void *ctx, uint64_t view);
+/* Synchronous pre-present hook: encode into command_buffer before it is committed. Objects are
+ * borrowed; retain capture resources in a Metal completion handler. Clearing waits for an in-flight
+ * callback, so userdata can then be released. The callback must not call this setter. */
+typedef void (*wmtr_stream_capture_callback)(void *userdata, void *command_buffer, void *drawable);
+void wmtr_stream_capture_set(wmtr_stream_capture_callback callback, void *userdata);
 void wmtr_layout(uint64_t *ring_bytes, uint64_t *data_offset, uint64_t *slots_offset, uint64_t *slot_size);
 /* counters for measurements */
 struct wmtr_host_stats { uint64_t requests, sync_requests, bytes, worker_calls, idle_sleeps; };

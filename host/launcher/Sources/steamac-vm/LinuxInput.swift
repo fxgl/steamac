@@ -91,8 +91,15 @@ enum KEY {
     static let INSERT: UInt16 = 110, DELETE: UInt16 = 111
     static let MUTE: UInt16 = 113, VOLUMEDOWN: UInt16 = 114, VOLUMEUP: UInt16 = 115, POWER: UInt16 = 116
     static let KPEQUAL: UInt16 = 117
+    static let PAUSE: UInt16 = 119
     static let HANGEUL: UInt16 = 122, HANJA: UInt16 = 123, YEN: UInt16 = 124
     static let LEFTMETA: UInt16 = 125, RIGHTMETA: UInt16 = 126, COMPOSE: UInt16 = 127
+    static let STOP: UInt16 = 128, HELP: UInt16 = 138, SLEEP: UInt16 = 142
+    static let MAIL: UInt16 = 155, BOOKMARKS: UInt16 = 156, COMPUTER: UInt16 = 157
+    static let BACK: UInt16 = 158, FORWARD: UInt16 = 159, NEXTSONG: UInt16 = 163, PLAYPAUSE: UInt16 = 164
+    static let PREVIOUSSONG: UInt16 = 165, STOPCD: UInt16 = 166, HOMEPAGE: UInt16 = 172, REFRESH: UInt16 = 173
     static let F13: UInt16 = 183, F14: UInt16 = 184, F15: UInt16 = 185, F16: UInt16 = 186
     static let F17: UInt16 = 187, F18: UInt16 = 188, F19: UInt16 = 189, F20: UInt16 = 190
+    static let F21: UInt16 = 191, F22: UInt16 = 192, F23: UInt16 = 193, F24: UInt16 = 194
+    static let SEARCH: UInt16 = 217, MEDIA: UInt16 = 226
 }

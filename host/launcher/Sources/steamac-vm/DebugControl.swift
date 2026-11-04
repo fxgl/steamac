@@ -19,7 +19,7 @@ import Foundation
 ///   guest LINE            handle LINE as if the guest had sent it on fx.progress
 ///   dump PATH             frame + window dump (as SIGUSR1, to PATH)
 ///   settings TAB|close    open the Settings window at TAB (general, display, mouse, controller,
-///                         sound, games, advanced) or close it
+///                         sound, streaming, games, advanced) or close it
 ///   settings-dump PATH    PNG of the Settings window
 ///   restart               Restart VM (as the menu / Settings button)
 ///   activate              bring the app to the front (tests of the background mute / pause)
@@ -46,6 +46,8 @@ import Foundation
 ///                         and the guest's last rumble
 ///   stats …               game statistics (GameStatsStore.control: state, flush, ask, press
 ///                         share|decline, dump PATH, reset-question)
+///   stream-pin PIN        submit the four-digit PIN for a pending Moonlight pairing
+///   stream-status         log Moonlight listener/session and pairing status
 enum DebugControl {
     nonisolated(unsafe) private static var settingsWindow: SettingsWindowController?
     nonisolated(unsafe) static var gameStats: GameSessionTracker?
@@ -189,6 +191,20 @@ enum DebugControl {
             do { try png.write(to: URL(fileURLWithPath: out)); log("control: settings window dumped to \(out)") }
             catch { log("control: settings dump failed: \(error)") }
         case "restart": lifecycle.requestRestart()
+        case "stream-pin":
+            guard let request = settingsWindow?.context.streamHost?.pairing else {
+                log("stream: no pending pairing"); break
+            }
+            guard let pin = args.first, pin.utf8.count == 4,
+                  pin.utf8.allSatisfy({ (48...57).contains($0) }) else {
+                log("stream: PIN must contain four digits"); break
+            }
+            request.submit(pin: pin)
+        case "stream-status":
+            guard let host = settingsWindow?.context.streamHost else {
+                log("stream: unavailable outside the windowed VM process"); break
+            }
+            log("stream: status=\(host.status) clients=\(host.clients.count) pairing=\(host.pairing?.clientName ?? "none")")
         case "close": wc.window.performClose(nil)
         case "suspend": if !(lifecycle.suspender?.suspended ?? true) { lifecycle.menuSuspend() }
         case "resume": lifecycle.suspender?.resume(origin: "control")

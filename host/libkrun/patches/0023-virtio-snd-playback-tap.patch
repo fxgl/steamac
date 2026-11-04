@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 4 Nov 2026 20:00:00 +0000
+Subject: [PATCH] virtio-snd: expose guest playback tap for streaming
+
+Deliver Float32 guest PCM and its speaker positions from the non-realtime
+pump before host gain and speaker routing. Serializing registration with
+delivery makes callback userdata safe to release after unregister returns.
+Skip partial initial frames when a tap is enabled at a ring wrap.
+---
+diff --git a/include/libkrun.h b/include/libkrun.h
+--- a/include/libkrun.h
++++ b/include/libkrun.h
+@@ -888,6 +888,20 @@
+  *  "mute"   - true silences playback (the guest stream keeps running).
+  */
+ int32_t krun_snd_set_volume(uint32_t ctx_id, float gain, bool mute);
++
++/**
++ * Observe guest playback before host gain/mute and physical speaker routing (macOS).
++ * Samples are interleaved Float32, frames per channel, at sample_rate Hz. positions has
++ * channels entries using VirtIO/ALSA VIRTIO_SND_CHMAP_* speaker identifiers, in sample order.
++ * Both pointers are borrowed for the callback only. Delivery is on the non-realtime pump
++ * thread; the callback must return promptly and must not call a krun API.
++ * NULL disables the tap. Replacing/disabling waits for any callback to finish, so userdata
++ * can then be freed. Silence/paused playback need not produce callbacks.
++ */
++typedef void (*krun_snd_playback_tap)(const float *samples, uint32_t frames,
++                                    uint32_t sample_rate, uint32_t channels,
++                                    const uint8_t *positions, void *userdata);
++int32_t krun_snd_set_playback_tap(uint32_t ctx_id, krun_snd_playback_tap callback, void *userdata);
+ 
+ /**
+  * Sets the playback buffer the host keeps on top of what the guest queues (default 40 ms).
+diff --git a/src/devices/src/virtio/snd/mod.rs b/src/devices/src/virtio/snd/mod.rs
+--- a/src/devices/src/virtio/snd/mod.rs
++++ b/src/devices/src/virtio/snd/mod.rs
+@@ -20,6 +20,9 @@
+ 
+ #[cfg(target_os = "macos")]
+ pub use self::audio_backends::output_device_exists;
++
++/// The pump owns the sample memory; unregister waits for an outstanding callback.
++pub type PlaybackTap = unsafe extern "C" fn(*const f32, u32, u32, u32, *const u8, *mut std::ffi::c_void);
+ 
+ /// Host-side audio settings changed at runtime (krun_snd_set_*), shared between the embedder
+ /// and the audio backend. Every change bumps `generation` and wakes the backend.
+@@ -35,6 +38,7 @@
+     paused: AtomicBool,
+     generation: AtomicU64,
+     waker: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
++    playback_tap: Mutex<Option<(PlaybackTap, usize)>>,
+ }
+ 
+ impl Default for SndControl {
+@@ -49,11 +53,26 @@
+             paused: AtomicBool::new(false),
+             generation: AtomicU64::new(0),
+             waker: Mutex::new(None),
++            playback_tap: Mutex::new(None),
+         }
+     }
+ }
+ 
+ impl SndControl {
++    pub fn set_playback_tap(&self, callback: Option<PlaybackTap>, userdata: usize) {
++        *self.playback_tap.lock().unwrap() = callback.map(|f| (f, userdata));
++    }
++
++    #[cfg(target_os = "macos")]
++    pub fn with_playback_tap(&self, f: impl FnOnce(PlaybackTap, *mut std::ffi::c_void)) -> bool {
++        if let Some((callback, userdata)) = *self.playback_tap.lock().unwrap() {
++            f(callback, userdata as *mut std::ffi::c_void);
++            true
++        } else {
++            false
++        }
++    }
++
+     /// Frozen when the guest first reads config; virtio-snd/ALSA cache PCM capabilities.
+     #[cfg(target_os = "macos")]
+     pub fn playback_maps(&self) -> &Vec<Vec<u8>> {
+diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+--- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
++++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+@@ -1528,6 +1528,8 @@
+     dump_path: Option<PathBuf>,
+     dump: Option<(Format, Dump)>,
+     dump_files: u32,
++    tap_pending: Vec<u8>,
++    tap_samples: Vec<f32>,
+     control: Arc<SndControl>,
+     /// Control generation last applied.
+     seen_generation: u64,
+@@ -1570,6 +1572,8 @@
+             dump_path,
+             dump: None,
+             dump_files: 0,
++            tap_pending: Vec::new(),
++            tap_samples: Vec::new(),
+             control,
+             seen_generation: u64::MAX,
+             output_route: None,
+@@ -1771,6 +1775,7 @@
+ 
+     /// (Re)configure the unit for `fmt`. The unit is left initialized and stopped.
+     fn configure(&mut self, fmt: Format) -> Result<()> {
++        self.tap_pending.clear();
+         self.create_unit()?;
+         let unit = self.unit.as_mut().unwrap();
+         unit.uninitialize();
+@@ -2123,7 +2128,41 @@
+             let n = unsafe {
+                 ring.produce(remaining, |dst| match buf.read_output(dst) {
+                     Ok(len) => {
++                        let start = buf.pos;
+                         buf.pos += len as usize;
++                        if let Some(fmt) = self.format {
++                            let tapped = self.control.with_playback_tap(|callback, userdata| {
++                                // A tap enabled at a ring wrap may start inside a guest frame.
++                                let frame_bytes = fmt.frame_bytes() as usize;
++                                let skip = if self.tap_pending.is_empty() {
++                                    (frame_bytes - start % frame_bytes) % frame_bytes
++                                } else { 0 };
++                                self.tap_pending.extend_from_slice(&dst[skip.min(len as usize)..len as usize]);
++                                let bytes = fmt.sample_bytes() as usize;
++                                let complete = self.tap_pending.len() / fmt.frame_bytes() as usize
++                                    * fmt.frame_bytes() as usize;
++                                self.tap_samples.clear();
++                                self.tap_samples.extend(self.tap_pending[..complete].chunks_exact(bytes).map(|v| {
++                                    match fmt.format {
++                                        VIRTIO_SND_PCM_FMT_U8 => (v[0] as f32 - 128.0) / 128.0,
++                                        VIRTIO_SND_PCM_FMT_S16 => i16::from_le_bytes(v.try_into().unwrap()) as f32 / 32768.0,
++                                        VIRTIO_SND_PCM_FMT_S32 => i32::from_le_bytes(v.try_into().unwrap()) as f32 / 2147483648.0,
++                                        _ => {
++                                            let sample = f32::from_le_bytes(v.try_into().unwrap());
++                                            if sample.is_finite() { sample } else { 0.0 }
++                                        }
++                                    }
++                                }));
++                                if complete != 0 {
++                                    let positions = &self.control.playback_maps()[fmt.channels as usize - 1];
++                                    // SAFETY: samples and positions remain borrowed for this call.
++                                    callback(self.tap_samples.as_ptr(), (self.tap_samples.len() / fmt.channels as usize) as u32,
++                                             fmt.rate, fmt.channels, positions.as_ptr(), userdata);
++                                    self.tap_pending.drain(..complete);
++                                }
++                            });
++                            if !tapped { self.tap_pending.clear(); }
++                        }
+                         len as usize
+                     }
+                     Err(_) => {
+diff --git a/src/libkrun/src/lib.rs b/src/libkrun/src/lib.rs
+--- a/src/libkrun/src/lib.rs
++++ b/src/libkrun/src/lib.rs
+@@ -2157,6 +2157,26 @@
+     }
+ }
+ 
++#[no_mangle]
++pub extern "C" fn krun_snd_set_playback_tap(
++    ctx_id: u32,
++    callback: Option<unsafe extern "C" fn(*const f32, u32, u32, u32, *const u8, *mut libc::c_void)>,
++    userdata: *mut libc::c_void,
++) -> i32 {
++    #[cfg(all(feature = "snd", target_os = "macos"))]
++    {
++        with_snd_control(ctx_id, |control| {
++            control.set_playback_tap(callback, userdata as usize);
++            KRUN_SUCCESS
++        })
++    }
++    #[cfg(not(all(feature = "snd", target_os = "macos")))]
++    {
++        let _ = (ctx_id, callback, userdata);
++        -libc::ENOTSUP
++    }
++}
++
+ /// Pause controls of started VMs (krun_pause / krun_resume).
+ #[cfg(target_os = "macos")]
+ static VM_PAUSES: Lazy<Mutex<HashMap<u32, std::sync::Arc<vmm::VmPause>>>> =

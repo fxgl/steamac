@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the steamac-vm launcher (release), sign it with the hypervisor entitlement and
-# install it as work/out/steamac-vm. Also fetches the pinned zstd decoder sources (compiled in),
+# install it as work/out/steamac-vm. Also fetches the pinned zstd decoder, ENet and nanors sources
+# (compiled in; the latter two for the Moonlight streaming host),
 # gvproxy and desync into work/out/host/bin and assembles work/out/FX Steam Launcher.app
 # (bundle.sh; skipped with STEAMAC_NO_BUNDLE=1 or when the kernel/initramfs/layer images are
 # not built yet). Debug symbols for crash reports go to work/out/dSYMs (see dist.sh).
@@ -61,6 +62,8 @@ SWIFT_FLAGS=(
 )
 
 "$HERE/fetch-zstd.sh"
+"$HERE/fetch-enet.sh"
+"$HERE/fetch-nanors.sh"
 BIN="$(swift build "${SWIFT_FLAGS[@]}" --show-bin-path)/steamac-vm"
 # SwiftPM does not track the -sectcreate input: relink when the plist changed.
 if cmp -s "$PLIST.new" "$PLIST"; then

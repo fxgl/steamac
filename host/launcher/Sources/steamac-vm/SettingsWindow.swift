@@ -10,6 +10,8 @@ final class SettingsContext: ObservableObject {
     let settings: LauncherSettings
     /// Live audio controls; nil without a VM.
     let sound: SoundControl?
+    /// Moonlight host; nil outside the windowed VM process.
+    let streamHost: GameStreamHost?
     /// Graceful guest power-off + relaunch with the new settings; nil without a VM.
     var restart: (() -> Void)?
     /// Whether the running VM has the virtual gamepad / a sound device (next-start state).
@@ -22,9 +24,10 @@ final class SettingsContext: ObservableObject {
     @Published var restartRequested = false
 
     init(settings: LauncherSettings, sound: SoundControl?, restart: (() -> Void)?, vmHasPad: Bool, vmHasSound: Bool,
-         diskPath: String? = nil) {
+         diskPath: String? = nil, streamHost: GameStreamHost? = nil) {
         self.settings = settings
         self.sound = sound
+        self.streamHost = streamHost
         self.restart = restart
         self.vmHasPad = vmHasPad
         self.vmHasSound = vmHasSound
@@ -35,7 +38,7 @@ final class SettingsContext: ObservableObject {
 /// App menu "FX Steam Launcher → Settings…" (Cmd+,): toolbar-style tabs, one SwiftUI form each.
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     enum Tab: Int, CaseIterable {
-        case general, display, mouse, controller, sound, games, advanced
+        case general, display, mouse, controller, sound, streaming, games, advanced
 
         var name: String {
             switch self {
@@ -44,6 +47,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .mouse: return "mouse"
             case .controller: return "controller"
             case .sound: return "sound"
+            case .streaming: return "streaming"
             case .games: return "games"
             case .advanced: return "advanced"
             }
@@ -56,6 +60,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .mouse: return String(localized: "Mouse")
             case .controller: return String(localized: "Controller")
             case .sound: return String(localized: "Sound")
+            case .streaming: return String(localized: "Streaming")
             case .games: return String(localized: "Games", comment: "Settings tab: game statistics")
             case .advanced: return String(localized: "Advanced")
             }
@@ -68,6 +73,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .mouse: return "computermouse"
             case .controller: return "gamecontroller"
             case .sound: return "speaker.wave.2"
+            case .streaming: return "antenna.radiowaves.left.and.right"
             case .games: return "chart.bar.xaxis"
             case .advanced: return "slider.horizontal.3"
             }
@@ -81,6 +87,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .mouse: return 470
             case .controller: return 620
             case .sound: return 440
+            case .streaming: return 560
             case .games: return 620
             case .advanced: return 720
             }
@@ -183,6 +190,7 @@ private struct SettingsTabRoot: View {
                 case .mouse: MouseTab()
                 case .controller: ControllerTab()
                 case .sound: SoundTab()
+                case .streaming: StreamingTab()
                 case .games: GamesTab()
                 case .advanced: AdvancedTab()
                 }
@@ -244,6 +252,120 @@ private struct ExperimentalBadge: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .overlay(Capsule().strokeBorder(Color.orange.opacity(0.7)))
+    }
+}
+
+private struct StreamingTab: View {
+    @EnvironmentObject var context: SettingsContext
+
+    var body: some View {
+        if let host = context.streamHost {
+            StreamingHostForm(host: host)
+        } else {
+            Form {
+                Section {
+                    Text("Moonlight streaming is available while SteamOS is running in a window. It is unavailable in headless mode or without a running VM.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct StreamingHostForm: View {
+    @ObservedObject var host: GameStreamHost
+    @EnvironmentObject var settings: LauncherSettings
+    @State private var revokeClient: StreamClient?
+
+    private var status: String {
+        switch host.status {
+        case .off: return String(localized: "Off")
+        case .listening: return String(localized: "Listening as \(StreamPairingPrompt.hostName)")
+        case .failed(let reason): return String(localized: "Failed: \(reason)")
+        case .streaming(let session):
+            let codec = session.codec == .h264 ? "H.264" : "HEVC"
+            return String(localized: "Streaming to \(session.clientName) at \(session.width)×\(session.height)@\(session.fps) \(codec)")
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: $settings.streamingHost) {
+                    Label2(title: "Enable Moonlight streaming",
+                           detail: String(localized: "Stream SteamOS and its games directly from this Mac. Off by default; only enabled hosts listen on the network."),
+                           now: true)
+                }
+                LabeledContent("Status") { Text(verbatim: status).textSelection(.enabled) }
+                if case .streaming = host.status {
+                    Button("End stream") { host.endSession() }
+                }
+            }
+            Section("Pair a device") {
+                Text("Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS.")
+                Text("Allow Local Network access when macOS asks. Streaming stops while SteamOS is suspended or asleep and can be started again after it resumes.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Paired clients") {
+                if host.clients.isEmpty {
+                    Text("No paired clients").foregroundStyle(.secondary)
+                }
+                ForEach(host.clients) { client in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(verbatim: client.name)
+                            Text("Paired \(client.pairedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Revoke", role: .destructive) { revokeClient = client }
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Revoke this client's access?", isPresented: Binding(
+            get: { revokeClient != nil }, set: { if !$0 { revokeClient = nil } }
+        ), titleVisibility: .visible) {
+            Button("Revoke", role: .destructive) {
+                if let client = revokeClient { host.revoke(fingerprint: client.fingerprint) }
+                revokeClient = nil
+            }
+            Button("Cancel", role: .cancel) { revokeClient = nil }
+        } message: {
+            Text("The device must pair again to connect. Its current stream will end.")
+        }
+    }
+}
+
+/// Kept with the Settings views so the launcher's string extraction includes the pairing UI.
+struct StreamPairingView: View {
+    let request: StreamPairingRequest
+    @State private var pin = ""
+    @FocusState private var pinFocused: Bool
+
+    private var validPIN: Bool { pin.utf8.count == 4 && pin.utf8.allSatisfy { (48...57).contains($0) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Pair Moonlight").font(.headline)
+            Text("Enter the four-digit PIN shown by Moonlight on \(request.clientName).")
+            TextField("PIN", text: $pin)
+                .textFieldStyle(.roundedBorder)
+                .focused($pinFocused)
+                .onChange(of: pin) { _, value in
+                    pin = String(value.filter { $0.isASCII && $0.isNumber }.prefix(4))
+                }
+                .onSubmit { if validPIN { request.submit(pin: pin) } }
+            HStack {
+                Spacer()
+                Button("Cancel") { request.cancel() }.keyboardShortcut(.cancelAction)
+                Button("Pair") { request.submit(pin: pin) }
+                    .keyboardShortcut(.defaultAction).disabled(!validPIN)
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
+        .onAppear { pinFocused = true }
     }
 }
 

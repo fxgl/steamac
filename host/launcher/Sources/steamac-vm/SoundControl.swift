@@ -8,9 +8,9 @@ import Foundation
 /// krun_snd_set_volume, krun_snd_set_buffer_ms). Looked up with dlsym: an older libkrun without
 /// them still boots, and the Sound settings explain why they are disabled.
 ///
-/// Volume sent to libkrun: gain = the user's volume, mute = user mute || (Settings > General
-/// "Mute sound in the background" && the app is not active). Background transitions fade over
-/// ~150 ms (5 gain steps). STEAMAC_SND_TRACE=1 logs every krun_snd_set_volume call.
+/// Volume sent to libkrun: gain = the user's volume; mute combines user mute, the session's
+/// host-output mute, and Settings > General "Mute sound in the background" while inactive.
+/// Background transitions fade over ~150 ms (5 steps). STEAMAC_SND_TRACE=1 traces volume calls.
 final class SoundControl {
     private typealias SetOutput = @convention(c) (UInt32, UnsafePointer<CChar>?) -> Int32
     private typealias SetVolumeC = @convention(c) (UInt32, Float, Bool) -> Int32
@@ -29,6 +29,7 @@ final class SoundControl {
     private var userMute = false
     private var muteInBackground = true
     private var appActive = true
+    private var streamMuted = false
     /// Last (gain, mute) sent to libkrun.
     private var applied: (gain: Float, mute: Bool)?
     /// Bumped to cancel a running fade.
@@ -151,6 +152,13 @@ final class SoundControl {
         push(fade: true)
     }
 
+    /// Session-only host mute; the guest PCM tap remains unaffected.
+    func setStreamingMuted(_ muted: Bool) {
+        guard streamMuted != muted else { return }
+        streamMuted = muted
+        push(fade: false)
+    }
+
     /// Muted only because the app is in the background.
     var backgroundMuted: Bool { muteInBackground && !appActive && !userMute }
 
@@ -163,7 +171,7 @@ final class SoundControl {
         guard ctx != nil, setVolume != nil else { return }
         fadeGeneration += 1
         let gain = Float(max(0, min(1, volume)))
-        let mute = userMute || (muteInBackground && !appActive)
+        let mute = userMute || streamMuted || (muteInBackground && !appActive)
         guard let prev = applied else { return send(gain, mute) }
         if prev.gain == gain && prev.mute == mute { return }
         guard fade, prev.mute != mute, gain > 0 else { return send(gain, mute) }

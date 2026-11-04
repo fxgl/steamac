@@ -50,6 +50,7 @@ if options.selftestPill { PillSelfTest.run(options) }
 if options.selftestSettings { SettingsSelfTest.run(options, overrides: settingsOverrides) }
 if options.selftestProvision { ProvisionSelfTest.run(options) }
 if options.selftestRemotePlay { RemotePlaySelfTest.run() }
+if options.selftestStream { StreamSelfTest.run() }
 if options.selftestPointer { PointerSelfTest.run() }
 if options.selftestGameLayers { GameLayerSelfTest.run() }
 if options.createDisk != nil { CreateDiskCLI.run(options, settings: settings) }
@@ -500,6 +501,20 @@ do {
         keyboardLayouts.focused(f)
     }
     keyboardLayouts.start()
+    let streamCapture = StreamCapture(presenter: presenter, renderer: renderer, view: wc.view)
+    let streamInput = StreamInput(inputs: inputs!, gamepads: gamepad)
+    let streamDisplay = StreamDisplayControl(begin: { [weak wc] width, height in
+        let maxSide = VM.maxDisplaySide & ~1
+        wc?.beginStreamDisplay(width: min(maxSide, max(2, width & ~1)),
+                               height: min(maxSide, max(2, height & ~1)))
+    }, end: { [weak wc] in wc?.endStreamDisplay() })
+    let streamEnvironment = StreamEnvironment(ctx: vm.ctx, capture: streamCapture, input: streamInput,
+                                              sound: sound, display: streamDisplay)
+    let streamHost = GameStreamHost(environment: streamEnvironment, hostName: StreamPairingPrompt.hostName)
+    let streamPrompt = StreamPairingPrompt(host: streamHost)
+    let streamStatusSubscription = streamHost.$status.sink { status in
+        if case .streaming = status { gamePause.streaming = true } else { gamePause.streaming = false }
+    }
     let suspender = SuspendController(ctx: vm.ctx, clock: clockPort, sleepPort: sleepPort, window: wc, presenter: presenter,
                                       stall: stall, gamePause: gamePause, gpuCounters: gpuCounters)
     suspender.onShutdown = { lifecycle.requestShutdown() }
@@ -510,19 +525,25 @@ do {
         clipboard?.vmPaused = paused
         gameStats.vmPaused = paused
         if paused {
+            // Do not accept launches against a frozen guest; resume restores the opt-in listener.
+            streamHost.setEnabled(false)
             activity.map(ProcessInfo.processInfo.endActivity)
             activity = nil
         } else if activity == nil {
             activity = beginVMActivity()
+            streamHost.setEnabled(settings.streamingHost)
         }
     }
     lifecycle.suspender = suspender
+    let streamSubscription = settings.$streamingHost.receive(on: DispatchQueue.main).sink { on in
+        streamHost.setEnabled(on && !suspender.paused)
+    }
     sleepPort?.start { line in suspender.sleepPortLine(line, allowed: lifecycle.canPause) }
     wc.onWakeRequest = { what in suspender.resume(origin: what) }
     wc.onGuestSizeRequest = { w, h in vm.resizeDisplay(width: w, height: h) }
     let settingsContext = SettingsContext(settings: settings, sound: sound, restart: { lifecycle.requestRestart() },
                                           vmHasPad: gamepad != nil, vmHasSound: vm.hasSound,
-                                          diskPath: options.disks.first?.path)
+                                          diskPath: options.disks.first?.path, streamHost: streamHost)
     let settingsWindow = SettingsWindowController(context: settingsContext)
     lifecycle.settingsContext = settingsContext
     lifecycle.settingsWindow = settingsWindow
@@ -575,7 +596,7 @@ do {
     console.start()
     vm.start()
     withExtendedLifetime((presenter, gamepad, progressPort, keyboardLayouts, supervisorWatch, perfSubscription, gamePause, suspender, clipboard,
-                          gameStats)) {
+                          gameStats, streamCapture, streamInput, streamHost, streamPrompt, streamSubscription, streamStatusSubscription)) {
         app.run()
     }
 } catch let error as DiskLock.InUse {

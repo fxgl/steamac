@@ -28,10 +28,12 @@
 # Patch 0022 distinguishes local virtio-net socket bind failures from proxy connect
 # failures, retaining endpoint paths and errno (STEAMAC-82: eth0 Binding(ENOSPC)
 # was ambiguous). It does not retry or change activation failure behavior.
-# Patch 0023 bumps imago to 0.2.6 (libkrun/libkrun@d69ece58, from the open 1.19.8
-# cherry-picks libkrun/libkrun#980): imago 0.2.3
-# truncates a raw image when a discard reaches its end, so a guest fstrim (#78)
-# cuts the end off steamos.img (libkrun/libkrun#949).
+# Patch 0023 exposes a non-realtime guest playback tap for Moonlight, before host
+# volume/mute and physical speaker mapping; unregister waits for pending delivery.
+# Patch 0024 bumps imago to 0.2.6 (libkrun/libkrun@d69ece58, from the open 1.19.8
+# cherry-picks libkrun/libkrun#980): imago 0.2.3 truncates a raw image when a
+# discard reaches its end, so a guest fstrim (#78) cuts the end off steamos.img
+# (libkrun/libkrun#949).
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed

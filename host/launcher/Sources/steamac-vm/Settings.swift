@@ -31,6 +31,8 @@ final class LauncherSettings: ObservableObject {
         case virtualPad, padType, dualSensePassthrough, controllerID, additionalPads, swapABXY, stickDeadzone
         // Sound
         case soundEnabled, soundOutputUID, soundVolume, soundMute, soundLatency
+        // Streaming
+        case streamingHost
         // Advanced
         case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, sharedMount, steamosBranch, steamClient,
              vulkanDriver, wmtr, wmtrLibrary
@@ -382,6 +384,8 @@ final class LauncherSettings: ObservableObject {
     @Published var network = true { didSet { save(.network, network) } }
     /// Opt-in: exposes Remote Play to the local network, unlike ordinary user-mode NAT.
     @Published var lanRemotePlay = false { didSet { save(.lanRemotePlay, lanRemotePlay) } }
+    /// Opt-in Moonlight host; only the windowed VM process opens its listeners.
+    @Published var streamingHost = false { didSet { save(.streamingHost, streamingHost) } }
     /// "" = default (see AppBundle.defaultDisk()).
     @Published var diskImage = "" { didSet { save(.diskImage, diskImage) } }
     /// Mac folder exposed to the guest as the virtio-fs device "macshare" (Options.share); "" = none.
@@ -473,6 +477,7 @@ final class LauncherSettings: ObservableObject {
         int(.sshPort, &sshPort)
         bool(.network, &network)
         bool(.lanRemotePlay, &lanRemotePlay)
+        bool(.streamingHost, &streamingHost)
         string(.diskImage, &diskImage)
         string(.sharedFolder, &sharedFolder)
         string(.sharedMount, &sharedMount)
@@ -557,6 +562,7 @@ final class LauncherSettings: ObservableObject {
         case .sshPort: guard let i else { return false }; sshPort = i
         case .network: guard let b else { return false }; network = b
         case .lanRemotePlay: guard let b else { return false }; lanRemotePlay = b
+        case .streamingHost: guard let b else { return false }; streamingHost = b
         case .diskImage: diskImage = text == "default" ? "" : text
         case .sharedFolder: sharedFolder = text == "none" ? "" : text
         case .sharedMount: guard Options.isValidShareMount(text) else { return false }; sharedMount = text
@@ -595,6 +601,7 @@ final class LauncherSettings: ObservableObject {
         soundVolume = fresh.soundVolume; soundMute = fresh.soundMute; soundLatency = fresh.soundLatency
         cpus = fresh.cpus; memMiB = fresh.memMiB; sshEnabled = fresh.sshEnabled; sshPort = fresh.sshPort; network = fresh.network
         lanRemotePlay = fresh.lanRemotePlay
+        streamingHost = fresh.streamingHost
         diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; sharedMount = fresh.sharedMount; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
