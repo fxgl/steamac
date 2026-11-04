@@ -26,6 +26,13 @@ enum StallSelfTest {
     static func run(_ o: Options) -> Never {
         if let error = StallThreadDiagnostics.selfCheck() { fatal(error) }
         log("stall selftest: PASS bounded host thread snapshot includes named waiting worker")
+        let cardPattern = #"3[47](?:[ -]*[0-9]){13}"#
+        let counters = StallMonitor.diagnosticCounterText((ctrl: 340577, ring: 89246731)) + " hb=0.65"
+        guard counters.contains("ctrl=340577 ring=89246731"),
+              counters.range(of: cardPattern, options: .regularExpression) == nil else {
+            fatal("stall counters can be mistaken for a payment-card number: \(counters)")
+        }
+        log("stall selftest: PASS counter labels prevent payment-card scrubbing")
         let app = SteamacApplication.shared
         app.setActivationPolicy(.regular)
         let display = DisplayBackend()
@@ -186,12 +193,13 @@ enum StallSelfTest {
                         ? nil : "Report… link missing on the not-responding card: \(view.reportLinkFrame) in \(view.cardFrame)")
                     ?? (stallDiagnostic.map {
                         $0.idle >= StallMonitor.idleThreshold && $0.heartbeatAge > StallMonitor.heartbeatTimeout
-                            && $0.history.contains("ctrl-total ring-total heartbeat-age guest-uptime-ms")
-                            && $0.history.contains("VM memory snapshots")
-                            && $0.history.contains("malloc-in-use=")
-                            && $0.history.contains("malloc-allocated=")
-                            && $0.history.contains("Host thread snapshot:")
-                            && $0.history.contains("cpu-permille=")
+                            && $0.history.contains("GPU activity samples")
+                            && $0.history.contains("ctrl=") && $0.history.contains(" hb=")
+                            && $0.memoryHistory.contains("VM memory snapshots")
+                            && $0.memoryHistory.contains("malloc-in-use=")
+                            && $0.memoryHistory.contains("malloc-allocated=")
+                            && $0.threadSnapshot.contains("Host thread snapshot:")
+                            && $0.threadSnapshot.contains("cpu-permille=")
                             && $0.history.split(separator: "\n").count > 5
                     } == true ? nil : "missing counter/heartbeat history in the stall report")
             },
