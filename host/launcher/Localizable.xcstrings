@@ -4,6 +4,38 @@
     "" : {
 
     },
+    "A Steam Controller (Bluetooth or its Puck) needs Input Monitoring to pass through as itself. Without it, SteamOS sees an Xbox 360 controller. Enable FX Steam Launcher in System Settings › Privacy & Security › Input Monitoring; the launcher picks up the grant within a few seconds." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam Controller (Bluetooth или его Puck) нужен доступ Input Monitoring, чтобы пройти в SteamOS как он сам. Без него SteamOS видит Xbox 360. Включите FX Steam Launcher в Системных настройках › Конфиденциальность и безопасность › Мониторинг ввода; лаунчер подхватит разрешение за несколько секунд."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam Controller（蓝牙或其 Puck）需要“输入监控”权限才能以自身身份传入 SteamOS。没有该权限时，SteamOS 会把它看成 Xbox 360。请在“系统设置 › 隐私与安全性 › 输入监控”中为 FX Steam Launcher 打开开关；启动器会在几秒内识别授权。"
+          }
+        }
+      }
+    },
+    "Enable Input Monitoring…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить Input Monitoring…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用输入监控…"
+          }
+        }
+      }
+    },
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
