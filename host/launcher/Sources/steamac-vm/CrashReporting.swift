@@ -94,7 +94,7 @@ enum CrashReporting {
     nonisolated(unsafe) private static var runOverride: String?
     nonisolated(unsafe) private static var test = false
     nonisolated(unsafe) private static var tags: [String: String] = [:]
-    nonisolated(unsafe) private static var reportedThisProcess: Set<String> = []
+    nonisolated(unsafe) private static var reportedThisProcess: [String: Bool] = [:]
     nonisolated(unsafe) private static var kindCounts: [Kind: Int] = [:]
     nonisolated(unsafe) private static var settingsSubscription: AnyCancellable?
     nonisolated(unsafe) private static var tap: StderrTap?
@@ -655,14 +655,14 @@ enum CrashReporting {
         // Supervisor: the VM process's Settings window may have turned reporting off meanwhile.
         if role == .launcher { guard settingAllows else { return } }
         let fingerprint = kind.rawValue + "|" + key
+        let hasSource = kind == .pipelineCompile && LineScanner.hasShaderSource(extra)
         let allowed: Bool = locked {
-            guard !reportedThisProcess.contains(fingerprint), kindCounts[kind, default: 0] < kind.budget,
-                  reportedThisProcess.count < 12 else { return false }
-            reportedThisProcess.insert(fingerprint)
+            guard kindCounts[kind, default: 0] < kind.budget, reportedThisProcess.count < 12,
+                  ReportedStore.claimInProcess(fingerprint, hasSource: hasSource, seen: &reportedThisProcess) else { return false }
             kindCounts[kind, default: 0] += 1
             return true
         }
-        guard allowed, test || ReportedStore.claim(fingerprint, quietPeriod: kind.quietPeriod) else { return }
+        guard allowed, test || ReportedStore.claim(fingerprint, quietPeriod: kind.quietPeriod, hasSource: hasSource) else { return }
         let event = Event(level: kind == .test ? .info : level)
         event.message = SentryMessage(formatted: String(scrub(message).prefix(2000)))
         event.fingerprint = [kind.rawValue, String(key.prefix(200))]
@@ -684,7 +684,10 @@ enum CrashReporting {
             t.merge(vm) { old, _ in old }
         }
         let scoped = t.mapValues { String(scrub($0).prefix(200)) }
-        let id = SentrySDK.capture(event: event) { scope in scope.setTags(scoped) }.sentryIdString
+        let id = SentrySDK.capture(event: event) { scope in
+            scope.setTags(scoped)
+            if kind.rawValue == "installation-incomplete" { scope.clearBreadcrumbs() }
+        }.sentryIdString
         locked { lastEvent = id }
         if let dir = role == .launcher ? runDir : Supervisor.runDir {
             try? id.write(toFile: dir + "/last-event-id", atomically: true, encoding: .utf8)
@@ -948,6 +951,66 @@ enum CrashReporting {
         if caches.count != 1 || caches.first?.extra["metal_cache_probe"]?.contains("306AKY0LJMPLL") != true {
             failures.append("scanner: runtime Metal module-cache diagnostics lost")
         }
+        var interleaved = LineScanner()
+        let interleavedLines = [
+            "[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Render pipeline compile failed (Error code 2):",
+            "Undefined symbols:", "  llvm.agx2.sample.itrproj.1xf, referenced from: VkMain", ".",
+            "[steamac-vm] no-picture: shown after 5.0 s (black picture 100.0%)",
+            "[mvk-msl] // Metal pipeline descriptor: sampleCount=1",
+            "[steamac-vm] memory: unrelated thread",
+            "[mvk-msl] // Pipeline failure MSL stage=4 entry=VkMain capture=full",
+            "[mvk-msl] 1: fragment float4 VkMain() { return 0.0; }",
+            LineScanner.virglLine("vkr: pipeline 2207 creation failed on host; draws using it will be skipped"),
+        ]
+        let interleavedReports = interleavedLines.flatMap { interleaved.feed($0) } + interleaved.flushPending()
+        if interleavedReports.count != 1
+            || interleavedReports.first?.extra["msl_stage_4"]?.contains("VkMain()") != true
+            || interleavedReports.first?.extra["msl_interfaces"]?.contains("sampleCount=1") != true {
+            failures.append("scanner: interleaved launcher lines closed the Metal report before source")
+        }
+        let source = ["msl_stage_4": "// Pipeline failure MSL stage=4\n1: fragment float4 VkMain() {}"]
+        if LineScanner.hasShaderSource(["msl_stage_4": "// Pipeline failure MSL stage=4"])
+            || !LineScanner.hasShaderSource(source) {
+            failures.append("scanner: source enrichment confused a stage header with shader source")
+        }
+        var processClaims: [String: Bool] = [:]
+        let claimed = [
+            ReportedStore.claimInProcess("shader", hasSource: false, seen: &processClaims),
+            ReportedStore.claimInProcess("shader", hasSource: false, seen: &processClaims),
+            ReportedStore.claimInProcess("shader", hasSource: true, seen: &processClaims),
+            ReportedStore.claimInProcess("shader", hasSource: true, seen: &processClaims),
+            ReportedStore.claimInProcess("shader", hasSource: false, seen: &processClaims),
+        ]
+        if claimed != [true, false, true, false, false] {
+            failures.append("scanner: in-process source enrichment was not limited to once")
+        }
+        let storeRoot = NSTemporaryDirectory() + "steamac-report-store-" + UUID().uuidString
+        let store = storeRoot + "/reported.json"
+        defer { try? FileManager.default.removeItem(atPath: storeRoot) }
+        let claims = [
+            ReportedStore.claim("shader", quietPeriod: 1000, at: store, now: 100),
+            ReportedStore.claim("shader", quietPeriod: 1000, at: store, now: 101),
+            ReportedStore.claim("shader", quietPeriod: 1000, hasSource: true, at: store, now: 102),
+            ReportedStore.claim("shader", quietPeriod: 1000, hasSource: true, at: store, now: 103),
+            ReportedStore.claim("shader", quietPeriod: 1000, at: store, now: 104),
+        ]
+        if claims != [true, false, true, false, false] {
+            failures.append("scanner: persistent source enrichment was not limited to once")
+        }
+        do {
+            guard ReportedStore.claim("installation", quietPeriod: .infinity, at: store, now: 100) else {
+                throw OptionError("first permanent report was suppressed")
+            }
+            guard var entries = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: store))) as? [String: Double] else {
+                throw OptionError("report store is not a timestamp dictionary")
+            }
+            for i in 0..<2100 { entries["prune-\(i)"] = 10_000_000 + Double(i) }
+            try JSONSerialization.data(withJSONObject: entries).write(to: URL(fileURLWithPath: store))
+            guard ReportedStore.claim("prune", quietPeriod: 1000, at: store, now: 10_003_000),
+                  !ReportedStore.claim("installation", quietPeriod: .infinity, at: store, now: 100_000_000) else {
+                throw OptionError("permanent report was lost to age/count pruning")
+            }
+        } catch { failures.append("scanner: permanent report store: \(error)") }
         log("selftest-settings: scanner check: \(LineScanner.teardownSample.count) teardown lines → no report, "
             + "\(LineScanner.fatalSample.count) fatal lines → one report each: "
             + (failures.isEmpty ? "ok" : failures.joined(separator: "; ")))
@@ -1211,7 +1274,14 @@ private struct LineScanner {
                 if p.kind == .rustPanic { out.append(finish()) }
                 return out
             }
-            out.append(finish())
+            // Other stderr writers can interleave between Metal's error and its MSL.
+            // Keep the report open until its renderer completion, another Metal error,
+            // a real fatal event, or the existing timeout/EOF flush.
+            if p.kind != .pipelineCompile || line.hasPrefix("[mvk-error]") || line.hasPrefix("[mvk-warn]")
+                || line.contains("vkr: pipeline ") && line.contains("creation failed on host") || Self.isGPUFatal(line)
+                || line.hasPrefix("thread '") && line.contains("panicked at") {
+                out.append(finish())
+            }
         }
         if line.hasPrefix("[steamac-vm] error: ") || line.hasPrefix("[steamac-vm] provision failed") {
             lastError = String(line.dropFirst("[steamac-vm] ".count).prefix(300))
@@ -1235,6 +1305,14 @@ private struct LineScanner {
     mutating func flushPending(serial only: Int? = nil) -> [Finding] {
         guard pending != nil, only == nil || only == multiSerial else { return [] }
         return [finish()]
+    }
+
+    static func hasShaderSource(_ extra: [String: String]) -> Bool {
+        extra.contains { key, value in
+            if key == "msl_error_context" { return !value.isEmpty }
+            if key == "msl_source" { return value.contains("#include") || value.contains("using namespace metal;") }
+            return key.hasPrefix("msl_stage_") && value.contains("\n1: ")
+        }
     }
 
     private static func isGPUFatal(_ line: String) -> Bool {
@@ -1341,18 +1419,40 @@ private enum ReportedStore {
         NSHomeDirectory() + "/Library/Caches/" + LauncherSettings.defaultDomain + "/sentry/reported.json"
     }
 
+    /// Source-less pipeline reports may be enriched once, without changing their Sentry fingerprint.
+    static func claimInProcess(_ fingerprint: String, hasSource: Bool, seen: inout [String: Bool]) -> Bool {
+        if let previous = seen[fingerprint], previous || !hasSource { return false }
+        seen[fingerprint] = hasSource
+        return true
+    }
+
     /// True (and recorded) unless the fingerprint was reported within `quietPeriod`.
-    static func claim(_ fingerprint: String, quietPeriod: TimeInterval) -> Bool {
+    static func claim(_ fingerprint: String, quietPeriod: TimeInterval, hasSource: Bool = false,
+                      at storePath: String? = nil, now: TimeInterval = Date().timeIntervalSince1970) -> Bool {
         guard quietPeriod > 0 else { return true }
         lock.lock()
         defer { lock.unlock() }
-        let now = Date().timeIntervalSince1970
+        let path = storePath ?? Self.path
         var seen = (FileManager.default.contents(atPath: path)
             .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Double]) ?? [:]
-        if let last = seen[fingerprint], now - last < quietPeriod { return false }
-        seen = seen.filter { now - $0.value < 60 * 86400 }
-        if seen.count > 2000 { seen = Dictionary(uniqueKeysWithValues: seen.sorted { $0.value > $1.value }.prefix(1500).map { ($0.key, $0.value) }) }
-        seen[fingerprint] = now
+        let sourceKey = "msl-source|" + fingerprint
+        let permanentKey = "permanent|" + fingerprint
+        if seen[permanentKey] != nil { return false }
+        if let last = seen[hasSource ? sourceKey : fingerprint], now - last < quietPeriod { return false }
+        seen = seen.filter { $0.key.hasPrefix("permanent|") || now - $0.value < 60 * 86400 }
+        if seen.count > 2000 {
+            let permanent = seen.filter { $0.key.hasPrefix("permanent|") }
+            let recent = seen.filter { !$0.key.hasPrefix("permanent|") }
+                .sorted { $0.value > $1.value }.prefix(max(0, 2000 - permanent.count))
+            seen = permanent
+            for (key, value) in recent { seen[key] = value }
+        }
+        if quietPeriod.isInfinite {
+            seen[permanentKey] = now
+        } else {
+            seen[fingerprint] = now
+            if hasSource { seen[sourceKey] = now }
+        }
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         if let data = try? JSONSerialization.data(withJSONObject: seen) {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
