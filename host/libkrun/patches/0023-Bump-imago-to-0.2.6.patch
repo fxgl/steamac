@@ -1,15 +1,21 @@
-From 7f5d68b9c656a21d83230c817253d38b1b121b48 Mon Sep 17 00:00:00 2001
+From 11b5428ca112bb4331d67036fa2557463443799d Mon Sep 17 00:00:00 2001
 From: Sergio Lopez <slp@redhat.com>
-Date: Wed, 4 Nov 2026 14:36:47 -0600
+Date: Thu, 29 Oct 2026 17:45:17 +0100
 Subject: [PATCH] Bump imago to 0.2.6
 
 Imago 0.2.6 includes a fix that prevents truncating a raw file when
 there's a discard request pointing to the end of the file.
 
-libkrun/libkrun@d69ece58 (PR #980, the 1.19.8 cherry-picks), rebased
-onto v1.19.6: only the Cargo.toml context differs. Without it, a guest
-fstrim whose discard reaches the end of a raw image truncates the image
-(libkrun/libkrun#949).
+Fixes: #949
+
+Signed-off-by: Sergio Lopez <slp@redhat.com>
+(cherry picked from commit d166df9a80948d3017315d46b4822f203b1d01da)
+Signed-off-by: Sergio Lopez <slp@redhat.com>
+
+[steamac: libkrun/libkrun@d69ece58 from PR #980 (the open 1.19.8
+cherry-picks) rebased onto v1.19.6; only the Cargo.toml context differs.
+Without it a guest fstrim whose discard reaches the end of steamos.img
+truncates the image, libkrun/libkrun#949.]
 ---
  Cargo.lock             | 166 ++++++++++++++++++++++++++++++++---------
  src/devices/Cargo.toml |   2 +-

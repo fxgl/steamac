@@ -28,7 +28,8 @@
 # Patch 0022 distinguishes local virtio-net socket bind failures from proxy connect
 # failures, retaining endpoint paths and errno (STEAMAC-82: eth0 Binding(ENOSPC)
 # was ambiguous). It does not retry or change activation failure behavior.
-# Patch 0023 bumps imago to 0.2.6 (libkrun/libkrun@d69ece58, in 1.19.8): imago 0.2.3
+# Patch 0023 bumps imago to 0.2.6 (libkrun/libkrun@d69ece58, from the open 1.19.8
+# cherry-picks libkrun/libkrun#980): imago 0.2.3
 # truncates a raw image when a discard reaches its end, so a guest fstrim (#78)
 # cuts the end off steamos.img (libkrun/libkrun#949).
 #
