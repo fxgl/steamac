@@ -1,0 +1,29 @@
+; Only the current entry-point interface may contribute secondary locations.
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %first "first" %primary %secondary
+OpEntryPoint Fragment %second "second" %primary
+OpExecutionMode %first OriginUpperLeft
+OpExecutionMode %second OriginUpperLeft
+OpDecorate %primary Location 0
+OpDecorate %secondary Location 0
+OpDecorate %secondary Index 1
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%float = OpTypeFloat 32
+%vec = OpTypeVector %float 4
+%ptr = OpTypePointer Output %vec
+%zero = OpConstantNull %vec
+%primary = OpVariable %ptr Output
+%secondary = OpVariable %ptr Output
+%first = OpFunction %void None %function
+%entry1 = OpLabel
+OpStore %primary %zero
+OpStore %secondary %zero
+OpReturn
+OpFunctionEnd
+%second = OpFunction %void None %function
+%entry2 = OpLabel
+OpStore %primary %zero
+OpReturn
+OpFunctionEnd

@@ -1,0 +1,82 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] MSL: reflect original secondary fragment output locations
+
+STEAMAC-75 requires distinguishing an absent secondary blend input from
+a real Index=1 lost during translation. Query the original entry-point
+interface before compilation, including composite and array locations.
+This does not alter emitted shader code.
+
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -810,6 +810,10 @@
+ 
+ 	// Query after compilation is done. This allows you to check if an output location were used by the shader.
+ 	bool is_msl_shader_output_used(uint32_t location);
++
++	// Query the original SPIR-V entry-point declarations before compile(). A missing
++	// secondary blend source has undefined values in Vulkan, not a pipeline error.
++	uint32_t get_fragment_output_secondary_mask() const;
+ 
+ 	// If not using add_msl_shader_input, it's possible
+ 	// that certain builtin attributes need to be automatically assigned locations.
+@@ -1292,6 +1296,7 @@
+ 	const char *to_restrict(uint32_t id, bool space);
+ 	SPIRType &get_stage_in_struct_type();
+ 	SPIRType &get_stage_out_struct_type();
++	uint32_t type_secondary_output_mask(const SPIRType &type, uint32_t location, uint32_t index) const;
+ 	SPIRType &get_patch_stage_in_struct_type();
+ 	SPIRType &get_patch_stage_out_struct_type();
+ 	std::string get_tess_factor_struct_name();
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -240,6 +240,50 @@
+ 	// Don't report internal location allocations to app.
+ 	return location_outputs_in_use.count(location) != 0 &&
+ 	       location_outputs_in_use_fallback.count(location) == 0;
++}
++
++uint32_t CompilerMSL::type_secondary_output_mask(const SPIRType &type, uint32_t location, uint32_t index) const
++{
++	uint32_t mask = 0;
++	if (type.basetype != SPIRType::Struct)
++	{
++		if (index == 1)
++			for (uint32_t i = 0, count = type_to_location_count(type); i < count && location < 32; i++, location++)
++				mask |= 1u << location;
++		return mask;
++	}
++	uint32_t elements = 1;
++	for (uint32_t i = 0; i < type.array.size(); i++)
++		elements *= to_array_size_literal(type, i);
++	for (uint32_t element = 0; element < elements; element++)
++	{
++		for (uint32_t i = 0; i < type.member_types.size(); i++)
++		{
++			auto &member = get<SPIRType>(type.member_types[i]);
++			if (has_member_decoration(type.self, i, DecorationLocation))
++				location = get_member_decoration(type.self, i, DecorationLocation);
++			uint32_t member_index = has_member_decoration(type.self, i, DecorationIndex) ?
++			                           get_member_decoration(type.self, i, DecorationIndex) : index;
++			mask |= type_secondary_output_mask(member, location, member_index);
++			location += type_to_location_count(member);
++		}
++	}
++	return mask;
++}
++
++uint32_t CompilerMSL::get_fragment_output_secondary_mask() const
++{
++	if (get_execution_model() != ExecutionModelFragment)
++		return 0;
++	uint32_t mask = 0;
++	for (auto id : get_entry_point().interface_variables)
++	{
++		auto &var = get<SPIRVariable>(id);
++		if (var.storage == StorageClassOutput && !is_builtin_variable(var))
++			mask |= type_secondary_output_mask(get_variable_data_type(var), get_decoration(id, DecorationLocation),
++			                                   get_decoration(id, DecorationIndex));
++	}
++	return mask;
+ }
+ 
+ uint32_t CompilerMSL::get_automatic_builtin_input_location(BuiltIn builtin) const

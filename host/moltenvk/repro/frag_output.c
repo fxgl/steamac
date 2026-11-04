@@ -26,6 +26,7 @@ static VkQueue queue;
 static VkCommandPool pool;
 static const char *dir;
 static int moltenvk;
+static VkPipelineCache pipeline_cache;
 
 static VkShaderModule module(const char *name)
 {
@@ -79,6 +80,7 @@ struct test {
 	const char *shader;
 	uint32_t natt;
 	struct attachment att[2];
+	const VkPipelineColorBlendAttachmentState *blend;
 };
 
 static const struct test tests[] = {
@@ -95,6 +97,39 @@ static const struct test tests[] = {
 	  { { VK_FORMAT_R32_UINT, 0, 1, { 0x3f800000 }, 1 }, { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 255, 0, 128, 255 }, 1 } } },
 	{ "uint components 0 and 1 -> R32G32_SINT", "fo_components.frag.spv", 1,
 	  { { VK_FORMAT_R32G32_SINT, 0, 2, { 0xfffffffd, 5 } } } },
+};
+
+static const VkPipelineColorBlendAttachmentState missing_dst_blend = {
+	.blendEnable = VK_TRUE, .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+	.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA,
+	.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC1_ALPHA,
+	.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR, .colorWriteMask = 15,
+};
+static const VkPipelineColorBlendAttachmentState missing_src_blend = {
+	.blendEnable = VK_TRUE, .srcColorBlendFactor = VK_BLEND_FACTOR_SRC1_COLOR,
+	.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR,
+	.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA,
+	.dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC1_ALPHA, .colorWriteMask = 15,
+};
+static const VkPipelineColorBlendAttachmentState present_blend = {
+	.blendEnable = VK_TRUE, .srcColorBlendFactor = VK_BLEND_FACTOR_SRC1_COLOR,
+	.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+	.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC1_ALPHA,
+	.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO, .colorWriteMask = 15,
+};
+/* Vulkan framebuffer-dsb permits an absent secondary value. MoltenVK chooses zero.
+ * A Location=1 output must not be mistaken for Location=0, Index=1 (STEAMAC-75). */
+static const struct test dual_tests[] = {
+	{ "missing secondary: source ONE, destination ONE_MINUS_SRC1_ALPHA", "sentry-75-secondary-absent.frag.spv", 1,
+	  { { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 96, 191, 223, 64 }, 1 } }, &missing_dst_blend },
+	{ "missing secondary: source SRC1_COLOR, destination ONE_MINUS_SRC1_COLOR", "sentry-75-secondary-absent.frag.spv", 1,
+	  { { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 32, 64, 32, 128 }, 1 } }, &missing_src_blend },
+	{ "masked Location=1 is not a secondary source", "sentry-75-secondary-masked.frag.spv", 1,
+	  { { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 96, 191, 223, 64 }, 1 } }, &missing_dst_blend },
+	{ "packed Index=1 retains real secondary source", "sentry-75-dual-source.frag.spv", 1,
+	  { { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 32, 32, 191, 32 } } }, &present_blend },
+	{ "array Index=1 retains real secondary source", "sentry-75-secondary-array.frag.spv", 1,
+	  { { VK_FORMAT_R8G8B8A8_UNORM, 1, 4, { 32, 32, 191, 32 } } }, &present_blend },
 };
 
 static int run(const struct test *t, VkShaderModule vs)
@@ -123,6 +158,10 @@ static int run(const struct test *t, VkShaderModule vs)
 			VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL };
 		ref[a] = (VkAttachmentReference){ a, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 		cba[a] = (VkPipelineColorBlendAttachmentState){ .colorWriteMask = 0xf };
+		if (t->blend) {
+			cba[a] = *t->blend;
+			clear[a].color = (VkClearColorValue) { .float32 = { 0.125f, 0.25f, 0.125f, 0.25f } };
+		}
 	}
 	VkSubpassDescription sub = { .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = t->natt, .pColorAttachments = ref };
@@ -162,7 +201,7 @@ static int run(const struct test *t, VkShaderModule vs)
 		.pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vps, .pRasterizationState = &rs,
 		.pMultisampleState = &ms, .pColorBlendState = &cb, .layout = layout, .renderPass = rp };
 	VkPipeline p;
-	VkResult r = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &gpci, NULL, &p);
+	VkResult r = vkCreateGraphicsPipelines(dev, pipeline_cache, 1, &gpci, NULL, &p);
 	if (r) {
 		printf("FAIL %s: vkCreateGraphicsPipelines = %d\n", t->what, r);
 		return 1;
@@ -227,7 +266,8 @@ static int run(const struct test *t, VkShaderModule vs)
 
 int main(int argc, char **argv)
 {
-	if (argc != 2) { fprintf(stderr, "usage: %s <spv dir>\n", argv[0]); return 2; }
+	int dual = argc == 3 && !strcmp(argv[2], "dual-source");
+	if (argc != 2 && !dual) { fprintf(stderr, "usage: %s <spv dir> [dual-source]\n", argv[0]); return 2; }
 	dir = argv[1];
 	VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO, .apiVersion = VK_API_VERSION_1_3 };
 	VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
@@ -238,6 +278,8 @@ int main(int argc, char **argv)
 	float prio = 1;
 	VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = 1, .pQueuePriorities = &prio };
 	VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci };
+	VkPhysicalDeviceFeatures features = { .dualSrcBlend = dual };
+	dci.pEnabledFeatures = &features;
 	CK(vkCreateDevice(pd, &dci, NULL, &dev));
 	vkGetDeviceQueue(dev, 0, 0, &queue);
 	VkPhysicalDeviceDriverProperties driver = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
@@ -249,8 +291,30 @@ int main(int argc, char **argv)
 
 	VkShaderModule vs = module("msaa.vert.spv");
 	int fails = 0;
-	for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
-		fails += run(&tests[i], vs);
+	if (dual) {
+		VkPipelineCacheCreateInfo cache_info = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+		CK(vkCreatePipelineCache(dev, &cache_info, NULL, &pipeline_cache));
+		for (unsigned round = 0; round < 2; round++) {
+			printf("dual-source pipelines: %s cache\n", round ? "serialized" : "cold");
+			for (size_t i = 0; i < sizeof(dual_tests) / sizeof(dual_tests[0]); i++)
+				fails += run(&dual_tests[i], vs);
+			if (!round) {
+				size_t size = 0;
+				CK(vkGetPipelineCacheData(dev, pipeline_cache, &size, NULL));
+				void *data = malloc(size);
+				CK(vkGetPipelineCacheData(dev, pipeline_cache, &size, data));
+				vkDestroyPipelineCache(dev, pipeline_cache, NULL);
+				cache_info.initialDataSize = size;
+				cache_info.pInitialData = data;
+				CK(vkCreatePipelineCache(dev, &cache_info, NULL, &pipeline_cache));
+				free(data);
+			}
+		}
+		vkDestroyPipelineCache(dev, pipeline_cache, NULL);
+	} else {
+		for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
+			fails += run(&tests[i], vs);
+	}
 	if (fails) { printf("frag_output: %d failure(s)\n", fails); return 1; }
 	return 0;
 }

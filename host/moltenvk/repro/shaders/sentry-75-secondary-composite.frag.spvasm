@@ -1,0 +1,28 @@
+; Original Index=1 applies to every leaf, even if later MSL flattening were to lose it.
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %primary %secondary
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %primary Location 0
+OpDecorate %secondary Location 1
+OpDecorate %secondary Index 1
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%float = OpTypeFloat 32
+%vec = OpTypeVector %float 4
+%uint = OpTypeInt 32 0
+%two = OpConstant %uint 2
+%array = OpTypeArray %vec %two
+%structure = OpTypeStruct %array %vec
+%ptr = OpTypePointer Output %vec
+%struct_ptr = OpTypePointer Output %structure
+%zero = OpConstantNull %vec
+%struct_zero = OpConstantNull %structure
+%primary = OpVariable %ptr Output
+%secondary = OpVariable %struct_ptr Output
+%main = OpFunction %void None %function
+%entry = OpLabel
+OpStore %primary %zero
+OpStore %secondary %struct_zero
+OpReturn
+OpFunctionEnd

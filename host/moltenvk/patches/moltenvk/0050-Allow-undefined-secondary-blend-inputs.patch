@@ -1,0 +1,112 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] Allow undefined secondary blend inputs instead of rejecting pipelines
+
+STEAMAC-75 recurred with a complete fragment writing only color(0),
+while the descriptor used OneMinusSource1Alpha. Vulkan framebuffer-dsb
+allows absent secondary outputs and makes their values undefined; Metal
+rejects the same pipeline. Preserve the original Index=1 location mask in
+conversion results and the pipeline cache. Only where no secondary output
+is declared, choose zero by replacing SRC1 factors with Zero and inverted
+SRC1 factors with One. Never hide a translator loss of a real Index=1.
+
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.h
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.h
+@@ -252,6 +252,7 @@
+ 		SPIRVEntryPoint entryPoint;
+ 		bool isRasterizationDisabled = false;
+ 		bool isPositionInvariant = false;
++		uint32_t fragmentOutputSecondaryMask = 0;
+ 		bool needsOutputBuffer = false;
+ 		bool needsPatchOutputBuffer = false;
+ 		bool needsBufferSizeBuffer = false;
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
+@@ -337,6 +337,9 @@
+ 				}
+ 			}
+ 		}
++		// Inspect original declarations, not the emitted interface: a translator error
++		// must never turn a defined secondary output into an undefined blend value.
++		conversionResult.resultInfo.fragmentOutputSecondaryMask = pMSLCompiler->get_fragment_output_secondary_mask();
+ 		conversionResult.msl = pMSLCompiler->compile();
+ 
+         if (shouldLogMSL) { logSource(conversionResult.resultLog, conversionResult.msl, "MSL", "Converted"); }
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h
+@@ -470,6 +470,7 @@
+ 	uint8_t _primitiveTopologyClass;
+ 	bool _isRasterizing = false;
+ 	bool _isRasterizingColor = false;
++	uint32_t _fragmentOutputSecondaryMask = 0;
+ 	bool _isTessellationPipeline = false;
+     bool _isGeometryPipeline = false;
+ 	bool _inputAttachmentIsDSAttachment = false;
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -2331,6 +2331,7 @@
+ 		if ( !mtlFunc ) { return false; }
+ 
+ 		auto& funcRslts = func.shaderConversionResults;
++		_fragmentOutputSecondaryMask = funcRslts.fragmentOutputSecondaryMask;
+ 		populateResourceUsage(_stageResources[kMVKShaderStageFragment], shaderConfig, funcRslts, spv::ExecutionModelFragment);
+ 		_layout->populateBindOperations(_stageResources[kMVKShaderStageFragment].bindScript, shaderConfig, spv::ExecutionModelFragment);
+ 	}
+@@ -2635,6 +2636,25 @@
+ 	plDesc.tessellationPartitionMode = mvkMTLTessellationPartitionModeFromSpvExecutionMode(reflectData.partitionMode);
+ }
+ 
++// Vulkan permits an absent secondary blend output (framebuffer-dsb): its value is
++// undefined. Choose zero in that case instead of asking Metal to link a nonexistent
++// color(N), index(1). Never replace factors when SPIR-V actually declares Index=1.
++static MTLBlendFactor blendFactorWithSecondaryOutput(VkBlendFactor factor, bool hasSecondary) {
++	if (!hasSecondary) {
++		switch (factor) {
++			case VK_BLEND_FACTOR_SRC1_COLOR:
++			case VK_BLEND_FACTOR_SRC1_ALPHA:
++				return MTLBlendFactorZero;
++			case VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR:
++			case VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA:
++				return MTLBlendFactorOne;
++			default:
++				break;
++		}
++	}
++	return mvkMTLBlendFactorFromVkBlendFactor(factor);
++}
++
+ template<typename T>
+ void MVKGraphicsPipeline::addFragmentOutputToPipeline(T* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo) {
+ 	// Topology - only set for MTLRenderPipelineDescriptor, not MTLMeshRenderPipelineDescriptor
+@@ -2681,11 +2701,11 @@
+ 				}
+                 colorDesc.blendingEnabled = pCA->blendEnable;
+                 colorDesc.rgbBlendOperation = mvkMTLBlendOperationFromVkBlendOp(pCA->colorBlendOp);
+-                colorDesc.sourceRGBBlendFactor = mvkMTLBlendFactorFromVkBlendFactor(pCA->srcColorBlendFactor);
+-                colorDesc.destinationRGBBlendFactor = mvkMTLBlendFactorFromVkBlendFactor(pCA->dstColorBlendFactor);
++                colorDesc.sourceRGBBlendFactor = blendFactorWithSecondaryOutput(pCA->srcColorBlendFactor, _fragmentOutputSecondaryMask & (1u << caLoc));
++                colorDesc.destinationRGBBlendFactor = blendFactorWithSecondaryOutput(pCA->dstColorBlendFactor, _fragmentOutputSecondaryMask & (1u << caLoc));
+                 colorDesc.alphaBlendOperation = mvkMTLBlendOperationFromVkBlendOp(pCA->alphaBlendOp);
+-                colorDesc.sourceAlphaBlendFactor = mvkMTLBlendFactorFromVkBlendFactor(pCA->srcAlphaBlendFactor);
+-                colorDesc.destinationAlphaBlendFactor = mvkMTLBlendFactorFromVkBlendFactor(pCA->dstAlphaBlendFactor);
++                colorDesc.sourceAlphaBlendFactor = blendFactorWithSecondaryOutput(pCA->srcAlphaBlendFactor, _fragmentOutputSecondaryMask & (1u << caLoc));
++                colorDesc.destinationAlphaBlendFactor = blendFactorWithSecondaryOutput(pCA->dstAlphaBlendFactor, _fragmentOutputSecondaryMask & (1u << caLoc));
+ #if MVK_USE_METAL_PRIVATE_API
+ 				if (getMVKConfig().useMetalPrivateAPI) {
+ 					plDesc.logicOperationEnabledMVK = pCreateInfo->pColorBlendState->logicOpEnable;
+@@ -3845,6 +3865,7 @@
+ 				scr.functionConstantIDRemapping,
+ 				scr.isRasterizationDisabled,
+ 				scr.isPositionInvariant,
++				scr.fragmentOutputSecondaryMask,
+ 				scr.needsOutputBuffer,
+ 				scr.needsPatchOutputBuffer,
+ 				scr.needsBufferSizeBuffer,
+@@ -4032,7 +4053,7 @@
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(110);	// Contains collection
+-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(55);		// Contains collections
++	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(59);		// Contains collections
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
+ 	missingBytes += mvkValidateCerealArchiveSize<MVKShaderModuleKey>();
+ 	missingBytes += mvkValidateCerealArchiveSize<MVKCompressor<std::string>>(20);				// Contains collection
