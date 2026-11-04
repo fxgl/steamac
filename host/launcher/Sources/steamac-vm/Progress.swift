@@ -81,6 +81,8 @@ final class BootProgress {
     private(set) var state = ProgressState()
     /// State changed (overlay redraw / log line).
     var onChange: ((ProgressState) -> Void)?
+    /// Initramfs failed before the guest progress agent could start; shown once as a window sheet.
+    var onBootFailure: ((_ detail: String) -> Void)?
     /// Steam UI is up (`ready`).
     var onReady: (() -> Void)?
     /// Shutdown started (phase switched to .shutdown).
@@ -155,6 +157,21 @@ final class BootProgress {
             return
         }
         guard state.phase == .boot else { return }
+        guard state.stageId != "boot-failed" else { return }
+        if let fatal = line.range(of: "steamac-init: FATAL: ") {
+            let reason = String(line[fatal.upperBound...])
+            var failed = state
+            failed.stageId = "boot-failed"
+            failed.title = String(localized: "SteamOS could not start")
+            failed.logTitle = "SteamOS could not start"
+            failed.detail = reason
+            if reason.hasPrefix("no partition labelled ") { failed.detail += "\n" + AppBundle.invalidDiskMessage }
+            failed.logDetail = reason
+            failed.indeterminate = false
+            publish(failed)
+            onBootFailure?(failed.detail)
+            return
+        }
         if let r = line.range(of: "steamac-provision: ") {
             provisionLine(String(line[r.upperBound...]))
         } else if let r = line.range(of: "steamac-config: ") {
@@ -181,6 +198,7 @@ final class BootProgress {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true).map(String.init)
         guard let verb = parts.first else { return }
+        if state.stageId == "boot-failed", ["stage", "log", "ready", "provision"].contains(verb) { return }
         switch verb {
         case "stage":
             guard parts.count >= 3, BootProgress.guestStages.contains(parts[1]), let pct = Int(parts[2]),

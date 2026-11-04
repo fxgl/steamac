@@ -289,6 +289,14 @@ do {
 
     let progress = BootProgress(restarting: Supervisor.bootNumber > 1)
     lifecycle.progress = progress
+    progress.onBootFailure = { detail in
+        guard !options.headless, let window = lifecycle.window?.window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = String(localized: "SteamOS could not start")
+        alert.informativeText = detail
+        alert.beginSheetModal(for: window)
+    }
     // Session console log for Report a Problem (run dir, removed when the launcher exits).
     if let dir = Supervisor.runDir { RollingLog.console.open(dir: dir) }
     console.onLine = { line in
@@ -550,6 +558,10 @@ do {
 } catch let error as DiskLock.InUse {
     log("error: \(error)")
     MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS is already running", error.localizedDescription) }
+    exit(CrashReporting.startupRejectedStatus)
+} catch let error as DiskLock.AccessDenied {
+    log("error: \(error)")
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", error.localizedDescription) }
     exit(CrashReporting.startupRejectedStatus)
 } catch {
     fatal("\(error)")

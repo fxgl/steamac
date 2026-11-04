@@ -24,7 +24,7 @@ final class ProgressPillView: NSView {
         }
 
         init(_ s: ProgressState) {
-            self.init(title: s.title, detail: s.detail, fraction: s.fraction, indeterminate: s.indeterminate)
+            self.init(title: s.title, detail: s.detail, fraction: s.stageId == "boot-failed" ? nil : s.fraction, indeterminate: s.indeterminate)
         }
 
         var percentText: String {

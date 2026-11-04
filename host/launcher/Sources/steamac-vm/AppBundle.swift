@@ -44,13 +44,37 @@ enum AppBundle {
         defaultDiskCandidates().first(where: isDiskImage)
     }
 
-    /// A disk image libkrun can attach: a readable file, not a directory. The open panels let a
-    /// package through as a file: two 1.9 users chose an app (/System/Applications/Apps.app,
-    /// Steam.app) as their disk, and every start failed in krun_start_enter with -22 (STEAMAC-15).
+    /// Validate the raw SteamOS GPT, not its suffix: recovery archives and Steam's macOS
+    /// installer are readable files too, but cannot boot (STEAMAC-7Y/7Z).
     static func isDiskImage(_ path: String) -> Bool {
         var directory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && !directory.boolValue
-            && FileManager.default.isReadableFile(atPath: path)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
+              let table = try? GPT.read(path: path) else { return false }
+        return DiskLayout.parts(homeGiB: DiskLayout.defaultHomeGiB).allSatisfy { part in
+            var matches = 0
+            for entry in table.entries where entry.name == part.name {
+                guard entry.type == part.type else { return false }
+                matches += 1
+            }
+            return matches == 1
+        }
+    }
+
+    static var invalidDiskMessage: String {
+        String(localized: "Choose a raw SteamOS GPT disk with the SteamOS partitions (including esp, rootfs-A and home), not a recovery archive or Steam's macOS installer. Use Create SteamOS Disk to download and create the correct disk.")
+    }
+
+    /// Shared by both disk pickers: do not save a bad selection or silently ignore it.
+    @MainActor
+    static func acceptDiskSelection(_ path: String) -> Bool {
+        guard isDiskImage(path) else {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Not a usable SteamOS disk")
+            alert.informativeText = (path as NSString).abbreviatingWithTildeInPath + "\n\n" + invalidDiskMessage
+            alert.runModal()
+            return false
+        }
+        return true
     }
 
     /// "Choose a SteamOS disk image" panels (first run, Settings > Advanced): files only, no
@@ -126,7 +150,7 @@ enum AppBundle {
     /// on screen; a shell launch has the message on stderr).
     @MainActor
     static func alertIfLaunchedFromFinder(_ title: LocalizedStringResource, _ message: String) {
-        guard resources != nil && getppid() == 1 else { return }
+        guard resources != nil && (getppid() == 1 || Supervisor.isChild) else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: title)
         alert.informativeText = message
@@ -156,7 +180,8 @@ enum FirstRun {
                 let panel = NSOpenPanel()
                 AppBundle.configureDiskPanel(panel)
                 panel.message = String(localized: "Raw GPT disk image (e.g. steamos.img). It stays where it is.")
-                if panel.runModal() == .OK, let url = panel.url, AppBundle.isDiskImage(url.path) {
+                if panel.runModal() == .OK, let url = panel.url,
+                   MainActor.assumeIsolated({ AppBundle.acceptDiskSelection(url.path) }) {
                     chosen = url.path
                 }
             } else {
@@ -182,7 +207,7 @@ enum FirstRun {
         var info = String(localized: "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n")
         if !settings.diskImage.isEmpty {
             let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
-            info += String(localized: "The image chosen in Settings is not readable:\n\(path)\n\n")
+            info += path + "\n\n" + AppBundle.invalidDiskMessage + "\n\n"
         }
         let paths = looked.joined(separator: "\n")
         info += String(localized: "Looked in:\n\(paths)\n\n")

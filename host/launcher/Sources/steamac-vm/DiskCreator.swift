@@ -508,9 +508,12 @@ final class DiskCreator {
         var lastLogged = -1
         var text = ""
         var recent: [String] = []
+        var lastOutput = ""
+        var outputBytes = 0
         var buf = [UInt8](repeating: 0, count: 8192)
         func handle(_ lines: [String]) {
             for piece in lines {
+                lastOutput = piece
                 if let pct = DiskCreator.percent(in: piece) {
                     let elapsed = max(1, Date().timeIntervalSince(start))
                     let rate = Double(dataBytes) * pct / 100 / elapsed
@@ -540,6 +543,7 @@ final class DiskCreator {
             let n = read(master, &buf, buf.count)
             if n < 0 && errno == EINTR { continue }
             if n <= 0 { break }   // EIO once desync and the pty are gone
+            outputBytes += n
             text += String(decoding: buf[0..<n], as: UTF8.self)
             handle(DiskCreator.terminalLines(&text))
         }
@@ -549,6 +553,12 @@ final class DiskCreator {
         lock.lock(); process = nil; lock.unlock()
         try checkCancel()
         guard p.terminationStatus == 0 else {
+            // STEAMAC-7X had exit 1 with an empty diagnostic after 19 minutes. Do not
+            // infer network/space failure: keep exit reason, received byte count, the
+            // last terminal line (even progress) and current filesystem state.
+            log("create-disk: desync failed: exit \(p.terminationStatus), reason \(p.terminationReason.rawValue), received \(outputBytes) terminal bytes, last line: \(lastOutput.prefix(4096))")
+            log("create-disk: desync failure target: \(DiskCreationFilesystem.diagnostic(directory: (out as NSString).deletingLastPathComponent))"
+                + (cache.map { "; cache: \(DiskCreationFilesystem.diagnostic(directory: $0))" } ?? ""))
             if cache != nil && DiskCreator.cacheRenameCollision(output: recent) {
                 log("create-disk: cache rename collision; retrying once with one worker and no cache")
                 try? FileManager.default.removeItem(atPath: out)
@@ -583,6 +593,7 @@ final class DiskCreator {
     static func desyncFailure(status: Int32, output: [String]) -> Error {
         var detail = output.last(where: { $0.hasPrefix("Error: ") }).map { String($0.dropFirst(7)) }
             ?? output.suffix(3).joined(separator: " | ")
+        if detail.isEmpty { detail = "no diagnostic output; check the connection and available disk space, then try again" }
         for pattern in ["[0-9a-f]{4}/[0-9a-f]{64}", "[0-9a-f]{64}"] {
             detail = detail.replacingOccurrences(of: pattern, with: "<chunk>", options: .regularExpression)
         }

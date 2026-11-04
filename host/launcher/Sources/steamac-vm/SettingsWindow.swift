@@ -907,7 +907,7 @@ private struct AdvancedTab: View {
         if !settings.diskImage.isEmpty {
             let ok = AppBundle.isDiskImage(settings.diskImage)
             let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
-            return (ok ? path : String(localized: "\(path) (not found)"), ok)
+            return (ok ? path : path + "\n" + AppBundle.invalidDiskMessage, ok)
         }
         if let d = AppBundle.defaultDisk() { return (String(localized: "Default: \((d as NSString).abbreviatingWithTildeInPath)"), true) }
         return (String(localized: "Default: none found"), false)
@@ -1160,7 +1160,9 @@ private struct AdvancedTab: View {
         if !settings.diskImage.isEmpty {
             panel.directoryURL = URL(fileURLWithPath: (settings.diskImage as NSString).deletingLastPathComponent)
         }
-        if panel.runModal() == .OK, let url = panel.url { settings.diskImage = url.path }
+        if panel.runModal() == .OK, let url = panel.url, AppBundle.acceptDiskSelection(url.path) {
+            settings.diskImage = url.path
+        }
     }
 
     private func chooseWmtrLibrary() {

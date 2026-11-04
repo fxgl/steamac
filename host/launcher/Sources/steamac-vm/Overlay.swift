@@ -188,7 +188,8 @@ final class OverlayView: NSView {
         CATransaction.setAnimationDuration(0.35)
         titleLayer.string = attributed(s.title, size: 19 * k, weight: .semibold, color: OverlayView.color(0xc7d5e0))
         detailLayer.string = attributed(s.detail, size: 12.5 * k, weight: .regular, color: OverlayView.color(0x8f98a0))
-        percentLayer.string = attributed(s.indeterminate ? "" : "\(Int((s.fraction * 100).rounded(.down)))%",
+        track.isHidden = s.stageId == "boot-failed"
+        percentLayer.string = attributed(s.indeterminate || s.stageId == "boot-failed" ? "" : "\(Int((s.fraction * 100).rounded(.down)))%",
                                          size: 13 * k, weight: .medium, color: OverlayView.color(0x66c0f4), monospacedDigits: true)
         if !s.indeterminate {
             fill.bounds.size.width = track.bounds.width * CGFloat(max(0, min(1, s.fraction)))
