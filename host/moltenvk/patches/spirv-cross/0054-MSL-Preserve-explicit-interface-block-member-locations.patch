@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FX Steam Launcher <dev@fxgam.es>
+Date: Wed, 4 Nov 2026 12:00:00 +0000
+Subject: [PATCH] MSL: Preserve explicit interface block member locations
+
+The running location used while flattening an interface block was established
+by its first member and then advanced across every following member. Later
+explicit Location decorations were ignored, so Location 0 followed by Location
+2 became user(locn0) and user(locn1). Matching standalone declarations retained
+their locations and could no longer link to the block in Metal.
+
+Start a new range at each explicitly located top-level block member before
+flattening it. The member's own array elements, matrix columns, and nested
+structure contents still advance the location normally. Component decorations
+remain attached to the original location, including two members sharing one
+location with disjoint components.
+
+Regression: host/moltenvk/repro/sentry-block-locations.sh compares generated
+MSL attributes with spirv-dis Location/Component decorations and links all four
+block/standalone vertex/fragment combinations through Metal. Covers location
+gaps, arrays, matrices, component sharing, and reordered member locations.
+Candidate for STEAMAC-88/2M; the exact event SPIR-V is unavailable. This does
+not establish the cause of STEAMAC-87's repeated identical user names.
+
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index 9983ccf..bd682a0 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -5584,6 +5584,12 @@ void CompilerMSL::add_variable_to_interface_block(StorageClass storage, const st
+ 					}
+ 					else if (!is_builtin || has_active_builtin(builtin, storage))
+ 					{
++						// An explicit member location starts a new range, even after an earlier
++						// member established the running location. Only the flattened elements
++						// within this member (arrays, matrices, or structs) are consecutive.
++						if (has_member_decoration(var_type.self, mbr_idx, DecorationLocation))
++							location = get_member_decoration(var_type.self, mbr_idx, DecorationLocation);
++
+ 						bool is_composite_type = is_matrix(mbr_type) || is_array(mbr_type) || mbr_type.basetype == SPIRType::Struct;
+ 						bool attribute_load_store =
+ 								storage == StorageClassInput && get_execution_model() != ExecutionModelFragment;
