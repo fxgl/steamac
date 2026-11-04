@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установка FX Steam Launcher неполная: инструмент загрузки SteamOS (desync) отсутствует, недоступен для чтения или запуска. Скачайте последнюю версию DMG заново и скопируйте FX Steam Launcher в «Программы», заменив старую копию. Проверьте, не заблокировала или не удалила ли desync защитная программа, затем повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher 安装不完整：SteamOS 下载工具（desync）缺失、无法读取或无法执行。请重新下载最新的 DMG，将 FX Steam Launcher 复制到“应用程序”并替换旧副本。请检查安全软件是否阻止或删除了 desync 文件，然后重试。"
+          }
+        }
+      }
+    },
     "" : {},
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {

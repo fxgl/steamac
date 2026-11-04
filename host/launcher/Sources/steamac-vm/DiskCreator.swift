@@ -126,6 +126,20 @@ final class DiskCreator {
     static var desyncPath: String? { locate("desync", dev: ["host/bin/desync"]) }
     static var caPath: String? { locate("steamdeck-images.pem", dev: ["../../scripts/keys/steamdeck-images.pem"]) }
 
+    /// A bundle URL is injectable so the provisioning self-test can exercise a damaged copy.
+    static func requireDesync(bundleURL: URL? = Bundle.main.bundlePath.hasSuffix(".app") ? Bundle.main.bundleURL : nil) throws -> String {
+        if let bundleURL {
+            let path = bundleURL.appendingPathComponent("Contents/Resources/desync").path
+            let status = AppBundle.ResourceStatus(path: path)
+            guard status.usable else { throw AppBundle.installationFailure(bundleURL: bundleURL, desync: status) }
+            return path
+        }
+        guard let path = desyncPath else {
+            throw OptionError("desync not found in work/out/host/bin/desync: run host/launcher/fetch-desync.sh")
+        }
+        return path
+    }
+
     /// Caller closes the returned descriptor only after all creation work finishes.
     static func acquireCreationLock(cacheRoot: String) throws -> Int32 {
         let lockPath = cacheRoot + "/creation.lock"
@@ -155,7 +169,7 @@ final class DiskCreator {
 
     private func create(_ r: Request) throws -> Result {
         let fm = FileManager.default
-        guard let desync = DiskCreator.desyncPath else { throw OptionError("desync not found (bundle Contents/Resources/desync or work/out/host/bin/desync: host/launcher/fetch-desync.sh)") }
+        let desync = try DiskCreator.requireDesync()
         guard let caPath = DiskCreator.caPath else { throw OptionError("Valve RAUC CA steamdeck-images.pem not found") }
         guard DiskCreator.branches.contains(r.branch) else { throw OptionError("unknown branch \(r.branch) (\(DiskCreator.branches.joined(separator: ", ")))") }
         guard (8...4096).contains(r.homeGiB) else { throw OptionError("home size must be 8..4096 GiB", localized: String(localized: "home size must be 8..4096 GiB")) }

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 import UniformTypeIdentifiers
 
 /// Running inside "FX Steam Launcher.app" (build.sh / bundle.sh): the kernel, initramfs, layer
@@ -17,6 +18,85 @@ enum AppBundle {
     /// SSH off and no default guest password on created disks. The dev launcher has neither.
     static var releaseDefaults: Bool {
         Bundle.main.object(forInfoDictionaryKey: "SteamacReleaseDefaults") as? Bool ?? false
+    }
+
+    /// A local copy may have lost a resource even when the published DMG is complete
+    /// (STEAMAC-8K). Paths are kept in the local log, not in the warning's diagnostic fields.
+    struct InstallationFailure: LocalizedError, CustomStringConvertible {
+        let diagnostics: [String: String]
+        var description: String {
+            "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again."
+        }
+        var errorDescription: String? {
+            String(localized: "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again.")
+        }
+    }
+
+    struct ResourceStatus {
+        let regular: Bool
+        let readable: Bool
+        let executable: Bool
+        let statError: Int32
+        var usable: Bool { regular && readable && executable }
+        var presence: String { statError == 0 ? "present" : (statError == ENOENT ? "missing" : "unavailable") }
+
+        init(path: String) {
+            var st = stat()
+            let result = stat(path, &st)
+            statError = result == 0 ? 0 : errno
+            regular = result == 0 && (st.st_mode & S_IFMT) == S_IFREG
+            readable = access(path, R_OK) == 0
+            executable = access(path, X_OK) == 0
+        }
+    }
+
+    /// App Translocation's containing directory is a stable macOS path marker. This avoids
+    /// linking private Security.framework translocation APIs.
+    static func isTranslocated(_ bundleURL: URL) -> Bool {
+        bundleURL.pathComponents.contains("AppTranslocation")
+    }
+
+    /// Only runs after a required bundled tool failed its availability check.
+    static func installationFailure(bundleURL: URL, desync: ResourceStatus) -> InstallationFailure {
+        let resources = bundleURL.appendingPathComponent("Contents/Resources", isDirectory: true)
+        var diagnostics = [
+            "translocated": String(isTranslocated(bundleURL)),
+            "translocation_check": "bundle path component",
+            "desync_presence": desync.presence,
+            "desync_stat_errno": String(desync.statError),
+            "desync_regular_file": String(desync.regular),
+            "desync_readable": String(desync.readable),
+            "desync_executable": String(desync.executable),
+        ]
+        do {
+            let entries = try FileManager.default.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            diagnostics["resources_count"] = String(entries.count)
+            diagnostics["resources_listing"] = entries.map { entry in
+                var st = stat()
+                let size = lstat(entry.path, &st) == 0 ? String(st.st_size) : "unknown"
+                let relative = "Contents/Resources/" + entry.lastPathComponent
+                return "\(relative.debugDescription) size=\(size)"
+            }.joined(separator: "\n")
+        } catch {
+            let e = error as NSError
+            diagnostics["resources_listing_error"] = "\(e.domain) \(e.code)"
+        }
+        var code: SecStaticCode?
+        let created = SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &code)
+        diagnostics["code_signature_create_status"] = String(created)
+        if created == errSecSuccess, let code {
+            let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
+            let validity = SecStaticCodeCheckValidity(code, flags, nil)
+            diagnostics["code_signature_validity_status"] = String(validity)
+            diagnostics["code_signature_valid"] = String(validity == errSecSuccess)
+        } else {
+            diagnostics["code_signature_valid"] = "unknown"
+            diagnostics["code_signature_validity_status"] = "not checked (code creation failed)"
+        }
+        log("installation: bundle path \(bundleURL.path)")
+        for key in diagnostics.keys.sorted() { log("installation: \(key)=\(diagnostics[key]!)") }
+        return InstallationFailure(diagnostics: diagnostics)
     }
 
     static var appSupportDir: String {

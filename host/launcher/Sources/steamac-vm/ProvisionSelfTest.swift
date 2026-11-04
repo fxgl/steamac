@@ -16,6 +16,75 @@ enum ProvisionSelfTest {
         }
         let memoryFailures = MemoryRegionDiagnostics.selfCheck()
         check(memoryFailures.isEmpty, "host memory-region diagnostics: \(memoryFailures)")
+        attempt("incomplete app installation (STEAMAC-8K)") {
+            let fm = FileManager.default
+            let bundle = fm.temporaryDirectory.appendingPathComponent("steamac-incomplete-\(UUID().uuidString).app")
+            defer { try? fm.removeItem(at: bundle) }
+            let contents = bundle.appendingPathComponent("Contents")
+            let resources = contents.appendingPathComponent("Resources")
+            let executables = contents.appendingPathComponent("MacOS")
+            try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+            try fm.createDirectory(at: executables, withIntermediateDirectories: true)
+            let info = ["CFBundleIdentifier": "es.fxgam.steamac.fixture", "CFBundleExecutable": "fixture",
+                        "CFBundlePackageType": "APPL", "CFBundleVersion": "1"]
+            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: contents.appendingPathComponent("Info.plist"))
+            try fm.copyItem(atPath: "/usr/bin/true", toPath: executables.appendingPathComponent("fixture").path)
+            try Data(count: 16).write(to: resources.appendingPathComponent("Image"))
+            let sign = Process(), output = Pipe()
+            sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+            sign.arguments = ["--force", "--sign", "-", "--timestamp=none", bundle.path]
+            sign.standardOutput = output; sign.standardError = output
+            try sign.run()
+            let signOutput = output.fileHandleForReading.readDataToEndOfFile()
+            sign.waitUntilExit()
+            guard sign.terminationStatus == 0 else { throw OptionError("sign fixture: \(String(decoding: signOutput, as: UTF8.self))") }
+            do {
+                _ = try DiskCreator.requireDesync(bundleURL: bundle)
+                check(false, "bundle fixture without desync must fail before disk creation")
+            } catch {
+                check("\(error)".contains("installation is incomplete") && "\(error)".contains("DMG")
+                      && "\(error)".contains("security software") && !"\(error)".contains("work/out"),
+                      "missing bundled desync explains reinstalling the app, not developer paths")
+                let detail = (error as? AppBundle.InstallationFailure)?.diagnostics ?? [:]
+                check(detail["desync_presence"] == "missing" && detail["desync_readable"] == "false"
+                      && detail["desync_executable"] == "false" && detail["translocated"] == "false",
+                      "missing-tool fixture records resource availability and non-translocated state")
+                check(detail["code_signature_validity_status"] == "0" && detail["code_signature_valid"] == "true",
+                      "missing required tool is still diagnosed when the fixture's code signature is valid")
+                check(detail["resources_listing"]?.contains("\"Contents/Resources/Image\" size=16") == true
+                      && detail.values.allSatisfy { !$0.contains(bundle.path) && !$0.contains(NSHomeDirectory()) },
+                      "installation diagnostics contain relative resource names and sizes, not user paths")
+                let report = CrashReporting.diskCreationReport(error)
+                check(report?.kind == .installationIncomplete && report?.level == .warning
+                      && report?.key == "desync" && report?.extra == detail
+                      && CrashReporting.Kind.installationIncomplete.quietPeriod.isInfinite
+                      && CrashReporting.Kind.installationIncomplete.budget == 1,
+                      "incomplete installation produces one minimal warning per installation, not a crash report")
+                check(error.localizedDescription.contains("desync") && !error.localizedDescription.contains("work/out"),
+                      "localized incomplete-installation guidance does not expose developer paths")
+            }
+            let helper = resources.appendingPathComponent("desync")
+            try Data("fixture\n".utf8).write(to: helper)
+            for (mode, readable) in [(mode_t(0o600), true), (mode_t(0), false)] {
+                guard chmod(helper.path, mode) == 0 else { throw OptionError("chmod desync fixture") }
+                do {
+                    _ = try DiskCreator.requireDesync(bundleURL: bundle)
+                    check(false, "non-executable bundled desync must be rejected")
+                } catch {
+                    let detail = (error as? AppBundle.InstallationFailure)?.diagnostics ?? [:]
+                    check(detail["desync_presence"] == "present" && detail["desync_readable"] == String(readable)
+                          && detail["desync_executable"] == "false" && detail["code_signature_valid"] == "false",
+                          "blocked/modified bundle fixture retains permission flags and invalid signature")
+                }
+            }
+            guard chmod(helper.path, 0o700) == 0 else { throw OptionError("chmod usable desync fixture") }
+            check(try DiskCreator.requireDesync(bundleURL: bundle) == helper.path,
+                  "usable bundled desync is found without developer-tree fallback")
+            check(AppBundle.isTranslocated(URL(fileURLWithPath: "/private/var/folders/test/AppTranslocation/id/d/FX Steam Launcher.app"))
+                  && !AppBundle.isTranslocated(URL(fileURLWithPath: "/Applications/NotAppTranslocation.app")),
+                  "translocation diagnostic uses an exact path component")
+        }
         // hvc0 is available before fx.progress (the initramfs can fail before the agent starts).
         let boot = BootProgress()
         var bootFailures = 0

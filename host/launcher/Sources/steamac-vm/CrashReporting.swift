@@ -47,6 +47,7 @@ enum CrashReporting {
         case rustPanic = "rust-panic"
         case provisionFailed = "provision-failed"
         case diskCreationFailed = "disk-creation-failed"
+        case installationIncomplete = "installation-incomplete"
         case vmExited = "vm-exited-unexpectedly"
         case vmKilled = "vm-killed"
         case notResponding = "steamos-not-responding"
@@ -59,6 +60,7 @@ enum CrashReporting {
             case .rustPanic: return "Rust panic"
             case .provisionFailed: return "SteamOS first-start setup failed"
             case .diskCreationFailed: return "Disk creation failed"
+            case .installationIncomplete: return "App installation is incomplete"
             case .vmExited: return "VM exited unexpectedly"
             case .vmKilled: return "VM process killed"
             case .notResponding: return "SteamOS not responding"
@@ -70,6 +72,7 @@ enum CrashReporting {
         var quietPeriod: TimeInterval {
             switch self {
             case .pipelineCompile: return 30 * 86400   // first occurrence per shader message
+            case .installationIncomplete: return .infinity   // once per installation, not daily
             case .test: return 0
             default: return 86400
             }
@@ -79,6 +82,7 @@ enum CrashReporting {
         var budget: Int {
             switch self {
             case .gpuContextFatal, .vmExited, .vmKilled, .notResponding, .provisionFailed, .diskCreationFailed: return 2
+            case .installationIncomplete: return 1
             default: return 5
             }
         }
@@ -576,17 +580,20 @@ enum CrashReporting {
     /// Foundation errors group by domain/code, not NSError's pointers, task UUIDs or URLs.
     /// OptionError has no meaningful numeric code: retain its normalised diagnostic so bugs
     /// such as failed publication and bundle verification do not collapse into one issue.
-    static func diskCreationReport(_ error: Error) -> (key: String, message: String, extra: [String: String])? {
+    static func diskCreationReport(_ error: Error) -> (kind: Kind, key: String, message: String, level: SentryLevel, extra: [String: String])? {
+        if let failure = error as? AppBundle.InstallationFailure {
+            return (.installationIncomplete, "desync", failure.description, .warning, failure.diagnostics)
+        }
         guard DiskCreationFilesystem.rejection(error) == nil, !NetworkFailure.isExpected(error),
               !(error is DiskCreator.Cancelled), !(error is RaucBundle.DevelopmentSignature) else { return nil }
         let e = error as NSError
         let diagnostic = error is OptionError ? normalize("\(error)") : "\(e.domain) \(e.code)"
-        return (diagnostic, "Disk creation failed: \(diagnostic)", ["error_detail": "\(error)"])
+        return (.diskCreationFailed, diagnostic, "Disk creation failed: \(diagnostic)", .error, ["error_detail": "\(error)"])
     }
 
     static func diskCreationFailed(_ error: Error, branch: String) {
         guard let failure = diskCreationReport(error) else { return }
-        report(.diskCreationFailed, key: failure.key, message: failure.message,
+        report(failure.kind, key: failure.key, message: failure.message, level: failure.level,
                tags: ["steamos_branch": branch], extra: failure.extra)
     }
 
@@ -686,7 +693,7 @@ enum CrashReporting {
         let scoped = t.mapValues { String(scrub($0).prefix(200)) }
         let id = SentrySDK.capture(event: event) { scope in
             scope.setTags(scoped)
-            if kind.rawValue == "installation-incomplete" { scope.clearBreadcrumbs() }
+            if kind == .installationIncomplete { scope.clearBreadcrumbs() }
         }.sentryIdString
         locked { lastEvent = id }
         if let dir = role == .launcher ? runDir : Supervisor.runDir {
