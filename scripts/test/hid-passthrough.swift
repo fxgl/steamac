@@ -4,17 +4,45 @@
 // These model the two regressions in STEAMAC-84, not a physical USB reproduction.
 typealias IOHIDDevice = TestHIDDevice
 typealias IOHIDManager = TestHIDManager
+typealias IOHIDElement = TestHIDElement
 typealias TestDeviceCallback = (UnsafeMutableRawPointer?, IOReturn, UnsafeMutableRawPointer?, IOHIDDevice) -> Void
 
 private var services: [io_service_t: TestHIDDevice] = [:]
 private var nextService: io_service_t = 1
+private var permissionRequests = 0
+
+final class TestHIDElement: NSObject {
+    let reportID: UInt32
+    init(reportID: UInt32) { self.reportID = reportID }
+}
+
+enum GCController {
+    static func supportsHIDDevice(_ device: IOHIDDevice) -> Bool {
+        device.supportQueries += 1
+        return device.gameControllerSupported
+    }
+}
 
 final class TestHIDDevice: NSObject {
     let service: io_service_t
     let id: UInt64
     var live = true
+    var isOpen = false
+    var scheduled = false
+    var openResult = kIOReturnSuccess
+    var openCalls = 0
+    var closeCalls = 0
+    var usagePage: UInt32 = 1
+    var usages: Set<UInt32> = [5]
+    var gameControllerSupported = false
+    var supportQueries = 0
+    // The default descriptor declares one numbered input report. No output or
+    // feature elements: report numbering still applies to those requests.
+    var elements = [TestHIDElement(reportID: 1)]
+    weak var manager: TestHIDManager?
     var properties: [String: Any]
     var getRequests: [(IOHIDReportType, Int, Int)] = []
+    var setRequests: [(IOHIDReportType, Int, [UInt8])] = []
     var inputCallback: IOHIDReportCallback?
     var inputContext: UnsafeMutableRawPointer?
     var removalCallback: IOHIDCallback?
@@ -27,7 +55,8 @@ final class TestHIDDevice: NSObject {
         properties = [kIOHIDVendorIDKey: valve ? 0x28de : 0x054c,
                       kIOHIDProductIDKey: valve ? (puckSlot == nil ? 0x1303 : 0x1304) : 0x0ce6,
                       kIOHIDTransportKey: bluetooth ? kIOHIDTransportBluetoothLowEnergyValue : kIOHIDTransportUSBValue,
-                      kIOHIDReportDescriptorKey: Data([0x05, 0x01, 0x09, 0x05]),
+                      kIOHIDReportDescriptorKey: Data([0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
+                                                       0x85, 0x01, 0x75, 0x08, 0x95, 0x3f, 0x81, 0x02, 0xc0]),
                       kIOHIDMaxInputReportSizeKey: bluetooth && !valve ? 78 : 64,
                       kIOHIDMaxFeatureReportSizeKey: 64]
         if let puckSlot { properties["bInterfaceNumber"] = puckSlot }
@@ -36,6 +65,7 @@ final class TestHIDDevice: NSObject {
     }
 
     func emit(_ report: [UInt8]) {
+        guard live && isOpen && scheduled else { return }
         var report = report
         report.withUnsafeMutableBufferPointer {
             inputCallback?(inputContext, kIOReturnSuccess, nil, kIOHIDReportTypeInput,
@@ -45,24 +75,92 @@ final class TestHIDDevice: NSObject {
 
     func emitRemoval() {
         live = false
+        guard scheduled else { return }
         removalCallback?(removalContext, kIOReturnSuccess, nil)
+        if let manager, manager.isOpen && manager.scheduled {
+            manager.removalCallback?(manager.removalContext, kIOReturnSuccess, nil, self)
+        }
     }
 }
-final class TestHIDManager {}
+final class TestHIDManager {
+    let independent: Bool
+    var isOpen = false
+    var scheduled = false
+    var matchingCallback: TestDeviceCallback?
+    var matchingContext: UnsafeMutableRawPointer?
+    var removalCallback: TestDeviceCallback?
+    var removalContext: UnsafeMutableRawPointer?
+    var devices: [TestHIDDevice] = []
+
+    init(options: IOOptionBits) {
+        independent = options & IOHIDManagerOptions.independentDevices.rawValue != 0
+    }
+
+    // Legacy managers open and schedule matched devices themselves; independent
+    // managers only enumerate. The production callback must do its own I/O setup.
+    func emitMatch(_ device: TestHIDDevice) {
+        precondition(isOpen && scheduled)
+        devices.append(device)
+        device.manager = self
+        let result: IOReturn
+        if independent { result = kIOReturnSuccess }
+        else {
+            result = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            device.scheduled = scheduled
+        }
+        matchingCallback?(matchingContext, result, nil, device)
+    }
+}
 
 func log(_ line: String) { print(line) }
-let IOHIDManagerCreate: (CFAllocator?, IOOptionBits) -> IOHIDManager = { _, _ in TestHIDManager() }
+let IOHIDManagerCreate: (CFAllocator?, IOOptionBits) -> IOHIDManager = { _, options in TestHIDManager(options: options) }
 func IOHIDManagerSetDeviceMatchingMultiple(_ manager: IOHIDManager, _ matching: CFArray?) {}
-func IOHIDManagerRegisterDeviceMatchingCallback(_ manager: IOHIDManager, _ callback: TestDeviceCallback?, _ context: UnsafeMutableRawPointer?) {}
-func IOHIDManagerRegisterDeviceRemovalCallback(_ manager: IOHIDManager, _ callback: TestDeviceCallback?, _ context: UnsafeMutableRawPointer?) {}
-func IOHIDManagerScheduleWithRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) {}
-func IOHIDManagerUnscheduleFromRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) {}
-func IOHIDManagerOpen(_ manager: IOHIDManager, _ options: IOOptionBits) -> IOReturn { kIOReturnSuccess }
+func IOHIDManagerRegisterDeviceMatchingCallback(_ manager: IOHIDManager, _ callback: TestDeviceCallback?, _ context: UnsafeMutableRawPointer?) {
+    manager.matchingCallback = callback
+    manager.matchingContext = context
+}
+func IOHIDManagerRegisterDeviceRemovalCallback(_ manager: IOHIDManager, _ callback: TestDeviceCallback?, _ context: UnsafeMutableRawPointer?) {
+    manager.removalCallback = callback
+    manager.removalContext = context
+}
+func IOHIDManagerScheduleWithRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) { manager.scheduled = true }
+func IOHIDManagerUnscheduleFromRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) { manager.scheduled = false }
+func IOHIDManagerOpen(_ manager: IOHIDManager, _ options: IOOptionBits) -> IOReturn {
+    manager.isOpen = true
+    return kIOReturnSuccess
+}
 @discardableResult
-func IOHIDManagerClose(_ manager: IOHIDManager, _ options: IOOptionBits) -> IOReturn { kIOReturnSuccess }
-func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { true }
-func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeGranted }
-func IOHIDDeviceUnscheduleFromRunLoop(_ device: IOHIDDevice, _ runLoop: CFRunLoop?, _ mode: CFString?) {}
+func IOHIDManagerClose(_ manager: IOHIDManager, _ options: IOOptionBits) -> IOReturn {
+    if !manager.independent {
+        for device in manager.devices { IOHIDDeviceClose(device, options) }
+    }
+    manager.isOpen = false
+    return kIOReturnSuccess
+}
+func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { permissionRequests += 1; return false }
+func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeDenied }
+func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
+    device.openCalls += 1
+    guard device.live else { return kIOReturnNoDevice }
+    guard device.openResult == kIOReturnSuccess else { return device.openResult }
+    device.isOpen = true
+    return kIOReturnSuccess
+}
+@discardableResult
+func IOHIDDeviceClose(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
+    device.closeCalls += 1
+    device.isOpen = false
+    return kIOReturnSuccess
+}
+func IOHIDDeviceScheduleWithRunLoop(_ device: IOHIDDevice, _ runLoop: CFRunLoop?, _ mode: CFString?) { device.scheduled = true }
+func IOHIDDeviceUnscheduleFromRunLoop(_ device: IOHIDDevice, _ runLoop: CFRunLoop?, _ mode: CFString?) { device.scheduled = false }
+func IOHIDDeviceConformsTo(_ device: IOHIDDevice, _ page: UInt32, _ usage: UInt32) -> Bool {
+    device.usagePage == page && device.usages.contains(usage)
+}
+func IOHIDDeviceCopyMatchingElements(_ device: IOHIDDevice, _ matching: CFDictionary?, _ options: IOOptionBits) -> CFArray? {
+    device.elements as CFArray
+}
+func IOHIDElementGetReportID(_ element: IOHIDElement) -> UInt32 { element.reportID }
 func IOHIDDeviceGetService(_ device: IOHIDDevice) -> io_service_t { device.service }
 func IORegistryEntryGetRegistryEntryID(_ service: io_service_t, _ id: UnsafeMutablePointer<UInt64>) -> IOReturn {
     guard let device = services[service], device.live else { return kIOReturnBadArgument }
@@ -84,7 +182,7 @@ func IOHIDDeviceRegisterInputReportCallback(_ device: IOHIDDevice, _ report: Uns
 func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafeMutablePointer<UInt8>, _ size: UnsafeMutablePointer<CFIndex>) -> IOReturn {
     device.getRequests.append((type, id, size.pointee))
-    guard device.live else { return kIOReturnBadArgument }
+    guard device.live && device.isOpen else { return kIOReturnNotOpen }
     let valveBLE = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
         && (device.properties[kIOHIDTransportKey] as? String) == kIOHIDTransportBluetoothLowEnergyValue
     if !valveBLE && type == kIOHIDReportTypeFeature && id == 32 && size.pointee != 64 { return kIOReturnTimeout }
@@ -96,7 +194,8 @@ func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: 
 }
 func IOHIDDeviceSetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafePointer<UInt8>, _ size: CFIndex) -> IOReturn {
-    device.live ? kIOReturnSuccess : kIOReturnBadArgument
+    device.setRequests.append((type, id, Array(UnsafeBufferPointer(start: report, count: size))))
+    return device.live && device.isOpen ? kIOReturnSuccess : kIOReturnNotOpen
 }
 
 extension HIDPassthrough {
@@ -122,8 +221,10 @@ extension HIDPassthrough {
         }
 
         let hid = HIDPassthrough()
+        hid.matchSteamControllers = true
+        precondition(hid.start())
         let usb = TestHIDDevice(id: 10)
-        hid.added(usb, result: kIOReturnSuccess)
+        hid.manager!.emitMatch(usb)
         let first = hid.devices[0]
         let firmware = get(hid, first, .feature, 32)
         check(firmware?.count == 64 && firmware?.first == 32, "USB DualSense firmware read succeeds without global headroom")
@@ -138,7 +239,7 @@ extension HIDPassthrough {
         hid.deactivate(first, owner: owner)
 
         let bluetooth = TestHIDDevice(id: 11, bluetooth: true)
-        hid.added(bluetooth, result: kIOReturnSuccess)
+        hid.manager!.emitMatch(bluetooth)
         check(hid.devices.count == 1 && hid.devices.first?.ref === bluetooth, "USB to Bluetooth reconnect selects the live controller")
         let reconnected = hid.devices[0]
         let pairing = get(hid, reconnected, .feature, 9)
@@ -150,11 +251,12 @@ extension HIDPassthrough {
         check(bluetooth.getRequests.last?.2 == 78, "Bluetooth DualSense input keeps descriptor size")
 
         let rematched = HIDPassthrough()
+        precondition(rematched.start())
         let original = TestHIDDevice(id: 12, bluetooth: true)
         let alias = TestHIDDevice(id: 12, bluetooth: true)
-        rematched.added(original, result: kIOReturnSuccess)
-        rematched.added(alias, result: kIOReturnSuccess)
-        rematched.added(alias, result: kIOReturnSuccess)
+        rematched.manager!.emitMatch(original)
+        rematched.manager!.emitMatch(alias)
+        rematched.manager!.emitMatch(alias)
         check(rematched.devices.count == 1 && rematched.devices.first?.ref === original,
               "re-matching still de-duplicates registry identity and keeps the open ref")
         check(original.removalCallback != nil && alias.removalCallback == nil,
@@ -167,7 +269,7 @@ extension HIDPassthrough {
         hid.deactivate(reconnected, owner: owner)
 
         let ble = TestHIDDevice(id: 20, bluetooth: true, valve: true)
-        hid.added(ble, result: kIOReturnSuccess)
+        hid.manager!.emitMatch(ble)
         let valve = hid.devices.last!
         let feature = get(hid, valve, .feature, 1)
         check(feature?.count == 65 && feature?.first == 1, "BLE Steam Controller keeps the 65-byte feature fix")
@@ -176,7 +278,7 @@ extension HIDPassthrough {
         check(ble.getRequests.last?.2 == 64, "BLE input requests are not enlarged")
 
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
-        hid.added(puck, result: kIOReturnSuccess)
+        hid.manager!.emitMatch(puck)
         let slot = hid.devices.last!
         _ = get(hid, slot, .feature, 1)
         check(puck.getRequests.last?.2 == 64, "USB Puck requests are not enlarged")
@@ -191,6 +293,110 @@ extension HIDPassthrough {
         puck.emit([0x42, 0])
         check(movedInputs == 1, "deactivating the current player stops forwarding")
         hid.stopPuckTimer()
+        print("Original regressions: \(checks) checks, \(failures) failures")
+
+        #if HAS_INDEPENDENT_DEVICES
+        check(hid.manager!.independent, "manager enumerates in independent-devices mode")
+        check(bluetooth.isOpen && bluetooth.scheduled && bluetooth.openCalls == 1,
+              "accepted device is explicitly opened and scheduled once")
+        check(original.closeCalls == 1 && !original.isOpen && !original.scheduled && alias.openCalls == 0,
+              "removal closes and unschedules the retained ref; re-matches never open aliases")
+
+        let deniedHID = HIDPassthrough()
+        precondition(deniedHID.start())
+        let denied = TestHIDDevice(id: 30)
+        denied.openResult = kIOReturnNotPermitted
+        let requestsBefore = permissionRequests
+        deniedHID.manager!.emitMatch(denied)
+        check(deniedHID.devices.isEmpty && denied.openCalls == 1 && !denied.isOpen
+              && !denied.scheduled && denied.inputCallback == nil,
+              "NotPermitted device open never adds, schedules or passes through the device")
+        check(permissionRequests == requestsBefore + 1, "denied device open requests Input Monitoring")
+        let failedMatch = TestHIDDevice(id: 31)
+        deniedHID.added(failedMatch, result: kIOReturnError)
+        check(failedMatch.openCalls == 0 && deniedHID.devices.isEmpty,
+              "failed matching callback is not retried as a successful device open")
+        let invalid = TestHIDDevice(id: 32)
+        invalid.properties[kIOHIDReportDescriptorKey] = Data()
+        deniedHID.manager!.emitMatch(invalid)
+        check(invalid.openCalls == 1 && invalid.closeCalls == 1 && !invalid.isOpen,
+              "device rejected after open is closed without scheduling")
+
+        let owned = TestHIDDevice(id: 33)
+        autoreleasepool {
+            let lifecycle = HIDPassthrough()
+            precondition(lifecycle.start())
+            lifecycle.manager!.emitMatch(owned)
+            var delivered = 0
+            if let device = lifecycle.devices.first {
+                lifecycle.activate(device, owner: owner) { _ in delivered += 1 }
+            }
+            IOHIDManagerClose(lifecycle.manager!, IOOptionBits(kIOHIDOptionsTypeNone))
+            owned.emit([1, 0])
+            check(owned.isOpen && delivered == 1, "closing independent manager leaves device I/O owned by Device")
+            owned.emitRemoval()
+            check(lifecycle.devices.isEmpty, "independent device removal works after manager close")
+        }
+        check(owned.closeCalls == 1 && !owned.isOpen && !owned.scheduled,
+              "released Device closes and unschedules its own I/O")
+        #endif
+
+        #if HAS_GENERIC_HID
+        let genericHID = HIDPassthrough()
+        genericHID.matchGenericControllers = true
+        precondition(genericHID.start())
+        func generic(_ id: UInt64, usage: UInt32 = 5) -> TestHIDDevice {
+            let device = TestHIDDevice(id: id)
+            device.properties[kIOHIDVendorIDKey] = 0x1234
+            device.properties[kIOHIDProductIDKey] = 0x5678
+            device.usages = [usage]
+            var descriptor = device.properties[kIOHIDReportDescriptorKey] as! Data
+            descriptor[3] = UInt8(usage)
+            device.properties[kIOHIDReportDescriptorKey] = descriptor
+            return device
+        }
+        let supported = generic(40)
+        supported.gameControllerSupported = true
+        genericHID.manager!.emitMatch(supported)
+        genericHID.manager!.emitMatch(supported)
+        check(genericHID.devices.isEmpty && supported.openCalls == 0 && supported.supportQueries == 1,
+              "GameController-supported gamepad is excluded before open; support is cached on re-match")
+        let multiAxis = generic(41, usage: 8)
+        genericHID.manager!.emitMatch(multiAxis)
+        check(genericHID.devices.isEmpty && multiAxis.openCalls == 0,
+              "non-gamepad/joystick usage is excluded before open")
+        let numbered = generic(42, usage: 4)
+        genericHID.manager!.emitMatch(numbered)
+        check(genericHID.devices.first?.ref === numbered && genericHID.devices.first?.generic == true,
+              "unsupported generic joystick takes the raw HID path")
+
+        func set(_ device: Device, _ type: ReportType, _ bytes: [UInt8]) {
+            var result: IOReturn?
+            genericHID.setReport(device, type: type, data: bytes) { result = $0 }
+            let deadline = Date(timeIntervalSinceNow: 2)
+            while result == nil && Date() < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.001)) }
+            check(result == kIOReturnSuccess, "SET_REPORT completes successfully on main queue")
+        }
+        if let device = genericHID.devices.first {
+            set(device, .output, [0x81, 0x55])
+            check(numbered.setRequests.last?.1 == 0x81 && numbered.setRequests.last?.2 == [0x81, 0x55],
+                  "input-only report IDs apply device-wide to undeclared output reports")
+            set(device, .feature, [0x82, 0x66])
+            check(numbered.setRequests.last?.1 == 0x82 && numbered.setRequests.last?.2 == [0x82, 0x66],
+                  "input-only report IDs apply device-wide to undeclared feature reports")
+        }
+        let unnumbered = generic(43)
+        unnumbered.elements = []
+        unnumbered.properties[kIOHIDReportDescriptorKey] = Data([0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
+                                                               0x75, 0x08, 0x95, 0x40, 0x81, 0x02, 0xc0])
+        genericHID.manager!.emitMatch(unnumbered)
+        check(genericHID.devices.last?.ref === unnumbered, "unsupported generic gamepad takes the raw HID path")
+        if let device = genericHID.devices.last, device.ref === unnumbered {
+            set(device, .output, [0x81, 0x55])
+            check(unnumbered.setRequests.last?.1 == 0 && unnumbered.setRequests.last?.2 == [0x81, 0x55],
+                  "unnumbered output uses report ID zero without stripping payload")
+        }
+        #endif
         print("HID passthrough: \(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1
     }
