@@ -203,19 +203,19 @@ private final class PadSlot {
     private let settings: LauncherSettings
     /// `--pad` for this run (wins over the setting).
     private let typeOverride: LauncherSettings.PadType?
-    /// The Mac's DualSenses and Steam Controllers as HID devices.
+    /// The Mac's supported raw HID controllers.
     private let hid: HIDPassthrough?
     private(set) var controller: GCController?
     /// The uinput pad the guest has (created over the port), nil = none.
     private var guestPad: GuestPad?
-    /// The DualSense or Steam Controller the guest has as itself (a uhid device), nil = none.
+    /// The controller the guest has as itself (a uhid device), nil = none.
     private var guestHID: HIDPassthrough.Device?
     /// What the guest last got (or, without a uinput pad, the controller's last state).
     private var state = GamepadBridge.PadState()
     /// The guest's service of this port said `hello`: it can create a pad.
     private(set) var serviceReady = false
     /// ... and `caps hid`: it can create a uhid device.
-    private var hidCapable = false
+    private(set) var hidCapable = false
     /// --input-selftest, control `pad on`: a pad even without a controller.
     private var testPad = false
     private var paused = false
@@ -229,8 +229,8 @@ private final class PadSlot {
     var onHello: (() -> Void)?
     /// Whether a DualSense may be passed through now (GamepadBridge).
     var passthroughAllowed: () -> Bool = { true }
-    /// The Steam Controller device this player passes through (computed by GamepadBridge), if any.
-    var steamControllerDevice: () -> HIDPassthrough.Device? = { nil }
+    /// The Steam Controller or generic HID assigned to this player by GamepadBridge.
+    var rawControllerDevice: () -> HIDPassthrough.Device? = { nil }
 
     /// What the guest has (or should have) as its gamepad.
     private enum GuestDevice: Equatable {
@@ -298,6 +298,7 @@ private final class PadSlot {
             reconcile()
         } else if w == ["caps", "hid"] {
             hidCapable = true
+            onHello?()
             reconcile()
         } else if w.count == 3, w[0] == "rumble", let strong = UInt16(w[1]), let weak = UInt16(w[2]) {
             rumble.set(strong: strong, weak: weak)
@@ -375,15 +376,12 @@ private final class PadSlot {
     private func wanted() -> (device: GuestDevice, why: String)? {
         guard settings.virtualPad else { return nil }
         let type = typeOverride ?? settings.padType
-        // A Steam Controller connected to the Mac goes to SteamOS as itself (Automatic or "Steam
-        // Controller"), with or without a GameController controller (GameController does not show
-        // one on Bluetooth LE): Steam drives its trackpads, gyro, back buttons and haptics itself.
-        // GamepadBridge assigns each live Steam Controller device to a player: a Puck slot to the
-        // player whose GameController controller is the Puck, a Bluetooth LE controller to the
-        // lowest player with no GameController controller.
-        if type == .auto || type == .steamController, hidCapable,
-           let d = steamControllerDevice() {
-            return (.hid(d), type == .auto ? "automatic, Steam Controller" : (typeOverride == nil ? "setting" : "--pad"))
+        // A Steam Controller goes through in Automatic / Steam Controller; a generic HID that
+        // GameController does not support goes through in Automatic only. Puck slots follow an
+        // unambiguous GameController player; BLE and generic devices reserve free players.
+        if hidCapable, let d = rawControllerDevice(),
+           type == .auto || (type == .steamController && !d.generic) {
+            return (.hid(d), type == .auto ? "automatic, \(d.generic ? "generic HID controller" : "Steam Controller")" : (typeOverride == nil ? "setting" : "--pad"))
         }
         guard controller != nil || testPad else { return nil }
         let pad: GuestPad, why: String
@@ -400,7 +398,7 @@ private final class PadSlot {
         // connected, the first one found is passed through, and none once two players have one
         // (`passthroughAllowed`: the device could be the other player's).
         if index == 0, pad == .dualSense, settings.dualSensePassthrough, hidCapable, passthroughAllowed(),
-           controller?.extendedGamepad is GCDualSenseGamepad, let d = hid?.devices.first(where: { !HIDPassthrough.isSteamController($0) }) {
+           controller?.extendedGamepad is GCDualSenseGamepad, let d = hid?.devices.first(where: { !$0.generic && !HIDPassthrough.isSteamController($0) }) {
             return (.hid(d), why)
         }
         return (.pad(pad), why)
@@ -536,12 +534,16 @@ enum SteamControllerRouting {
         steamPlayers.count == 1 && liveSlots == 1 ? steamPlayers[0] : nil
     }
 
-    /// Keep connected BLE controllers on their players; only a new connection takes the lowest
-    /// free player. Losing a device (or disabling its player) releases that reservation.
-    static func blePlayers(previous: [UInt64: Int], devices: [UInt64], available: [Int]) -> [UInt64: Int] {
-        var next = previous.filter { devices.contains($0.key) && available.contains($0.value) }
+    /// BLE reservations stay sticky. Generic reservations stay sticky only while their player
+    /// is free of GameController controllers and the guest can create HID devices there.
+    static func rawPlayers(previous: [UInt64: Int], devices: [UInt64], available: [Int],
+                           genericDevices: [UInt64] = [], hidCapable: [Int] = []) -> [UInt64: Int] {
+        func accepts(_ id: UInt64, _ player: Int) -> Bool {
+            available.contains(player) && (!genericDevices.contains(id) || hidCapable.contains(player))
+        }
+        var next = previous.filter { devices.contains($0.key) && accepts($0.key, $0.value) }
         for id in devices where next[id] == nil {
-            if let player = available.first(where: { !next.values.contains($0) }) { next[id] = player }
+            if let player = available.first(where: { accepts(id, $0) && !next.values.contains($0) }) { next[id] = player }
         }
         return next
     }
@@ -558,26 +560,107 @@ enum SteamControllerRouting {
         check(puckPlayer([0], liveSlots: 2) == nil, "two live Puck slots")
         check(puckPlayer([], liveSlots: 1) == nil, "no GameController Steam Controller")
         check(puckPlayer([0], liveSlots: 0) == nil, "no live Puck")
-        let initial = blePlayers(previous: [:], devices: [10], available: [1, 2, 3])
+        let initial = rawPlayers(previous: [:], devices: [10], available: [1, 2, 3])
         check(initial == [10: 1], "BLE takes lowest free player")
-        let sticky = blePlayers(previous: initial, devices: [10], available: [0, 1, 2, 3])
+        let sticky = rawPlayers(previous: initial, devices: [10], available: [0, 1, 2, 3])
         check(sticky == initial, "player 1 disconnect does not move BLE up")
-        check(!availableControllerPlayer(1, blePlayers: sticky), "new GameController cannot take BLE player")
-        check(availableControllerPlayer(0, blePlayers: sticky), "new GameController may take lower free player")
-        let disconnected = blePlayers(previous: sticky, devices: [], available: [0, 1, 2, 3])
+        check(!availableControllerPlayer(1, rawPlayers: sticky), "new GameController cannot take raw HID player")
+        check(availableControllerPlayer(0, rawPlayers: sticky), "new GameController may take lower free player")
+        let disconnected = rawPlayers(previous: sticky, devices: [], available: [0, 1, 2, 3])
         check(disconnected.isEmpty, "BLE disconnect frees player")
-        check(blePlayers(previous: disconnected, devices: [11], available: [0, 1, 2, 3]) == [11: 0],
+        check(rawPlayers(previous: disconnected, devices: [11], available: [0, 1, 2, 3]) == [11: 0],
               "BLE reconnect takes lowest free player")
-        check(blePlayers(previous: sticky, devices: [10], available: []).isEmpty, "unusable players excluded")
-        check(blePlayers(previous: sticky, devices: [10, 20], available: [0, 1, 2, 3]) == [10: 1, 20: 0],
+        check(rawPlayers(previous: sticky, devices: [10], available: []).isEmpty, "unusable players excluded")
+        check(rawPlayers(previous: sticky, devices: [10, 20], available: [0, 1, 2, 3]) == [10: 1, 20: 0],
               "second BLE does not displace first")
-        check(blePlayers(previous: [:], devices: [10], available: []).isEmpty, "no free player")
+        check(rawPlayers(previous: [:], devices: [10], available: []).isEmpty, "no free player")
+        check(rawPlayers(previous: [:], devices: [10, 10, 20], available: [0, 1]) == [10: 0, 20: 1],
+              "registry-ID duplicates never take two players")
+        check(rawPlayers(previous: [10: 1, 20: 0], devices: [10], available: [0, 1]) == [10: 1],
+              "generic disconnect frees only its player, BLE stays sticky")
         log("selftest-settings: Steam Controller routing: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
         return failures
     }
 
-    static func availableControllerPlayer(_ index: Int, blePlayers: [UInt64: Int]) -> Bool {
-        !blePlayers.values.contains(index)
+    static func availableControllerPlayer(_ index: Int, rawPlayers: [UInt64: Int], genericDevices: [UInt64] = []) -> Bool {
+        !rawPlayers.contains { $0.value == index && !genericDevices.contains($0.key) }
+    }
+}
+
+/// Generic Desktop HID policy, without IOKit or live GameController state.
+enum GenericHIDRouting {
+    static let usages = [4, 5] // Joystick and Game Pad; Multi-axis (8), e.g. SpaceMouse, is excluded.
+
+    static func enabled(automatic: Bool, virtualPad: Bool) -> Bool {
+        automatic && virtualPad
+    }
+
+    static func accepts(usagePage: Int, usage: Int, knownController: Bool, gameControllerSupported: Bool) -> Bool {
+        usagePage == 1 && usages.contains(usage) && !knownController && !gameControllerSupported
+    }
+
+    static func reportID(numbered: Bool, firstByte: UInt8) -> UInt8 {
+        numbered ? firstByte : 0
+    }
+
+    static func productName(_ name: String?, fallback: String) -> String {
+        guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return fallback }
+        return name
+    }
+
+    static func selfCheck() -> [String] {
+        var failures: [String] = []
+        var checks = 0
+        func check(_ ok: Bool, _ name: String) {
+            checks += 1
+            if !ok { failures.append("Generic HID routing: \(name)") }
+        }
+        func accepts(_ page: Int, _ usage: Int, known: Bool = false, supported: Bool = false) -> Bool {
+            Self.accepts(usagePage: page, usage: usage, knownController: known, gameControllerSupported: supported)
+        }
+        check(accepts(1, 5), "DJI / Spektrum gamepad")
+        check(accepts(1, 4), "joystick")
+        check(!accepts(1, 8), "not multi-axis / SpaceMouse")
+        for usage in [1, 2, 6, 7] { check(!accepts(1, usage), "not pointer/mouse/keyboard/keypad \(usage)") }
+        check(!accepts(0x0d, 5), "not digitizer/trackpad")
+        check(!accepts(0xff00, 5), "not vendor-defined/internal collection")
+        check(!accepts(1, 5, known: true), "DualSense/Valve use their existing path")
+        check(!accepts(1, 5, supported: true), "GameController support excludes raw duplicate before GC enumeration")
+        check(enabled(automatic: true, virtualPad: true), "Automatic permits generic HID")
+        check(!enabled(automatic: true, virtualPad: false), "Virtual controller off excludes generic matching")
+        check(!enabled(automatic: false, virtualPad: true), "explicit pad kinds exclude generic matching")
+        check(reportID(numbered: false, firstByte: 0x81) == 0, "unnumbered payload is not a report ID")
+        check(reportID(numbered: true, firstByte: 0x81) == 0x81, "numbered output preserves report ID")
+        check(productName(nil, fallback: "HID 2ca3:1020") == "HID 2ca3:1020", "missing product name")
+        check(productName("", fallback: "HID 2ca3:1020") == "HID 2ca3:1020", "empty product name")
+        check(productName(" \n", fallback: "HID 2ca3:1020") == "HID 2ca3:1020", "blank product name")
+        check(productName("C5", fallback: "HID 2ca3:1020") == "C5", "preserve actual product name")
+        let initial: [UInt64: Int] = [10: 0]
+        let generic: [UInt64] = [10]
+        check(SteamControllerRouting.availableControllerPlayer(0, rawPlayers: initial, genericDevices: generic),
+              "generic yields player 1 to a newly connected GameController")
+        check(!SteamControllerRouting.availableControllerPlayer(0, rawPlayers: initial),
+              "BLE Steam Controller still blocks new GameController on its sticky player")
+        func routed(previous: [UInt64: Int], available: [Int], capable: [Int], devices: [UInt64] = [10]) -> [UInt64: Int] {
+            SteamControllerRouting.rawPlayers(previous: previous, devices: devices, available: available,
+                                               genericDevices: generic, hidCapable: capable)
+        }
+        check(routed(previous: initial, available: [1, 2, 3], capable: [0, 1, 2, 3]) == [10: 1],
+              "generic moves to lowest free player after GameController takes player 1")
+        check(routed(previous: initial, available: [], capable: [0]).isEmpty,
+              "single-player generic releases reservation when GameController connects")
+        check(routed(previous: [10: 1], available: [0, 1, 2], capable: [0, 1, 2]) == [10: 1],
+              "generic remains sticky when a lower player becomes free")
+        check(routed(previous: initial, available: [0, 1], capable: []).isEmpty,
+              "old guest without caps hid gets no generic reservation")
+        check(routed(previous: initial, available: [0, 1, 2], capable: [2]) == [10: 2],
+              "generic skips players whose service lacks HID support")
+        check(routed(previous: [10: 0, 20: 1], available: [1, 2], capable: [1, 2], devices: [10, 20]) == [10: 2, 20: 1],
+              "generic moves without displacing a sticky BLE Steam Controller")
+        check(routed(previous: [10: 2], available: [0, 1, 2], capable: [0, 1, 2], devices: []).isEmpty,
+              "generic disconnect frees its reservation")
+        log("selftest-settings: generic HID routing: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
+        return failures
     }
 }
 
@@ -605,8 +688,8 @@ final class GamepadBridge {
     private let settings: LauncherSettings
     private let typeOverride: LauncherSettings.PadType?
     private let hid: HIDPassthrough
-    /// BLE devices have no GameController object, but still occupy their player until disconnect.
-    private var blePlayers: [UInt64: Int] = [:]
+    /// Controllers without a GameController object share sticky reservations (BLE and generic).
+    private var rawPlayers: [UInt64: Int] = [:]
     private var observers: [NSObjectProtocol] = []
     private var subscriptions: [AnyCancellable] = []
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
@@ -693,10 +776,14 @@ final class GamepadBridge {
         for p in [settings.$controllerID.map { _ in () }.eraseToAnyPublisher(), settings.$additionalPads.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in self?.assignControllers() })
         }
-        subscriptions.append(settings.$padType.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self else { return }
-            self.hid.matchSteamControllers = self.matchesValveControllers
-        })
+        for p in [settings.$padType.map { _ in () }.eraseToAnyPublisher(), settings.$virtualPad.map { _ in () }.eraseToAnyPublisher()] {
+            subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+                guard let self else { return }
+                self.hid.matchSteamControllers = self.matchesValveControllers
+                self.hid.matchGenericControllers = self.matchesGenericControllers
+                self.assignControllers()
+            })
+        }
         for p in [settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(), settings.$padType.map { _ in () }.eraseToAnyPublisher(),
                   settings.$dualSensePassthrough.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in
@@ -716,17 +803,18 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's Steam Controller device is assigned by `assignedSCDevice`: an unambiguous
-        // Puck slot to its GameController player, a BLE controller to its reserved player.
+        // Each player's raw controller: an unambiguous Puck slot follows GameController,
+        // while BLE and generic devices keep their reserved players.
         for s in slots {
             let playerIndex = s.index
-            s.steamControllerDevice = { [weak self] in self?.assignedSCDevice(for: playerIndex) }
+            s.rawControllerDevice = { [weak self] in self?.assignedRawDevice(for: playerIndex) }
         }
         hid.matchSteamControllers = matchesValveControllers
+        hid.matchGenericControllers = matchesGenericControllers
         hid.onChange = { [weak self] in
             self?.assignControllers()
         }
-        // Give already-connected GameController controllers their players before discovering BLE.
+        // Give already-connected GameController controllers players before discovering raw HID.
         assignControllers()
         hid.start()
         GCController.startWirelessControllerDiscovery(completionHandler: nil)
@@ -750,30 +838,39 @@ final class GamepadBridge {
         return t == .auto || t == .steamController
     }
 
-    /// Reconcile BLE reservations only on topology/settings changes, never while querying a slot.
-    private func updateBLEPlayers() {
-        let devices = matchesValveControllers
-            ? hid.devices.filter { HIDPassthrough.isLiveSteamController($0) && $0.puckSlot == nil }.map(\.registryID) : []
+    private var matchesGenericControllers: Bool {
+        GenericHIDRouting.enabled(automatic: (typeOverride ?? settings.padType) == .auto, virtualPad: settings.virtualPad)
+    }
+
+    /// Reconcile raw HID reservations only on topology/settings changes, never while querying a slot.
+    private func updateRawPlayers() {
+        let devices = hid.devices.filter {
+            $0.generic ? matchesGenericControllers
+                : (matchesValveControllers && HIDPassthrough.isLiveSteamController($0) && $0.puckSlot == nil)
+        }.map(\.registryID)
         let available = slots.indices.filter { usable($0) && slots[$0].controller == nil }
-        blePlayers = SteamControllerRouting.blePlayers(previous: blePlayers, devices: devices, available: available)
+        rawPlayers = SteamControllerRouting.rawPlayers(previous: rawPlayers, devices: devices, available: available,
+            genericDevices: hid.devices.filter(\.generic).map(\.registryID),
+            hidCapable: slots.indices.filter { slots[$0].hidCapable })
     }
 
     /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
-    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE uses reservations.
-    private func assignedSCDevice(for index: Int) -> HIDPassthrough.Device? {
-        guard matchesValveControllers, usable(index) else { return nil }
-        let steamPlayers = slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false }
+    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE/generic reserve players.
+    private func assignedRawDevice(for index: Int) -> HIDPassthrough.Device? {
+        guard usable(index) else { return nil }
+        let steamPlayers = matchesValveControllers
+            ? slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false } : []
         let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
         if SteamControllerRouting.puckPlayer(steamPlayers, liveSlots: livePuckSlots.count) == index {
             return livePuckSlots.first
         }
-        return hid.devices.first { blePlayers[$0.registryID] == index }
+        return hid.devices.first { rawPlayers[$0.registryID] == index }
     }
 
     /// Release then create across every slot so one Steam Controller moving between players never
     /// briefly exists twice in the guest, and the old slot cannot clear the new slot's handler.
     private func reconcileAll() {
-        updateBLEPlayers()
+        updateRawPlayers()
         for s in slots { s.releaseIfUnwanted() }
         for s in slots { s.reconcile() }
     }
@@ -784,9 +881,10 @@ final class GamepadBridge {
     /// and free players get the remaining controllers in connection order.
     private func assignControllers() {
         let candidates = GamepadBridge.connected
-        updateBLEPlayers()
+        updateRawPlayers()
+        let genericDevices = hid.devices.filter(\.generic).map(\.registryID)
         func available(_ index: Int) -> Bool {
-            SteamControllerRouting.availableControllerPlayer(index, blePlayers: blePlayers)
+            SteamControllerRouting.availableControllerPlayer(index, rawPlayers: rawPlayers, genericDevices: genericDevices)
         }
         let chosen = settings.controllerID.isEmpty ? nil
             : candidates.first { GamepadBridge.identifier(of: $0) == settings.controllerID }
@@ -812,7 +910,7 @@ final class GamepadBridge {
             s.setController(nil)
         }
         for (i, s) in slots.enumerated() { s.setController(next[i]) }
-        // Preserve BLE reservations while filling free players, then route both HID kinds.
+        // Preserve raw HID reservations while filling free players, then route every HID kind.
         reconcileAll()
         let players = Dictionary(uniqueKeysWithValues: slots.compactMap { s in s.controller.map { (ObjectIdentifier($0), s.index + 1) } })
         if players != GamepadBridge.players {
@@ -894,7 +992,13 @@ final class GamepadBridge {
         case "state":
             for s in slots where s.index == 0 || s.serviceReady || s.controller != nil { log("control: \(s.stateLine)") }
             let steam = hid.devices.filter(HIDPassthrough.isSteamController).count
-            log("control: HID DualSenses \(hid.devices.count - steam), Steam Controllers \(steam)")
+            let generic = hid.devices.filter(\.generic).count
+            log("control: HID DualSenses \(hid.devices.count - steam - generic), Steam Controllers \(steam), generic controllers \(generic)")
+            for d in hid.devices where d.generic {
+                let player = rawPlayers[d.registryID].map { String($0 + 1) } ?? "none (no usable free player)"
+                log(String(format: "control: generic HID %04x:%04x", d.identity.vendor, d.identity.product)
+                    + " \(d.identity.name), registry \(d.registryID), player \(player)")
+            }
         default:
             log(usage)
         }

@@ -427,6 +427,31 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
+**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 不支持的 Generic Desktop
+设备（usage page 1，Joystick 4、Game Pad 5）按其本身直通，
+例如 DJI FPV Remote Controller 2（`2ca3:1020`）和 Spektrum SLT6（`35cf:04fb`）。
+默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。
+现有 raw-HID/uhid 路径保留描述符、ID 和报告，由客户机的 `hid-generic`、SDL 和 Steam
+处理布局与校准。这不是 Xbox 模拟：请在 SteamOS/Steam Input 中设置，而不是使用启动器的
+GameController 实时测试、A/B 互换或死区设置。需要支持 `caps hid` 的新版客户机层。
+
+设备与 GameController、Steam Controller 共享四个玩家位置，取得编号最低且客户机服务支持
+HID 的可用空位（玩家 2–4 需启用**更多控制器**）。空闲位置保持不变，但 GameController
+控制器优先：通用 HID 会让出位置并移到下一个空位，没有空位则等待。蓝牙 LE Steam Controller
+仍保留固定位置，不会被挤走。旧客户机没有 `caps hid` 时，通用 HID 不预留位置，
+也不能唤醒暂停的虚拟机。
+关闭**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
+即可停止通用 HID 的发现与直通。`pad state` 会列出名称、VID/PID、registry ID 和玩家位置。
+
+为避免重复输入，启动器在打开通用 HID 前调用公开的 `GCController.supportsHIDDevice`
+API（按 HID registry ID 缓存），而不是按名称、VID/PID 或 GameController 通知的先后顺序猜测。
+DualSense 和 Valve 设备仍走原有路径。发现使用独立设备模式的 IOHIDManager：
+匹配本身不会打开无关设备或请求“输入监控”。普通操纵杆/手柄集合不需要此权限；
+带键盘/鼠标/触控板集合的已连接复合控制器可能需要，只有打开已选中的控制器时才可能请求。
+Apple 在 [IOHIDDevice](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDDevice.cpp)
+中标记这些集合，[设备插件](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDLib/IOHIDDeviceClass.m)
+在打开时请求访问权限，而不是在匹配 usage 时请求。
+
 **Steam Controller 直通。** **在 SteamOS 中显示为**为“自动”或“Steam Controller”时，Steam Controller（2026）经同一 uhid 路径以其本身交给 SteamOS，Steam 用自己的驱动处理其触控板、陀螺仪、背键和振动。单独连接时为玩家 1；开启**更多控制器**时，若旁边还有其他控制器（例如玩家 1 的 DualSense），Steam Controller 会成为下一个空闲玩家，而不是被丢弃：
 - 通过蓝牙 LE 连接到 Mac（`28de:1303`）：以其自身 ID 和蓝牙总线直通。GameController 不显示它，因此不需要 GameController 控制器，也无法唤醒休眠中的客户机（虚拟机暂停时会丢弃 HID 输入）；
 - 通过其 Puck 接收器（`28de:1304`）：Puck 的接口 2–5 是控制器槽位，带有控制器本身的报告描述符。SDL 与 Steam 只按 USB 接口号识别 Puck 的控制器，而 uhid 设备没有接口号，因此传输控制器状态的槽位以有线 Steam Controller（`28de:1302`，USB 总线）交给 SteamOS；槽位超过 2 秒没有控制器状态即移除（控制器关闭、换到其他槽位或蓝牙），由 Puck 的 GameController 手柄接替。只有恰好一名玩家的 GameController 控制器是 Steam Controller、且恰好一个 Puck 槽位活跃时，才将它直通给该玩家；否则这些玩家继续使用 uinput 手柄，因为无法可靠地将槽位与控制器对应。

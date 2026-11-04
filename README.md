@@ -564,6 +564,35 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
+**Generic HID joysticks and gamepads.** **Automatic** also passes Generic Desktop (usage page 1)
+Joystick (4) and Game Pad (5) devices unsupported by GameController
+through as themselves: for example DJI FPV Remote Controller 2 (`2ca3:1020`) and Spektrum SLT6
+(`35cf:04fb`). The existing raw-HID/uhid path preserves the descriptor, IDs and reports; the
+guest's `hid-generic`, SDL and Steam handle layout and calibration. This is not Xbox emulation:
+configure the device in SteamOS/Steam Input, not the launcher's live GameController input test,
+A/B swap or deadzone. A current guest layer with `caps hid` is required.
+Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default.
+
+Each device takes the lowest free usable player whose guest service supports HID, sharing the
+four players with GameController and Steam Controllers (enable **Additional controllers** for
+players 2–4). It keeps its player while free, but yields to a GameController controller and moves
+to the next free player, or waits if none is available. BLE Steam Controller reservations remain
+sticky and are not displaced. Generic devices cannot reserve a player on an older guest without
+`caps hid`, and cannot wake a paused VM. Turn off **Virtual controller** (`--no-gamepad`) or
+choose an explicit **Appears in SteamOS as** kind to stop generic discovery and passthrough.
+`pad state` lists each generic controller's name, VID/PID, registry ID and reserved player.
+
+To avoid duplicate input, the launcher asks the public `GCController.supportsHIDDevice` API
+before opening a generic device (cached per HID registry ID), rather than guessing from names,
+VID/PID or the timing of GameController connection notifications. DualSense and Valve devices
+keep their existing routes. Discovery uses an independent-devices IOHIDManager: matching does
+not open unrelated devices or request Input Monitoring. Ordinary joystick/gamepad collections
+do not need that permission; a connected composite controller with keyboard/mouse/trackpad collections
+may need it, and only opening an accepted controller can request it. Apple marks those collections
+in [IOHIDDevice](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDDevice.cpp);
+its [device plugin](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDLib/IOHIDDeviceClass.m)
+requests access on open, not on usage matching.
+
 **Steam Controller passthrough.** With **Appears in SteamOS as** Automatic or Steam Controller, a
 Steam Controller (2026) goes to SteamOS as itself through the same uhid path, so Steam drives its
 trackpads, gyro, back buttons and haptics with its own driver. Alone it is player 1; with
