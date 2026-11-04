@@ -789,8 +789,8 @@ Resources 中的辅助程序；每个都须通过 `sentry-cli debug-files check`
 应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
 地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
 （`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，在虚拟机窗口旁边（屏幕有空间则不压住；不抢焦点——键盘与捕获鼠标留给虚拟机）出现窗口：“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
-附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
-**稍后提醒**（下次检查再提示）。应用菜单 **检查更新…**
+附 release 说明与按钮 **下载**（把 release 的 `.dmg` 下到 Application Support 并显示进度；若无 `.dmg` 资源则在浏览器打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
+**稍后提醒**（下次检查再提示）。下载完成后 **重启并更新** 会退出启动器并用 DMG 替换当前 `.app`（若无法就地替换——裸 `steamac-vm` 或目录不可写——则显示 **打开磁盘镜像**）。应用菜单 **检查更新…**
 项（可用版本未被跳过时显示“有可用更新：X.Y…”带 新 角标，
 打开此窗口）立即检查——无 6 小时限制且含已跳过版本——
 报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
@@ -802,7 +802,7 @@ FXSteamLauncher/<version>`（加标准 HTTP 头与上次应答 ETag，以便 Git
 
 测试：`STEAMAC_UPDATE_URL` 覆盖 URL（release JSON 或 `/releases` 数组，`http(s)://` 或
 `file://`；同时为开发版启动器启用启动检查），`STEAMAC_FAKE_VERSION` 覆盖启动器版本；FIFO `--control-fifo`：`update check|startup|state`、`update press
-download|skip|later|ok|releases`、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。
+download|cancel|restart|open|skip|later|ok|releases`、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。
 
 ## 游戏统计
 

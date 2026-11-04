@@ -1163,15 +1163,18 @@ timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag wi
 (`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is available, a window
 appears next to the VM window (not over it if there is room on screen; without taking focus — the
 keyboard and captured mouse remain with the VM): “FX Steam Launcher X.Y is available — you have …”,
-with the release description and buttons **Download** (opens the release's `.dmg` in a browser, or
-the release page otherwise), **Skip This Version** (this version is no longer offered at startup),
-and **Remind Me Later** (offers it again at the next check). The app menu's **Check for Updates…**
-item (while the available version has not been skipped, “Update Available: X.Y…” with a New badge,
-opens this window) checks immediately — without the 6-hour limit and including skipped versions —
-and reports “You're up to date” or an error; network and HTTP errors at startup are only logged
-(`update: …`). Disable it with the **Check for updates at startup** checkbox in Settings → General
-(effective immediately). The dev launcher `work/out/steamac-vm` does not check at startup (the menu
-works); source builds (`bundle.sh`) and releases do.
+with the release description and buttons **Download** (fetches the release `.dmg` into Application
+Support and shows progress; if there is no `.dmg` asset, opens the release page in a browser),
+**Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
+(offers it again at the next check). After the download finishes, **Restart and Update** quits the
+launcher and replaces this `.app` from the DMG (or **Open Disk Image** when the app cannot be
+replaced in place — bare `steamac-vm`, or a non-writable location). The app menu's **Check for
+Updates…** item (while the available version has not been skipped, “Update Available: X.Y…” with a
+New badge, opens this window) checks immediately — without the 6-hour limit and including skipped
+versions — and reports “You're up to date” or an error; network and HTTP errors at startup are only
+logged (`update: …`). Disable it with the **Check for updates at startup** checkbox in Settings →
+General (effective immediately). The dev launcher `work/out/steamac-vm` does not check at startup
+(the menu works); source builds (`bundle.sh`) and releases do.
 
 Privacy: the request goes only to `api.github.com` (GitHub) and includes only `User-Agent:
 FXSteamLauncher/<version>` (plus standard HTTP headers and the previous response's ETag, so GitHub can
@@ -1182,8 +1185,8 @@ and skipped version are stored in settings (`updateLastCheck`, `updateETag`, `up
 Tests: `STEAMAC_UPDATE_URL` overrides the URL (release JSON or a `/releases` array, `http(s)://` or
 `file://`; it also enables the startup check for the dev launcher), `STEAMAC_FAKE_VERSION` overrides
 the launcher version; FIFO `--control-fifo`: `update check|startup|state`, `update press
-download|skip|later|ok|releases`, `update dump PNG` (the window and `-with-vm.png` — together with the
-VM window, as shown on screen).
+download|cancel|restart|open|skip|later|ok|releases`, `update dump PNG` (the window and
+`-with-vm.png` — together with the VM window, as shown on screen).
 
 ## Game statistics
 

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Darwin
 import SwiftUI
 
 /// New-version check: the latest GitHub release of fxgl/steamac against this launcher's
@@ -10,8 +11,11 @@ import SwiftUI
 /// `FXSteamLauncher/<version>` (plus the ETag of the previous answer, so GitHub can answer "not
 /// modified"); no Sentry involvement. Network and HTTP errors of the startup check are only logged.
 /// A newer release opens UpdatePanel beside the VM window, without taking the keyboard or the mouse
-/// capture; the app menu's "Check for Updates…" checks at once (no 6 h limit, skipped versions
-/// included) and also reports "up to date" and errors.
+/// capture; **Download** fetches the release `.dmg` in-process (UpdateInstall), then offers
+/// **Restart and Update** (replace this `.app` after quit) or opens the local DMG when in-place
+/// install is impossible; no `.dmg` asset still opens the release page in a browser. The app menu's
+/// "Check for Updates…" checks at once (no 6 h limit, skipped versions included) and also reports
+/// "up to date" and errors.
 ///
 /// Test hooks: STEAMAC_UPDATE_URL (another release JSON, http(s):// or file://: a /releases/latest
 /// object or a /releases array; also enables the startup check of the dev launcher) and
@@ -63,6 +67,8 @@ final class UpdateChecker {
     private var panel: UpdatePanel?
     private var vmWindow: () -> NSWindow? = { nil }
     private var subscription: AnyCancellable?
+    /// In-flight `.dmg` download (cancelled when the window closes or the user cancels).
+    private var download: UpdateInstall.Download?
 
     // MARK: versions
 
@@ -311,19 +317,24 @@ final class UpdateChecker {
 
     private func show(_ state: UpdatePanel.State, activate: Bool) {
         let panel = self.panel ?? UpdatePanel(actions: .init(
-            download: { [weak self] r in
-                log("update: download \(r.tag): opening \(r.downloadURL.absoluteString)")
-                NSWorkspace.shared.open(r.downloadURL)
+            download: { [weak self] r in self?.startDownload(r) },
+            cancelDownload: { [weak self] in self?.cancelDownload(returnTo: true) },
+            restart: { [weak self] r, path in self?.restartAndUpdate(r, dmgPath: path) },
+            openDMG: { [weak self] path in
+                log("update: opening downloaded DMG \(path)")
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 self?.panel?.window.close()
             },
             skip: { [weak self] r in
                 guard let self else { return }
+                self.cancelDownload(returnTo: false)
                 log("update: skipping \(r.tag)")
                 self.defaults.set(r.versionString, forKey: Store.skipped)
                 self.available = nil
                 self.panel?.window.close()
             },
             later: { [weak self] in
+                self?.cancelDownload(returnTo: false)
                 log("update: remind me later")
                 self?.panel?.window.close()
             },
@@ -331,15 +342,94 @@ final class UpdateChecker {
                 NSWorkspace.shared.open(UpdateChecker.releasesPage)
                 self?.panel?.window.close()
             },
-            dismiss: { [weak self] in self?.panel?.window.close() }))
+            dismiss: { [weak self] in
+                self?.cancelDownload(returnTo: false)
+                self?.panel?.window.close()
+            }))
         self.panel = panel
         if case .available(let r, let current) = state { log("update: \(r.tag) available (this launcher: \(current)); showing the update window") }
         panel.show(state, beside: vmWindow(), activate: activate)
     }
 
+    private func startDownload(_ r: UpdateChecker.Release) {
+        guard let url = r.dmg else {
+            log("update: download \(r.tag): no .dmg asset; opening \(r.downloadURL.absoluteString)")
+            NSWorkspace.shared.open(r.downloadURL)
+            panel?.window.close()
+            return
+        }
+        cancelDownload(returnTo: false)
+        let path = UpdateInstall.dmgCachePath(for: r)
+        let current = UpdateChecker.currentVersion
+        log("update: downloading \(r.tag) from \(url.absoluteString) -> \(path)")
+        show(.downloading(r, current: current, received: 0, total: 0, rate: 0), activate: false)
+        download = UpdateInstall.Download(url: url, path: path, userAgent: "FXSteamLauncher/\(current)",
+            progress: { [weak self] got, total, rate in
+                guard let self, let panel = self.panel, panel.window.isVisible,
+                      case .downloading(let rel, let cur, _, _, _) = panel.model.state, rel.tag == r.tag else { return }
+                self.show(.downloading(rel, current: cur, received: got, total: total, rate: rate), activate: false)
+            },
+            done: { [weak self] result in
+                guard let self else { return }
+                self.download = nil
+                guard let panel = self.panel, panel.window.isVisible else {
+                    if case .success(let path) = result { log("update: download finished after the window closed (\(path))") }
+                    return
+                }
+                switch result {
+                case .success(let path):
+                    let dest = UpdateInstall.appBundlePath
+                    let canInstall = dest.map(UpdateInstall.canReplaceApp(at:)) ?? false
+                    log("update: downloaded \(path) (can install in place: \(canInstall))")
+                    self.show(.ready(r, current: current, dmgPath: path, canInstall: canInstall), activate: true)
+                case .failure(let error):
+                    if error is CancellationError {
+                        log("update: download cancelled")
+                        self.show(.available(r, current: current), activate: false)
+                        return
+                    }
+                    log("update: download failed: \(error)")
+                    let localized = NetworkFailure.localizedMessage(error, server: .updates)
+                    self.show(.failed(localized), activate: true)
+                }
+            })
+    }
+
+    private func cancelDownload(returnTo: Bool) {
+        guard let download else { return }
+        let previous: (UpdateChecker.Release, String)? = {
+            guard let panel, case .downloading(let r, let current, _, _, _) = panel.model.state else { return nil }
+            return (r, current)
+        }()
+        self.download = nil
+        download.cancel()
+        if returnTo, let (r, current) = previous {
+            show(.available(r, current: current), activate: false)
+        }
+    }
+
+    private func restartAndUpdate(_ r: UpdateChecker.Release, dmgPath: String) {
+        guard let dest = UpdateInstall.appBundlePath, UpdateInstall.canReplaceApp(at: dest) else {
+            log("update: cannot replace this app; opening \(dmgPath)")
+            NSWorkspace.shared.open(URL(fileURLWithPath: dmgPath))
+            panel?.window.close()
+            return
+        }
+        let waitPid = Supervisor.isChild ? getppid() : getpid()
+        do {
+            try UpdateInstall.scheduleReplace(dmg: dmgPath, destination: dest, afterSupervisorExits: waitPid)
+        } catch {
+            log("update: cannot schedule install: \(error)")
+            show(.failed(String(localized: "Couldn't prepare the update. Try again, or open the release page.")), activate: true)
+            return
+        }
+        log("update: restarting to install \(r.tag)")
+        UpdateInstall.quitLauncherForInstall()
+    }
+
     // MARK: control FIFO (`update …`)
 
-    /// check (menu) | startup (the startup check now) | press download|skip|later|ok|releases |
+    /// check (menu) | startup (the startup check now) | press download|cancel|restart|open|skip|later|ok|releases |
     /// dump PNG (the window; PNG-with-vm.png: the window and the VM window as on screen) | state
     func control(_ args: [String]) {
         switch args.first {
@@ -369,6 +459,8 @@ final class UpdatePanel {
     enum State {
         case checking
         case available(UpdateChecker.Release, current: String)
+        case downloading(UpdateChecker.Release, current: String, received: Int64, total: Int64, rate: Double)
+        case ready(UpdateChecker.Release, current: String, dmgPath: String, canInstall: Bool)
         case upToDate(current: String)
         case failed(String)
 
@@ -376,6 +468,9 @@ final class UpdatePanel {
             switch self {
             case .checking: return "checking"
             case .available(let r, _): return "available \(r.tag)"
+            case .downloading(let r, _, let got, let total, _):
+                return "downloading \(r.tag) \(got)/\(total)"
+            case .ready(let r, _, _, let canInstall): return "ready \(r.tag)\(canInstall ? "" : " open-dmg")"
             case .upToDate: return "up to date"
             case .failed: return "failed"
             }
@@ -384,6 +479,9 @@ final class UpdatePanel {
 
     struct Actions {
         let download: (UpdateChecker.Release) -> Void
+        let cancelDownload: () -> Void
+        let restart: (UpdateChecker.Release, String) -> Void
+        let openDMG: (String) -> Void
         let skip: (UpdateChecker.Release) -> Void
         let later: () -> Void
         let releases: () -> Void
@@ -464,10 +562,14 @@ final class UpdatePanel {
     func press(_ button: String) {
         switch (button, model.state) {
         case ("download", .available(let r, _)): actions.download(r)
-        case ("skip", .available(let r, _)): actions.skip(r)
-        case ("later", .available): actions.later()
+        case ("cancel", .downloading): actions.cancelDownload()
+        case ("restart", .ready(let r, _, let path, true)): actions.restart(r, path)
+        case ("open", .ready(_, _, let path, false)): actions.openDMG(path)
+        case ("skip", .available(let r, _)), ("skip", .ready(let r, _, _, _)): actions.skip(r)
+        case ("later", .available), ("later", .downloading), ("later", .ready): actions.later()
         case ("releases", .failed): actions.releases()
-        case ("ok", _), ("cancel", _): actions.dismiss()
+        case ("ok", _), ("cancel", .checking), ("cancel", .failed), ("cancel", .upToDate),
+             ("cancel", .available), ("cancel", .ready): actions.dismiss()
         default: log("control: update: no \(button) button in state \(model.state.name)")
         }
     }
@@ -556,28 +658,50 @@ struct UpdateView: View {
                         Button("Cancel") { actions.dismiss() }.keyboardShortcut(.cancelAction)
                     }
                 case .available(let r, let current):
-                    Text("FX Steam Launcher \(r.versionString) is available — you have \(current)")
-                        .font(.headline)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let subtitle = subtitle(r) {
-                        Text(verbatim: subtitle).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("Release notes").font(.subheadline.weight(.semibold))
-                    ScrollView {
-                        Text(releaseNotesText(r.notes))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                    }
-                    .frame(height: 240)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    availableHeader(r, current: current)
+                    notes(r)
                     HStack {
                         Button("Skip This Version") { actions.skip(r) }
                         Spacer()
                         Button("Remind Me Later") { actions.later() }.keyboardShortcut(.cancelAction)
                         Button("Download") { actions.download(r) }.keyboardShortcut(.defaultAction)
+                    }
+                case .downloading(let r, let current, let received, let total, let rate):
+                    availableHeader(r, current: current)
+                    Text("Downloading the disk image…").font(.subheadline.weight(.semibold))
+                    Group {
+                        if total > 0 {
+                            ProgressView(value: Double(received) / Double(total))
+                        } else {
+                            ProgressView()
+                        }
+                    }
+                    .progressViewStyle(.linear)
+                    Text(verbatim: downloadDetail(received: received, total: total, rate: rate))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Spacer()
+                        Button("Remind Me Later") { actions.later() }
+                        Button("Cancel") { actions.cancelDownload() }.keyboardShortcut(.cancelAction)
+                    }
+                case .ready(let r, let current, let path, let canInstall):
+                    availableHeader(r, current: current)
+                    notes(r)
+                    Text(canInstall
+                         ? "The update is ready. Restart FX Steam Launcher to install it."
+                         : "The update is downloaded. Open the disk image and drag FX Steam Launcher to Applications (or replace the current app).")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Skip This Version") { actions.skip(r) }
+                        Spacer()
+                        Button("Remind Me Later") { actions.later() }.keyboardShortcut(.cancelAction)
+                        if canInstall {
+                            Button("Restart and Update") { actions.restart(r, path) }.keyboardShortcut(.defaultAction)
+                        } else {
+                            Button("Open Disk Image") { actions.openDMG(path) }.keyboardShortcut(.defaultAction)
+                        }
                     }
                 case .upToDate(let current):
                     Text("You're up to date").font(.headline)
@@ -605,10 +729,45 @@ struct UpdateView: View {
         .frame(width: UpdatePanel.width, alignment: .topLeading)
     }
 
+    @ViewBuilder
+    private func availableHeader(_ r: UpdateChecker.Release, current: String) -> some View {
+        Text("FX Steam Launcher \(r.versionString) is available — you have \(current)")
+            .font(.headline)
+            .fixedSize(horizontal: false, vertical: true)
+        if let subtitle = subtitle(r) {
+            Text(verbatim: subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func notes(_ r: UpdateChecker.Release) -> some View {
+        Text("Release notes").font(.subheadline.weight(.semibold))
+        ScrollView {
+            Text(releaseNotesText(r.notes))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+        }
+        .frame(height: 240)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     private func subtitle(_ r: UpdateChecker.Release) -> String? {
         var parts: [String] = []
         if !r.name.isEmpty && r.name != r.tag && r.name != r.versionString { parts.append(r.name) }
         if let d = r.published { parts.append(String(localized: "Released \(d.formatted(date: .long, time: .omitted))")) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func downloadDetail(received: Int64, total: Int64, rate: Double) -> String {
+        let got = String(format: "%.1f", Double(received) / 1e6)
+        let speed = String(format: "%.1f", rate / 1e6)
+        if total > 0 {
+            let expected = String(format: "%.1f", Double(total) / 1e6)
+            return String(localized: "\(got) / \(expected) MB · \(speed) MB/s")
+        }
+        return String(localized: "\(got) MB · \(speed) MB/s")
     }
 }

@@ -38,7 +38,7 @@ import Foundation
 ///   report …              Report a Problem sheet (ReportControl: open, fill, include, preview, send,
 ///                         retry, close, dsn, dump)
 ///   update …              new-version check (UpdateChecker.control: check, startup, press
-///                         download|skip|later|ok|releases, dump PATH, state)
+///                         download|cancel|restart|open|skip|later|ok|releases, dump PATH, state)
 ///   pad on|off|test [N] | state  GamepadBridge.control: a guest pad for player N (1 if not
 ///                         given) without a controller (as --input-selftest) / follow the
 ///                         controller again; press A + push the left stick; log the guest pads

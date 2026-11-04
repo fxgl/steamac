@@ -297,7 +297,8 @@ struct Options {
 
     Updates (Settings > General "Check for updates at startup", on; never in the dev launcher
     work/out/steamac-vm): the first boot asks api.github.com for the latest fxgl/steamac release, at
-    most every 6 h; menu FX Steam Launcher > Check for Updates… checks at any time. Test hooks:
+    most every 6 h; Download fetches the .dmg then Restart and Update replaces this .app after quit.
+    Menu FX Steam Launcher > Check for Updates… checks at any time. Test hooks:
     STEAMAC_UPDATE_URL (release JSON, http(s):// or file://; also enables the dev launcher's startup
     check), STEAMAC_FAKE_VERSION (the version this launcher compares as)
 
@@ -335,7 +336,7 @@ struct Options {
                            guest LINE (as if sent on fx.progress) | dump PNG (+ -window, -overlay,
                            -screen = as composited on screen, Metal HUD included) |
                            settings TAB|close | settings-dump PNG | set KEY VALUE | restart |
-                           update check|startup|state | update press download|skip|later|ok |
+                           update check|startup|state | update press download|cancel|restart|open|skip|later|ok |
                            update dump PNG (+ -with-vm = beside the VM window, as on screen) |
                            stats state|flush|ask|reset-question | stats press share|decline |
                            stats dump PNG (game statistics question window)
