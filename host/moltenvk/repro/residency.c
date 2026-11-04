@@ -75,7 +75,9 @@ static int create_image(VkImageCreateInfo ci, enum mem_kind kind, struct image *
 	*img = (struct image){ 0 };
 	VkExternalMemoryImageCreateInfo ext = { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
 		.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT };
-	if (kind == MEM_HOST_IMPORT)
+	/* Model vkr's non-shared HOST_VISIBLE imports: optimal images have no
+	 * external sharing marker and still need the private tiled heap. */
+	if (kind == MEM_HOST_IMPORT && ci.tiling != VK_IMAGE_TILING_OPTIMAL)
 		ci.pNext = &ext;
 	if (kind == MEM_SPARSE)
 		ci.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT;

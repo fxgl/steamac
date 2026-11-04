@@ -1,5 +1,5 @@
 # Shared by build-aarch64.sh and build-x86.sh (bash). Source tree: /src/mesa (read-only);
-# backported fixes: /patches (guest/mesa/patches, applied to a copy for the GL build only).
+# backported fixes: /patches (guest/mesa/patches, applied to a copy for both builds).
 
 # Venus-only Mesa: no GL/EGL/GBM (built separately below), no LLVM,
 # X11 + Wayland WSI. xlib-lease off to keep NEEDED in line with the image's Turnip
@@ -43,7 +43,8 @@ build_venus() {
     local builddir=$1 libdir=$2 destdir=$3
     shift 3
     rm -rf "$builddir" "$destdir"
-    meson setup "$builddir" /src/mesa "${MESA_OPTS[@]}" --libdir="$libdir" "$@"
+    mesa_source
+    meson setup "$builddir" /tmp/mesa-patched "${MESA_OPTS[@]}" --libdir="$libdir" "$@"
     ninja -C "$builddir"
     DESTDIR="$destdir" meson install -C "$builddir" --strip --no-rebuild --tags runtime
 }
@@ -81,25 +82,25 @@ GL_OPTS=(
     -Dshader-cache=enabled
 )
 
-# gl_source: /tmp/mesa-gl = /src/mesa with /patches applied, created once per container
-gl_source() {
-    [ -d /tmp/mesa-gl ] && return
-    cp -a /src/mesa /tmp/mesa-gl.tmp
+# mesa_source: one writable copy with the complete backport series for Venus and GL.
+mesa_source() {
+    [ -d /tmp/mesa-patched ] && return
+    cp -a /src/mesa /tmp/mesa-patched.tmp
     local p
     for p in /patches/*.patch; do
         echo "applying $(basename "$p")"
-        patch -d /tmp/mesa-gl.tmp -p1 --forward --no-backup-if-mismatch < "$p"
+        patch -d /tmp/mesa-patched.tmp -p1 --forward --no-backup-if-mismatch < "$p"
     done
-    mv /tmp/mesa-gl.tmp /tmp/mesa-gl
+    mv /tmp/mesa-patched.tmp /tmp/mesa-patched
 }
 
 # build_gl <builddir> <libdir> <destdir> [meson args...]
 build_gl() {
     local builddir=$1 libdir=$2 destdir=$3
     shift 3
-    gl_source
+    mesa_source
     rm -rf "$builddir" "$destdir"
-    meson setup "$builddir" /tmp/mesa-gl "${GL_OPTS[@]}" --libdir="$libdir" "$@"
+    meson setup "$builddir" /tmp/mesa-patched "${GL_OPTS[@]}" --libdir="$libdir" "$@"
     ninja -C "$builddir"
     DESTDIR="$destdir" meson install -C "$builddir" --strip --no-rebuild
 }

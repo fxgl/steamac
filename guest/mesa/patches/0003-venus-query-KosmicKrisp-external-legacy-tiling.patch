@@ -1,0 +1,26 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] venus: query KosmicKrisp external legacy tiling
+
+KosmicKrisp's macOS renderer emulates dma-bufs through shared host imports,
+not a native dma-buf tiling contract. Let its host external-image query decide
+support and limits. steamac KK 0088 uses bounded linear backing for explicitly
+shared host images, and virglrenderer 0020 preserves that external marker.
+
+Keep the existing refusal for native dma-buf renderers. This is a local
+steamac workaround for #58, not an upstream fix or a generic tiling override.
+
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -2798,8 +2798,11 @@
+-      /* venus doesn't support legacy tiling for scanout purpose */
++      /* Native dma-buf scanout requires an explicit tiling contract.
++       * KosmicKrisp uses the macOS renderer's shm/host-import emulation;
++       * its external image query supplies the interoperable layout limits. */
+       if (renderer_handle_type ==
+              VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT &&
++          physical_dev->renderer_driver_id != VK_DRIVER_ID_MESA_KOSMICKRISP &&
+           pImageFormatInfo->tiling !=
+              VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+          return vn_error(physical_dev->instance,
+                          VK_ERROR_FORMAT_NOT_SUPPORTED);
+       }

@@ -876,6 +876,15 @@ garbage or freed object handles, ends encoders a game left open when its context
 (STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives DXMT's own command lists through the shipped
 executor on the GPU.
 
+Shared Vulkan images on KosmicKrisp use imported shared pages rather than a private tiled heap
+(#58, temporary workaround for Mesa !44929). Only explicitly external host-memory images take this
+path: queries advertise one mip, one layer and single-sample linear backing, even for `OPTIMAL`;
+ordinary host-visible imports keep their tiled heaps. Guest Venus and virglrenderer preserve this
+contract only for the KosmicKrisp renderer; MoltenVK's legacy-tiling refusal is unchanged.
+`host/moltenvk/repro/shared_image.c` checks both directions between two devices (host shm imports,
+real exported/imported Vulkan fds in Linux). This verifies the sharing primitive, not MSFS 2024:
+MoltenVK's host `OPTIMAL` case skips its known row-pitch limitation rather than aborting.
+
 **Allow DXMT (D3D11 on the Mac's Metal), experimental.** Settings → Advanced → **Allow DXMT (D3D11 on
 the Mac's Metal)** is off by default and applies on next start (`--wmtr-lib PATH` or `--no-wmtr` for one launch).
 The app bundles `libwmtr_host.dylib`; the guest layer carries DXMT's

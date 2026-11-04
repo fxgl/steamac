@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Builds the guest Venus (virtio) Vulkan ICD and a zink-only GL stack for the Steam Frame
-# SteamOS image, from the pinned Mesa; the GL build carries the backports in patches/:
+# SteamOS image, from the pinned Mesa plus the backports in patches/:
+#   0001 zink: update pipelines when only vertex input changes (upstream backport).
+#   0002 Venus: 386f3238, zero external image handleType behaves as absent (#58).
+#   0003 Venus: ask KosmicKrisp about external legacy tiling (#58); requires KK 0088
+#        and virglrenderer 0020, not a native dma-buf tiling workaround.
 #   aarch64 (native: Steam, Proton ARM64EC/WoW64 unix side, gamescope, zink)
 #   x86_64 + i386 (FEX-emulated x86 apps; installed into the fex-mesa pressure-vessel provider),
 #   plus the x86_64 fault reporter for emulated games (/usr/lib/steamac/x86_64/fault-report.so)

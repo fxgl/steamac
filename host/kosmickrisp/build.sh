@@ -378,6 +378,11 @@
 #              overlap or offsets are printed; failed/pending records are never dropped. No GPU behavior
 #              change; the standalone diagnostics regression reproduces the false overlap with 0085
 #              alone and excludes it with 0087.
+#   0088       steamac: explicitly external host-memory OPTIMAL images use bounded LINEAR backing,
+#              so two devices importing the same shared pages see the same pixels (#58). Ordinary
+#              host-visible imports keep 0016's private heap. Queries advertise the linear limits.
+#              Temporary workaround while Willie Abrams tracks mesa!44929 upstream; drop on upstream fix.
+#              virglrenderer must preserve the host external-image marker. Repro: shared_image.c.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -601,6 +606,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0085 = steamac: validate failed command-buffer GPU timestamps before reporting durations (STEAMAC-G)"
 	echo "  0086 = steamac: retain largest direct and last indirect dispatch for GPU-failure logs (STEAMAC-G)"
 	echo "  0087 = steamac: validate the in-flight fault window against commit/feedback clocks (STEAMAC-G)"
+	echo "  0088 = steamac: explicitly shared host-memory images use imported pages (temporary mesa!44929 workaround, #58)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

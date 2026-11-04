@@ -1,0 +1,67 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] kk: keep explicitly shared host images in imported pages
+
+Temporary local workaround for steamac #58, on top of mesa!44929.
+Willie Abrams is tracking the upstream fix; drop this when that lands.
+
+Only explicitly external HOST_ALLOCATION / HOST_MAPPED_FOREIGN images use
+the bounded LINEAR layout, selected before memory requirements are computed.
+Ordinary optimal images on host-visible imported memory retain their private
+heap and all existing mip/layer/MSAA support. Query and creation agree.
+
+The renderer must preserve the host external-image marker; allocating from
+an imported host pointer alone does not mean the application shares an image.
+
+--- a/src/kosmickrisp/vulkan/kk_image.c
++++ b/src/kosmickrisp/vulkan/kk_image.c
+@@ -252,6 +252,21 @@
+    const VkPhysicalDeviceExternalImageFormatInfo *external_info =
+       vk_find_struct_const(pImageFormatInfo->pNext,
+                            PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO);
++   /* Host imports must keep their contents in the imported pages. Metal
++    * cannot place a tiled texture there; a private heap would silently break
++    * sharing between devices. Use the same bounded linear layout at query and
++    * creation time, only for explicitly external host-memory images.
++    * Temporary steamac workaround for mesa!44929 / issue #58. */
++   const VkExternalMemoryHandleTypeFlags host_handles =
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
++   VkPhysicalDeviceImageFormatInfo2 linear_info;
++   if (external_info && (external_info->handleType & host_handles) &&
++       pImageFormatInfo->tiling == VK_IMAGE_TILING_OPTIMAL) {
++      linear_info = *pImageFormatInfo;
++      linear_info.tiling = VK_IMAGE_TILING_LINEAR;
++      pImageFormatInfo = &linear_info;
++   }
+ 
+    /* Initialize to zero in case we return VK_ERROR_FORMAT_NOT_SUPPORTED */
+    memset(&pImageFormatProperties->imageFormatProperties, 0,
+@@ -437,7 +452,7 @@
+          break;
+       case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
+       case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT:
+-         /* Tiled images get a private heap when bound (kk_image_plane_bind) */
++         /* Explicit host imports use the imported pages, never a private heap. */
+          ext_mem_props = &kk_host_mem_props;
+          break;
+       default:
+@@ -592,6 +607,19 @@
+ kk_image_init(struct kk_device *dev, struct kk_image *image,
+               const VkImageCreateInfo *pCreateInfo)
+ {
++   const VkExternalMemoryImageCreateInfo *external_info =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   const VkExternalMemoryHandleTypeFlags host_handles =
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
++   VkImageCreateInfo linear_info;
++   if (external_info && (external_info->handleTypes & host_handles) &&
++       pCreateInfo->tiling == VK_IMAGE_TILING_OPTIMAL) {
++      linear_info = *pCreateInfo;
++      linear_info.tiling = VK_IMAGE_TILING_LINEAR;
++      pCreateInfo = &linear_info;
++   }
++
+    vk_image_init(&dev->vk, &image->vk, pCreateInfo);
+ 
+    /* Match the non-optimal limits advertised by the image format query before

@@ -7,6 +7,10 @@
 #                                                         KosmicKrisp through the Khronos loader
 #                                                         (Homebrew vulkan-loader, test only: steamac
 #                                                         opens the driver without a loader)
+#   REPRO_CASE=shared_image ...                         only the #58 sharing test (either driver)
+#                                                       MoltenVK OPTIMAL imports skip automatically
+#                                                       (known Metal row-pitch validation abort);
+#                                                       LINEAR remains a sharing control.
 # 1. gamescope_cs.c: fetches gamescope 3.16.28 (pinned), compiles src/shaders/cs_*.comp with
 #    glslang like gamescope's meson build (glslangValidator -V) and creates every pipeline
 #    variant; cs_composite_blit must write the expected pixels from s_samplers[0] and from
@@ -104,6 +108,9 @@
 #    shm_open failed): at a Finder launch's soft RLIMIT_NOFILE of 256 they run out of fds within 256 / 3 allocations,
 #    the driver never failing; at the limit steamac-vm raises itself to, 8192 live ones, 20000 free + allocate rounds and
 #    8192 live plain allocations of that type succeed, and every fd is closed after the frees.
+# shared_image.c (#58): two devices import independent mappings of the same exported shm fd,
+#    as virglrenderer's macOS dma-buf emulation does. OPTIMAL and LINEAR, plain and dedicated,
+#    A->B and B->A clears/readbacks must share every pixel (no native Vulkan OPAQUE_FD on Metal).
 # 21. sparse.c (KosmicKrisp only): vkd3d-proton's Tiled Resources Tier 2 feature gate, standard 2D tiles and
 #    per-layer mip tails, strict unbound image/buffer reads and shader residency, minimum-LOD clamps,
 #    binary/timeline sparse bind ordering, page relocation and image/plain-buffer aliases; vkd3d-proton's remap stress
@@ -248,6 +255,12 @@ build() {
 	# shellcheck disable=SC2086
 	xcrun clang -std=c11 -Wall -Werror -O1 "$@" -I"$inc" "$here/$prog.c" $link -o "$work/$prog"
 }
+
+if [ "${REPRO_CASE:-}" = shared_image ]; then
+	build shared_image
+	"$work/shared_image"
+	exit
+fi
 
 src=$work/gamescope
 if [ ! -d "$src/.git" ]; then
@@ -455,6 +468,9 @@ fi
 
 build host_memory
 "$work/host_memory"
+
+build shared_image
+"$work/shared_image"
 
 # What vkd3d-proton derives for a D3D12 game from this driver, and which of it Metal cannot provide
 # (Dragon's Dogma 2 refuses the GPU over a capability named in the game's own dialog).

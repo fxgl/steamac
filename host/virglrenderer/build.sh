@@ -30,6 +30,9 @@
 # (STEAMAC-61) instead of calling NULL through vrend. Patch 0019 exports process-wide live
 # VkDeviceMemory bytes/count plus mapped/deferred shm bytes for the launcher's independent
 # memory history (STEAMAC-S/G); logical aliasing totals, not resident pages or an extra budget.
+# Patch 0020 preserves the HOST_ALLOCATION external-image marker only for KosmicKrisp's
+# macOS dma-buf emulation and queries its real host-import limits (#58). KK 0088 needs it
+# to select shared-page backing. MoltenVK retains its existing non-external image path.
 #
 # Installation never rewrites a file in place (a running VM may have the dylib mapped): meson
 # installs into a staging DESTDIR and every file is moved into work/out/host (new inode).

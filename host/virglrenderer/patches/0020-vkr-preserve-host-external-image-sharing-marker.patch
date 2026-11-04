@@ -1,0 +1,77 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] vkr: preserve KosmicKrisp host external-image sharing semantics
+
+The macOS dma-buf emulation imports shared memory via EXT_external_memory_host.
+KosmicKrisp needs an external image marker to select interoperable backing
+(steamac #58, KK 0088). Query that same host handle to obtain its real limits.
+Keep MoltenVK and native dma-buf renderers unchanged: MoltenVK's imported
+OPTIMAL images cannot safely use this host external-image path yet.
+
+diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
+--- a/src/venus/vkr_physical_device.h
++++ b/src/venus/vkr_physical_device.h
+@@ -35,6 +35,7 @@
+ 
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    VkPhysicalDeviceIDProperties id_properties;
++   VkDriverId driver_id;
+    bool is_dma_buf_fd_export_supported;
+    bool is_opaque_fd_export_supported;
+    bool is_dma_buf_emulated;
+diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+--- a/src/venus/vkr_physical_device.c
++++ b/src/venus/vkr_physical_device.c
+@@ -163,12 +163,18 @@
+    };
+    if (physical_dev->EXT_external_memory_host)
+       physical_dev->id_properties.pNext = &host_props;
++   VkPhysicalDeviceDriverProperties driver_props = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
++      .pNext = physical_dev->id_properties.pNext,
++   };
++   physical_dev->id_properties.pNext = &driver_props;
+    VkPhysicalDeviceProperties2 props2 = {
+       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+       .pNext = &physical_dev->id_properties
+    };
+    vk->GetPhysicalDeviceProperties2(handle, &props2);
+    physical_dev->id_properties.pNext = NULL;
++   physical_dev->driver_id = driver_props.driverID;
+    physical_dev->min_imported_host_pointer_alignment =
+       host_props.minImportedHostPointerAlignment;
+ }
+@@ -924,4 +930,3 @@
+-   /* The host knows nothing about dma_buf, and the memory it would be asked
+-    * about is plain shm-backed memory with no Vulkan-level external handle.
+-    * Ask about a non-external image and report the answer as dma_buf.
++   /* KK needs an explicit host-import marker to select interoperable backing.
++    * Other emulated renderers retain their non-external image path.
+     */
+@@ -933,6 +938,9 @@
+       if (ext_info &&
+           ext_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)
+-         ext_info->handleType = 0;
++         ext_info->handleType =
++            physical_dev->driver_id == VK_DRIVER_ID_MESA_KOSMICKRISP
++               ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT
++               : 0;
+       else
+          ext_info = NULL;
+    }
+diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
+--- a/src/venus/vkr_image.c
++++ b/src/venus/vkr_image.c
+@@ -17,8 +17,12 @@
+ 
+    VkExternalMemoryImageCreateInfo *ext_create_info =
+       vkr_find_struct(pCreateInfo, VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
+-   if (ext_create_info)
++   if (ext_create_info &&
++       (ext_create_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)) {
+       ext_create_info->handleTypes &= ~VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
++      if (dev->physical_device->driver_id == VK_DRIVER_ID_MESA_KOSMICKRISP)
++         ext_create_info->handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++   }
+ }
+ 
+ static VkResult

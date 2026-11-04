@@ -17,7 +17,7 @@ aarch64 build:   $AARCH64_IMAGE (holo-deckard base-devel = Steam Frame userspace
 x86 builds:      $X86_IMAGE re-pointed at $STEAMOS_X86_MIRROR/{core,extra,multilib}-$STEAMOS_X86_BRANCH
 Meson (Venus):   -Dvulkan-drivers=virtio -Dgallium-drivers= -Dplatforms=x11,wayland -Dllvm=disabled -Dvideo-codecs= --buildtype=release
 Meson (GL):      -Dgallium-drivers=zink -Dvulkan-drivers= -Dglx=dri -Degl=enabled -Dgbm=enabled -Dglvnd=enabled -Dllvm=disabled (full lists: guest/mesa/container/common.sh)
-GL patches:      $(cd /patches && ls *.patch | tr '\n' ' ')(guest/mesa/patches, on top of the commit above)
+Mesa patches:    $(cd /patches && ls *.patch | tr '\n' ' ')(guest/mesa/patches, applied to Venus and GL on top of the commit above)
 
 Files (path | ELF machine/class | size | sha256):
 EOF

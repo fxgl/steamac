@@ -3,7 +3,9 @@
  * accepted descriptors violating those limits. Invalid cases intentionally run
  * without Vulkan validation, in separate processes, and bind if creation was
  * wrongly accepted so the old driver reaches the original Metal assertion.
- * Optimal seven-mip host imports must still use the tiled private-heap path. */
+ * Non-shared optimal seven-mip host imports must keep the private-heap path
+ * (virglrenderer also imports ordinary HOST_VISIBLE allocations this way).
+ * Explicitly shared imports are covered separately by shared_image.c. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +21,7 @@ static int run_case(const char *name)
 	const int invalid = strncmp(name, "invalid-", 8) == 0;
 	const int imported = strstr(name, "import") != NULL;
 	const int optimal = strstr(name, "optimal") != NULL;
+	const int shared = imported && !optimal;
 	const int input = strstr(name, "input") != NULL;
 	VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO, .apiVersion = VK_API_VERSION_1_3 };
 	VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
@@ -42,7 +45,7 @@ static int run_case(const char *name)
 	VkExternalMemoryImageCreateInfo external = { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
 		.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT };
 	VkImageCreateInfo ci = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.pNext = imported ? &external : NULL,
+		.pNext = shared ? &external : NULL,
 		.imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
 		.extent = { 64, 64, 1 }, .mipLevels = strstr(name, "mips") ? 7 : 1,
 		.arrayLayers = strstr(name, "array") ? 2 : 1,
@@ -60,7 +63,7 @@ static int run_case(const char *name)
 	VkPhysicalDeviceExternalImageFormatInfo ext_query = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
 		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT };
 	VkPhysicalDeviceImageFormatInfo2 query = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
-		.pNext = imported ? &ext_query : NULL, .format = ci.format, .type = VK_IMAGE_TYPE_2D,
+		.pNext = shared ? &ext_query : NULL, .format = ci.format, .type = VK_IMAGE_TYPE_2D,
 		.tiling = ci.tiling, .usage = ci.usage, .flags = ci.flags };
 	VkExternalImageFormatProperties ext_props = { VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES };
 	VkImageFormatProperties2 props = { VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, .pNext = &ext_props };
@@ -69,7 +72,7 @@ static int run_case(const char *name)
 		legacy.maxArrayLayers != 1 || props.imageFormatProperties.maxArrayLayers != 1 ||
 		legacy.sampleCounts != VK_SAMPLE_COUNT_1_BIT || props.imageFormatProperties.sampleCounts != VK_SAMPLE_COUNT_1_BIT)) ||
 	    (optimal && (legacy.maxMipLevels < 7 || props.imageFormatProperties.maxMipLevels < 7)) ||
-	    (imported && !(ext_props.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT))) {
+	    (shared && !(ext_props.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT))) {
 		fprintf(stderr, "FAIL %s: inconsistent image format limits/import support\n", name);
 		return 1;
 	}

@@ -34,9 +34,9 @@ int main(int argc, char **argv)
     CK(vkCreateDevice(pd, &dci, NULL, &dev));
     VkQueue queue;
     vkGetDeviceQueue(dev, 0, 0, &queue);
-    VkExternalMemoryImageCreateInfo external = { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT };
-    VkImageCreateInfo ci = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .pNext = imported ? &external : NULL,
+    /* Like vkr's ordinary HOST_VISIBLE allocation: imported memory, but no
+     * external image sharing marker (shared images have different limits). */
+    VkImageCreateInfo ci = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT, .imageType = VK_IMAGE_TYPE_3D,
         .format = VK_FORMAT_R8G8B8A8_UNORM, .extent = { 16, 16, 4 }, .mipLevels = 1, .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,

@@ -1,0 +1,33 @@
+From 386f323811f5bfe91e7ed7302998a8eca39b9086 Mon Sep 17 00:00:00 2001
+From: Yiwei Zhang <zzyiwei@chromium.org>
+Date: Wed, 21 Oct 2026 01:11:48 -0700
+Subject: [PATCH] venus: avoid null ptr dereference for zero external image
+ handleType
+
+Fixes: e4f9ce838a6 ("venus: adopt vk_android_get_ahb_image_properties")
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/45415>
+---
+ src/virtio/vulkan/vn_physical_device.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
+index 7be5e3a05aef..017005331238 100644
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -2786,10 +2786,11 @@ vn_GetPhysicalDeviceImageFormatProperties2(
+    const VkPhysicalDeviceExternalImageFormatInfo *external_info =
+       vk_find_struct_const(pImageFormatInfo->pNext,
+                            PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO);
++   if (external_info && !external_info->handleType)
++      external_info = NULL;
++
+    if (external_info) {
+-      if (!external_info->handleType) {
+-         external_info = NULL;
+-      } else if (!(external_info->handleType & supported_handle_types)) {
++      if (!(external_info->handleType & supported_handle_types)) {
+          return vn_error(physical_dev->instance,
+                          VK_ERROR_FORMAT_NOT_SUPPORTED);
+       }
+-- 
+GitLab
