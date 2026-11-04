@@ -25,6 +25,9 @@
 # requested refresh (e.g. 3840x2160 at 240 Hz); legacy modes retain their base EDID.
 # Patch 0021 adds the required DisplayID 1.3 Display Parameters block while
 # preserving the high-refresh timing bytes and legacy EDID output.
+# Patch 0022 distinguishes local virtio-net socket bind failures from proxy connect
+# failures, retaining endpoint paths and errno (STEAMAC-82: eth0 Binding(ENOSPC)
+# was ambiguous). It does not retry or change activation failure behavior.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -113,6 +116,9 @@ done
 	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_audio
+	# A missing proxy identifies connect (not bind), its endpoint path and errno.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features net --lib -- missing_proxy_reports_connect_operation_and_peer_path
 	# wmtr context type against a stand-in executor (fence order per ring, the WAITs of each
 	# EXECBUFFER, blob limits and detach/reuse/footprint, host ABI version, executor start and
 	# teardown, command checks).

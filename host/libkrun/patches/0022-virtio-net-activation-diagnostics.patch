@@ -1,0 +1,89 @@
+From: FX Steam Launcher <dev@fxgam.es>
+Subject: [PATCH] virtio-net: distinguish local bind from proxy connect failures (STEAMAC-82)
+
+The release event logs eth0 activation Binding(ENOSPC), followed by the
+MMIO BadActivate panic. Binding conflated bind(temp_dir socket) and
+connect(gvproxy), hiding which filesystem/endpoint failed. Preserve the
+operation, path and errno on failure, without allocating on the success
+path or retrying a failed activation. No ENOSPC root cause is assumed.
+
+Add a real missing-proxy regression: previously Binding(ENOENT) lacked
+both the connect operation and peer path.
+---
+--- a/src/devices/src/virtio/net/backend.rs
++++ b/src/devices/src/virtio/net/backend.rs
+@@ -1,12 +1,14 @@
+ use std::io;
+ use std::os::fd::RawFd;
++use std::path::PathBuf;
+ 
+ #[allow(dead_code)]
+ #[derive(Debug)]
+ pub enum ConnectError {
+     InvalidAddress(nix::Error),
+     CreateSocket(nix::Error),
+-    Binding(nix::Error),
++    Binding { path: PathBuf, error: nix::Error },
++    Connecting { path: PathBuf, error: nix::Error },
+     SendingMagic(nix::Error),
+     // Tap backend errors.
+     OpenNetTun(nix::Error),
+--- a/src/devices/src/virtio/net/unixgram.rs
++++ b/src/devices/src/virtio/net/unixgram.rs
+@@ -97,11 +97,17 @@
+         if let Some(path) = local_addr.path() {
+             _ = unlink(path);
+         }
+-        bind(fd.as_raw_fd(), &local_addr).map_err(ConnectError::Binding)?;
++        bind(fd.as_raw_fd(), &local_addr).map_err(|error| ConnectError::Binding {
++            path: local_path.clone(),
++            error,
++        })?;
+ 
+         // Connect so we don't need to use the peer address again. This also
+         // allows the server to remove the socket after the connection.
+-        connect(fd.as_raw_fd(), &peer_addr).map_err(ConnectError::Binding)?;
++        connect(fd.as_raw_fd(), &peer_addr).map_err(|error| ConnectError::Connecting {
++            path: path.clone(),
++            error,
++        })?;
+ 
+         if send_vfkit_magic {
+             send(fd.as_raw_fd(), &VFKIT_MAGIC, MsgFlags::empty())
+--- a/src/devices/src/virtio/net/unixstream.rs
++++ b/src/devices/src/virtio/net/unixstream.rs
+@@ -54,7 +54,10 @@
+         )
+         .map_err(ConnectError::CreateSocket)?;
+         let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
+-        connect(fd.as_raw_fd(), &peer_addr).map_err(ConnectError::Binding)?;
++        connect(fd.as_raw_fd(), &peer_addr).map_err(|error| ConnectError::Connecting {
++            path: path.clone(),
++            error,
++        })?;
+ 
+         if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
+             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+@@ -220,3 +223,22 @@
+         self.fd.as_raw_fd()
+     }
+ }
++
++#[cfg(test)]
++mod connect_diagnostics_tests {
++    use super::*;
++
++    #[test]
++    fn missing_proxy_reports_connect_operation_and_peer_path() {
++        let path = std::env::temp_dir().join(format!("krun-missing-proxy-{}.sock", std::process::id()));
++        let _ = std::fs::remove_file(&path);
++        let error = match Unixstream::open(path.clone()) {
++            Ok(_) => panic!("connected to a nonexistent proxy"),
++            Err(error) => error,
++        };
++        let diagnostic = format!("{error:?}");
++        assert!(diagnostic.contains("Connecting"), "{diagnostic}");
++        assert!(diagnostic.contains(path.to_str().unwrap()), "{diagnostic}");
++        assert!(diagnostic.contains("ENOENT"), "{diagnostic}");
++    }
++}
