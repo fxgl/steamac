@@ -371,6 +371,13 @@
 #              hash, group/local sizes, or indirect address and local size. GPU counts are never read on
 #              the CPU; no dispatch changes. host/moltenvk/repro/gpu-diagnostics.sh checks both (eight
 #              direct/indirect readback cases under Metal validation, device-loss reporting).
+#   0087       steamac: validate the in-flight fault window too (STEAMAC-G). 1.9.9 event 048177a5 had a
+#              stale GPU start 43.7 hours before commit: 0085 rejected its duration, but peer selection
+#              still printed 24 records and hid another 80. Invalid starts now use commit as the window's
+#              lower bound, and peer timestamps are checked against their own commit/feedback before
+#              overlap or offsets are printed; failed/pending records are never dropped. No GPU behavior
+#              change; the standalone diagnostics regression reproduces the false overlap with 0085
+#              alone and excludes it with 0087.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -593,6 +600,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0083 = steamac: bounded timestamp-resolve operand diagnostics (STEAMAC-7R)"
 	echo "  0085 = steamac: validate failed command-buffer GPU timestamps before reporting durations (STEAMAC-G)"
 	echo "  0086 = steamac: retain largest direct and last indirect dispatch for GPU-failure logs (STEAMAC-G)"
+	echo "  0087 = steamac: validate the in-flight fault window against commit/feedback clocks (STEAMAC-G)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

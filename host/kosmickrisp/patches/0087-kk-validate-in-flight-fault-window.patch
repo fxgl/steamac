@@ -1,0 +1,166 @@
+From: steamac <steamac@local>
+Date: Wed, 4 Nov 2026 14:00:00 +0000
+Subject: [PATCH] kk: validate the in-flight fault window (STEAMAC-G)
+
+1.9.9 event 048177a5 has GPU start 1421121.994090 before commit
+1578359.967056. Patch 0085 correctly labels that start inconsistent, but
+in-flight selection still uses it: 24 lines plus 80 hidden records include
+hours-old successful compositor work and offsets of +157219382 ms.
+
+Use commit as the conservative fault-window lower bound for invalid/missing
+starts, retain each completed record's bridge-clock commit/feedback times, and validate peer
+start/end values against its own commit/feedback interval. Invalid successful
+peer timings only qualify when their commit lies in the fault window; pending
+and failed records remain included. Reuse 0085's 5 ms clock tolerance.
+No command submission or GPU behavior changes.
+
+Regression: source-extracted original selection fails on the event's old
+completed compositor record; patched selection excludes it and labels sentinel
+end/NaN starts unknown. Standalone steamac_gpu_diagnostics passes.
+
+diff --git a/src/kosmickrisp/vulkan/kk_gpu_time.h b/src/kosmickrisp/vulkan/kk_gpu_time.h
+--- a/src/kosmickrisp/vulkan/kk_gpu_time.h
++++ b/src/kosmickrisp/vulkan/kk_gpu_time.h
+@@ -5,8 +5,30 @@
+ #define KK_GPU_TIME_H
+ 
+ #include <math.h>
++#include <stdbool.h>
+ #include <stddef.h>
+ #include <stdio.h>
++
++static inline bool
++kk_gpu_time_valid_start(double start, double commit, double feedback)
++{
++   return isfinite(start) && isfinite(commit) && isfinite(feedback) &&
++          start > 0.0 && start >= commit - 0.005 && start <= feedback + 0.005;
++}
++
++static inline bool
++kk_gpu_time_valid_end(double start, double end, double feedback)
++{
++   return isfinite(end) && end >= start && end <= feedback + 0.005;
++}
++
++/* A stale start must not turn hours of completed work into "in flight".
++ * Commit time is a conservative lower bound when GPU timestamps are absent. */
++static inline double
++kk_gpu_time_window_start(double start, double commit, double feedback)
++{
++   return kk_gpu_time_valid_start(start, commit, feedback) ? start : commit;
++}
+ 
+ /* Error feedback can contain stale or sentinel timestamps (STEAMAC-G).
+  * Keep the raw values in the caller, but never turn those into GPU durations.
+@@ -15,13 +37,12 @@
+ kk_gpu_time_format(double start, double end, double commit, double feedback,
+                    char *out, size_t size)
+ {
+-   const double tolerance = 0.005;
++   const bool valid_start = kk_gpu_time_valid_start(start, commit, feedback);
+    if (start == 0.0) {
+       snprintf(out, size, "has no GPU start timestamp");
+-   } else if (!isfinite(start) || !isfinite(commit) || !isfinite(feedback) ||
+-              start < commit - tolerance || start > feedback + tolerance) {
++   } else if (!valid_start) {
+       snprintf(out, size, "has an inconsistent GPU start timestamp");
+-   } else if (!isfinite(end) || end < start || end > feedback + tolerance) {
++   } else if (!kk_gpu_time_valid_end(start, end, feedback)) {
+       snprintf(out, size, "started %.1f ms after its commit; GPU end unavailable or inconsistent",
+                (start - commit) * 1000.0);
+    } else {
+diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
+--- a/src/kosmickrisp/vulkan/kk_queue.h
++++ b/src/kosmickrisp/vulkan/kk_queue.h
+@@ -32,7 +32,7 @@
+    /* The IOGPU reason of its command queue error ("Hang", "InnocentVictim",
+     * ...), "ok" when it completed */
+    char outcome[32];
+-   double gpu_start, gpu_end;
++   double gpu_start, gpu_end, commit_time, feedback_time;
+    struct kk_cb_record cb;
+ };
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -79,12 +79,11 @@
+ kk_queue_format_gpu_time(const struct kk_queue_record *r, double failed_start,
+                          char *out, size_t size)
+ {
+-   if (r->gpu_start <= 0.0)
+-      snprintf(out, size, "never started");
+-   else if (failed_start <= 0.0)
+-      snprintf(out, size, "ran %.1f ms", (r->gpu_end - r->gpu_start) * 1000.0);
+-   else if (r->gpu_end < r->gpu_start || r->gpu_end - r->gpu_start > 1000.0)
+-      snprintf(out, size, "started %+.1f ms, no end",
++   const double commit = r->commit_time;
++   if (!kk_gpu_time_valid_start(r->gpu_start, commit, r->feedback_time))
++      snprintf(out, size, "start unavailable or inconsistent");
++   else if (!kk_gpu_time_valid_end(r->gpu_start, r->gpu_end, r->feedback_time))
++      snprintf(out, size, "started %+.1f ms, end unavailable or inconsistent",
+                (r->gpu_start - failed_start) * 1000.0);
+    else
+       snprintf(out, size, "%+.1f to %+.1f ms",
+@@ -118,6 +117,10 @@
+       return false;
+    if (!r->done || strcmp(r->outcome, "ok"))
+       return true;
++   const double commit = r->commit_time;
++   if (!kk_gpu_time_valid_start(r->gpu_start, commit, r->feedback_time) ||
++       !kk_gpu_time_valid_end(r->gpu_start, r->gpu_end, r->feedback_time))
++      return commit >= s->failed_start && commit <= s->failed_feedback;
+    return r->gpu_end >= s->failed_start && r->gpu_start <= s->failed_feedback;
+ }
+ 
+@@ -163,7 +166,7 @@
+          continue;
+       }
+       s->lines++;
+-      char text[448], gpu[48];
++      char text[448], gpu[96];
+       kk_cb_record_format(&r->cb, text, sizeof(text));
+       if (r->done) {
+          kk_queue_format_gpu_time(r, s->failed_start, gpu, sizeof(gpu));
+@@ -269,7 +272,8 @@
+    struct kk_queue_in_flight s = {
+       .failed_dev = dev,
+       .failed_seq = data->tag,
+-      .failed_start = data->gpu_start,
++      .failed_start = kk_gpu_time_window_start(data->gpu_start, data->commit_time,
++                                              data->feedback_time),
+       .failed_feedback = data->feedback_time,
+       .now = now,
+    };
+@@ -333,6 +337,8 @@
+       memcpy(record->outcome, outcome, sizeof(outcome));
+       record->gpu_start = data->gpu_start;
+       record->gpu_end = data->gpu_end;
++      record->commit_time = data->commit_time;
++      record->feedback_time = data->feedback_time;
+       record->done = true;
+    }
+    const struct kk_cb_record cb = record->cb;
+diff --git a/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+--- a/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
++++ b/src/kosmickrisp/vulkan/tests/steamac_gpu_diagnostics.c
+@@ -24,6 +24,19 @@
+    kk_gpu_time_format(99.9985, 100.010, 100.0, 100.020, text, sizeof(text));
+    assert(strstr(text, "ran 11.5 ms"));
+ 
++   /* 1.9.9 event 048177a5: start predates commit by 43.7 hours.
++    * Previously unrelated completed records appeared to overlap it. */
++   const double commit = 1578359.967056, feedback = 1578360.064688;
++   const double stale_start = 1421121.994090;
++   assert(kk_gpu_time_window_start(stale_start, commit, feedback) == commit);
++   assert(kk_gpu_time_window_start(0.0, commit, feedback) == commit);
++   assert(kk_gpu_time_window_start(NAN, commit, feedback) == commit);
++   assert(kk_gpu_time_window_start(commit + 0.001, commit, feedback) == commit + 0.001);
++   assert(!kk_gpu_time_valid_start(stale_start, commit, feedback));
++   assert(!kk_gpu_time_valid_end(commit, 6148414588.946290, feedback));
++   assert(!kk_gpu_time_valid_end(commit, NAN, feedback));
++   assert(kk_gpu_time_valid_end(commit, feedback + 0.004, feedback));
++
+    struct kk_cb_record record = {0};
+    struct kk_dispatch_record shape = {.hash = 0x1234, .groups = {64, 32, 1}, .local = {8, 8, 1}};
+    kk_cb_record_dispatch(&record, &shape);
