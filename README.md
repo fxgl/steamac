@@ -555,8 +555,11 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
 for it and opens the device as soon as it is granted (`hid passthrough: Input Monitoring granted, reopening the HID manager`).
-macOS returns a Bluetooth LE controller's 64-byte feature report 1 (Steam's command channel) as
-65 bytes, so GET_REPORT buffers have headroom over the descriptor's sizes.
+macOS returns a Bluetooth LE Steam Controller's 64-byte feature report 1 (Steam's command channel) as
+65 bytes, so only that controller's Bluetooth GET_REPORT buffers have headroom over the descriptor's
+sizes; a USB DualSense gets exactly the descriptor's sizes (its firmware report 32 timed out with the
+headroom in 1.9.9, STEAMAC-84). A disconnected controller is removed by the device reference the launcher
+holds, so reconnecting it over USB or Bluetooth passes through the new device.
 
 **Several controllers.** With Settings → Controller → **Additional controllers** (on by default,
 applies now) further connected controllers are players 2–4, each with a gamepad of its own in
@@ -602,7 +605,13 @@ and the SteamOS disk from Settings → Advanced → Disk image. By default:
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`; otherwise, the repository's
 `work/out/steamos.img` (next to the bundle or where it was built). If there is no disk, a
 first-launch window offers **Create New Disk…** (see the next section) or **Use Existing Disk…**
-(the image is used in place and never copied; `scripts/build-image.sh` also builds one). In this
+(the image is used in place and never copied; `scripts/build-image.sh` also builds one). A disk must be
+a raw SteamOS GPT disk with this layout's partitions: a Steam Deck recovery archive or the macOS Steam
+installer is rejected when chosen, and a saved disk that is not one is refused before boot
+(STEAMAC-7Y/7Z). If the guest's initramfs fails anyway (`steamac-init: FATAL …`), the window shows the
+failure instead of staying at 3%. A disk the launcher may not open or lock (permissions, removable-volume
+access) is explained with Finder → Get Info → Sharing & Permissions and Privacy & Security, and logged,
+not sent as a crash report (STEAMAC-15). In this
 mode, the guest console and launcher log are written to
 `~/Library/Logs/es.fxgam.steamac/steamac-vm.log`; SIGUSR1 frame dumps go there too. `./run.sh`
 and `work/out/steamac-vm` work as before (window settings also apply to them unless overridden by
@@ -794,7 +803,12 @@ It does not delete the old cache or change its permissions. This uses Metal's op
 SPI; if the override is unavailable or the replacement is also unwritable, that is logged and
 shader compilation errors remain reportable. `work/out/steamac-vm --selftest-metal-cache` reproduces
 the `monolithic_metal.pcm: Operation not permitted` failure in a private immutable cache, then
-verifies actual Metal source compilation with the replacement (no VM or Sentry events).
+verifies actual Metal source compilation with the replacement (no VM or Sentry events). The choice is
+made only before Metal initialises: a cache that becomes unwritable later cannot be redirected in the
+running process, so reports carry the startup decision (`metal_cache` tag) and read-only metadata of
+the failing `monolithic_metal.pcm` path (STEAMAC-7W). MoltenVK does not support pipelines that combine
+tessellation with a geometry shader; they fail with `VK_ERROR_FEATURE_NOT_PRESENT` instead of compiling
+with an invalid buffer binding (STEAMAC-83).
 
 | Option | What it is | Pros and cons |
 |---|---|---|
@@ -1008,6 +1022,8 @@ What is sent:
   Not-responding reports include `stall_history`: up to 32 one-second GPU command-counter, heartbeat age,
   guest uptime/load, process CPU-time and host polling-gap samples, even with performance statistics
   off (STEAMAC-8). Missing agent heartbeats alone do not prove that the whole guest or GPU hung.
+  GPU-activity, VM-memory and host-thread snapshots are bounded separately; thread states and CPU
+  estimates are evidence, not backtraces or proof of a GPU deadlock.
   The same samples are logged once when an idle indicator lasts 10 s, including with a live
   heartbeat, so Report a Problem can diagnose game stalls without enabling performance statistics.
   After a host scheduling gap (the launcher itself not running for seconds) the detector watches a

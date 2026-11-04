@@ -407,7 +407,7 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 - 通过蓝牙 LE 连接到 Mac（`28de:1303`）：以其自身 ID 和蓝牙总线直通。GameController 不显示它，因此不需要 GameController 控制器，也无法唤醒休眠中的客户机（虚拟机暂停时会丢弃 HID 输入）；
 - 通过其 Puck 接收器（`28de:1304`）：Puck 的接口 2–5 是控制器槽位，带有控制器本身的报告描述符。SDL 与 Steam 只按 USB 接口号识别 Puck 的控制器，而 uhid 设备没有接口号，因此传输控制器状态的槽位以有线 Steam Controller（`28de:1302`，USB 总线）交给 SteamOS；槽位超过 2 秒没有控制器状态即移除（控制器关闭、换到其他槽位或蓝牙），由 Puck 的 GameController 手柄接替。只有恰好一名玩家的 GameController 控制器是 Steam Controller、且恰好一个 Puck 槽位活跃时，才将它直通给该玩家；否则这些玩家继续使用 uinput 手柄，因为无法可靠地将槽位与控制器对应。
 
-其报告描述符含键盘和鼠标集合（控制器的桌面模式），因此 macOS 只有在系统设置 → 隐私与安全性 → **输入监控**允许后才打开它：启动器会请求该权限，授予后立即打开设备（`hid passthrough: Input Monitoring granted, reopening the HID manager`）。macOS 把蓝牙 LE 控制器 64 字节的 feature report 1（Steam 的命令通道）返回为 65 字节，因此 GET_REPORT 缓冲区在描述符尺寸之外留有余量。
+其报告描述符含键盘和鼠标集合（控制器的桌面模式），因此 macOS 只有在系统设置 → 隐私与安全性 → **输入监控**允许后才打开它：启动器会请求该权限，授予后立即打开设备（`hid passthrough: Input Monitoring granted, reopening the HID manager`）。macOS 把蓝牙 LE Steam Controller 64 字节的 feature report 1（Steam 的命令通道）返回为 65 字节，因此只有该控制器经蓝牙的 GET_REPORT 缓冲区在描述符尺寸之外留有余量；USB DualSense 使用描述符的原始尺寸（1.9.9 中带余量时其固件 report 32 超时，STEAMAC-84）。断开的控制器按启动器持有的设备引用移除，因此经 USB 或蓝牙重新连接后直通的是新设备。
 
 **多个控制器。** 开启设置 → 控制器 → **更多控制器**（默认开，立即生效）后，其余已连接的控制器成为玩家 2–4，在 SteamOS 中各有自己的手柄，用于本地合作。每个玩家一个 virtio-console 端口：玩家 1 用上述 `fx.pad`，其余用 `fx.pad2` … `fx.pad4`，各由以端口命名的 `fx-pad@.service` 实例服务（同一个 `fx-progress-agent pad`，以 `FX_PAD_PORT` 指定端口，由 udev 启动），因此各玩家端口上的协议相同，手柄的振动在驱动它的控制器上播放。客户机对应端口的服务发出 `hello` 后该玩家才获得控制器：没有 `fx-pad@.service` 的客户机层仍只有一个手柄。设置中选定的控制器是玩家 1，除非该位置已被蓝牙 LE Steam Controller 占用；玩家的控制器在断开前保持不变（其他玩家不递补），重新连接的控制器占用第一个空位。蓝牙 LE Steam Controller 也保持其玩家位置：较低编号玩家断开不会使其递补，新连接的 GameController 控制器也不会将其挤走。BLE 控制器断开时释放位置，重新连接时占用编号最低的可用空位。**在 SteamOS 中显示为**、A/B 互换与死区对所有手柄生效（“自动”时每个手柄与各自的控制器同类）。只有玩家 1 的 DualSense 可直通，且另一玩家的控制器也是 DualSense 时不直通（GameController 不报告哪个 HID 设备属于谁）：此时两者都获得 uinput 手柄。Steam Controller 可直通给任意空闲可用玩家（见上文）。虚拟机运行时，设置 → 控制器中的实时输入测试会标出每个控制器对应的玩家（**玩家 2**）。关闭：只使用玩家 1；BLE Steam Controller 不会挤走已占用该位置的 GameController 控制器，如果 BLE 已占据该位置，新连接的 GameController 控制器则需等待。
 
@@ -428,7 +428,7 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 从访达启动（无参数）用包内的内核、initramfs 与层，SteamOS 磁盘取自 设置 → 高级 → 磁盘映像。默认：
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`；否则用仓库的
 `work/out/steamos.img`（包旁边或构建处）。无磁盘时，首次启动窗口提供**新建磁盘…**（见下节）或**使用已有磁盘…**
-（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。此模式客户机控制台与启动器日志写入
+（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。磁盘必须是带本布局分区的 SteamOS 原始 GPT 磁盘：选择 Steam Deck 恢复压缩包或 macOS 版 Steam 安装器时会被拒绝，已保存但不合格的磁盘在启动前即被拒绝（STEAMAC-7Y/7Z）。若客户机 initramfs 仍然失败（`steamac-init: FATAL …`），窗口显示错误而不是停在 3%。启动器无法打开或锁定的磁盘（权限、可移除卷访问）会提示检查 Finder → 显示简介 → 共享与权限以及隐私与安全性，并只记日志，不作为崩溃报告发送（STEAMAC-15）。此模式客户机控制台与启动器日志写入
 `~/Library/Logs/es.fxgam.steamac/steamac-vm.log`；SIGUSR1 帧转储亦然。`./run.sh`
 与 `work/out/steamac-vm` 照常用（除非被标志覆盖，窗口设置对它们同样有效）。
 
@@ -541,7 +541,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 若该接口不可用或新缓存同样不可写，会记入日志，着色器编译错误仍可上报。
 `work/out/steamac-vm --selftest-metal-cache` 在私有不可变缓存中复现
 `monolithic_metal.pcm: Operation not permitted`，随后用新缓存验证真实 Metal 源码编译
-（不启动虚拟机、不发送 Sentry 事件）。
+（不启动虚拟机、不发送 Sentry 事件）。该选择只在 Metal 初始化前进行：之后才变得不可写的缓存无法在运行中的进程里重定向，因此报告附带启动时的决定（`metal_cache` 标签）以及失败的 `monolithic_metal.pcm` 路径的只读元数据（STEAMAC-7W）。MoltenVK 不支持同时含曲面细分与几何着色器的管线：这类管线返回 `VK_ERROR_FEATURE_NOT_PRESENT`，而不是带着无效缓冲绑定编译（STEAMAC-83）。
 
 | 选项 | 是什么 | 利弊 |
 |---|---|---|
@@ -688,7 +688,7 @@ SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）�
   failed`）、磁盘创建失败、非预期虚拟机退出（用户未要求关机时的非零退出码或信号）与空闲指示器“SteamOS 无响应…”；
   “SteamOS 无响应”报告附带 `stall_history`：最多 32 个每秒采样的 GPU 命令计数、心跳时长、
   客户机运行时间/负载、进程 CPU 时间和宿主轮询间隔，即使未开启性能统计也会收集（STEAMAC-8）。
-  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。
+  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。GPU 活动、虚拟机内存和宿主线程快照分别有上限；线程状态与 CPU 估算只是证据，不是调用栈，也不能证明 GPU 死锁。
   空闲指示器持续 10 秒时，同样的采样会写入日志一次，即使心跳仍正常，
   因此无需启用性能统计，“报告问题”也可包含游戏卡顿的诊断信息。
   宿主调度停顿（启动器自身数秒未运行）之后，检测器先观察一个新的心跳窗口，不把停顿算作客户机挂起。
