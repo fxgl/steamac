@@ -725,9 +725,10 @@ dosfstools、e2fsprogs、btrfs-progs、构建脚本、`README.txt`）；随 GitH
 旧版本：`scripts/gpl-sources.sh v1.2`。
 
 应用内更新（[更新检查](#更新检查)）：`dist.sh` 写入 `SUFeedURL`（`SPARKLE_FEED_URL`，默认
-`https://fxgl.github.io/steamac/appcast.xml`）、`SUPublicEDKey`（`SPARKLE_PUBLIC_KEY`，默认钥匙串中的密钥，`generate_keys -p`）、
-`SUVerifyUpdateBeforeExtraction` 与 `SURequireSignedFeed`；公证构建缺密钥即失败，`--no-notarize` 构建则保留 GitHub 检查。
-EdDSA 密钥对只需创建一次：`host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys`（Sparkle 工具随 SwiftPM 包提供，
+`https://fxgl.github.io/steamac/appcast.xml`）、`SUPublicEDKey`（`SPARKLE_PUBLIC_KEY`，默认为 `dist.sh` 中固定的 fxgl 发布密钥
+`ML1BKHcTTwKlVSLtTdMvyk7Fhwg35VN1nUp+o4fezt8=`：已安装的副本只接受它签名的更新）、
+`SUVerifyUpdateBeforeExtraction` 与 `SURequireSignedFeed`；钥匙串中没有该密钥的私钥时，公证构建失败（`generate_keys -p` 打印其公钥）。
+EdDSA 密钥对已用 `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` 创建一次（Sparkle 工具随 SwiftPM 包提供，
 与内嵌框架同版本）；私钥留在登录钥匙串，绝不进仓库或 CI。请离线备份（`generate_keys -x <file>`；另一台 Mac 用
 `generate_keys -f <file>` 导入）：丢失后已安装的副本再也收不到更新。`build.sh` 令 `CFBundleVersion` 等于
 `CFBundleShortVersionString`（Sparkle 按它比较版本）。发布须按此顺序（feed 不得指向尚未上传的文件）：

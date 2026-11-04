@@ -1064,9 +1064,11 @@ host/launcher/dist.sh       # подпись, нотаризация, DMG
 
 Обновления в приложении ([Проверка обновлений](#проверка-обновлений)): `dist.sh` добавляет `SUFeedURL`
 (`SPARKLE_FEED_URL`, по умолчанию `https://fxgl.github.io/steamac/appcast.xml`), `SUPublicEDKey`
-(`SPARKLE_PUBLIC_KEY`, по умолчанию ключ из связки, `generate_keys -p`), `SUVerifyUpdateBeforeExtraction`
-и `SURequireSignedFeed`; нотаризованная сборка без ключа падает, сборка `--no-notarize` тогда остаётся
-с проверкой GitHub. Пара ключей EdDSA создаётся один раз:
+(`SPARKLE_PUBLIC_KEY`, по умолчанию ключ релизов fxgl `ML1BKHcTTwKlVSLtTdMvyk7Fhwg35VN1nUp+o4fezt8=`,
+зафиксирован в `dist.sh`: установленные копии принимают только подписанные им обновления),
+`SUVerifyUpdateBeforeExtraction` и `SURequireSignedFeed`; нотаризованная сборка падает, если в связке
+ключей нет закрытой половины этого ключа (`generate_keys -p` печатает открытую). Пара ключей EdDSA создана
+один раз:
 `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` (инструменты Sparkle приходят с
 пакетом SwiftPM той же версии, что и встроенный фреймворк); закрытый ключ остаётся в связке ключей входа,
 никогда не в репозитории и не в CI. Сохраните его копию офлайн (`generate_keys -x <файл>`;

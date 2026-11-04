@@ -1073,10 +1073,11 @@ dosfstools, e2fsprogs, btrfs-progs, build scripts, `README.txt`); attach it to t
 alongside the DMG. For an older release: `scripts/gpl-sources.sh v1.2`.
 
 In-app updates ([Update check](#update-check)): `dist.sh` adds `SUFeedURL` (`SPARKLE_FEED_URL`, by default
-`https://fxgl.github.io/steamac/appcast.xml`), `SUPublicEDKey` (`SPARKLE_PUBLIC_KEY`, by default the
-Keychain's key, `generate_keys -p`), `SUVerifyUpdateBeforeExtraction`, and `SURequireSignedFeed`; a
-notarized build fails without a key, a `--no-notarize` one then keeps the GitHub check. Create the EdDSA key
-pair once with `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` (Sparkle's tools
+`https://fxgl.github.io/steamac/appcast.xml`), `SUPublicEDKey` (`SPARKLE_PUBLIC_KEY`, by default fxgl's
+release key `ML1BKHcTTwKlVSLtTdMvyk7Fhwg35VN1nUp+o4fezt8=`, pinned in `dist.sh`: installed copies accept
+only updates it signed), `SUVerifyUpdateBeforeExtraction`, and `SURequireSignedFeed`; a notarized build
+fails unless the Keychain holds that key's private half (`generate_keys -p` prints its public half). The
+EdDSA key pair was created once with `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` (Sparkle's tools
 come with the SwiftPM package, the same version as the embedded framework): the private key stays in the
 login Keychain, never in the repository or CI. Back it up offline (`generate_keys -x <file>`;
 `generate_keys -f <file>` imports it on another Mac): without it, no update can reach installed copies
