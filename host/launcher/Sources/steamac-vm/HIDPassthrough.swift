@@ -155,10 +155,6 @@ final class HIDPassthrough {
             guard let ctx else { return }
             Unmanaged<HIDPassthrough>.fromOpaque(ctx).takeUnretainedValue().added(device, result: result)
         }, ctx)
-        IOHIDManagerRegisterDeviceRemovalCallback(m, { ctx, _, _, device in
-            guard let ctx else { return }
-            Unmanaged<HIDPassthrough>.fromOpaque(ctx).takeUnretainedValue().removed(device)
-        }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
         manager = m
@@ -252,8 +248,10 @@ final class HIDPassthrough {
     }
 
     private func removed(_ ref: IOHIDDevice) {
-        guard let id = HIDPassthrough.registryID(ref),
-              let i = devices.firstIndex(where: { $0.registryID == id }) else { return }
+        // The device-level callback gives us the retained ref, even after a manager re-match.
+        // Do not query the terminated service's registry ID: keeping a dead Device here would
+        // route every reconnect to that controller (STEAMAC-84).
+        guard let i = devices.firstIndex(where: { $0.ref == ref }) else { return }
         let d = devices.remove(at: i)
         if !devices.contains(where: { $0.puckSlot != nil }) { stopPuckTimer() }
         log("hid passthrough: \(d.identity.name) disconnected")
@@ -266,6 +264,13 @@ final class HIDPassthrough {
     /// handler is nil and the callback only updates Puck liveness when relevant.
     private func watch(_ d: Device) {
         let ctx = Unmanaged.passUnretained(d).toOpaque()
+        // The manager's removal lookup also queries IORegistry. Watch the retained device
+        // itself instead, so neither re-matching nor an unavailable service loses its removal.
+        IOHIDDeviceRegisterRemovalCallback(d.ref, { ctx, _, _ in
+            guard let ctx else { return }
+            let d = Unmanaged<Device>.fromOpaque(ctx).takeUnretainedValue()
+            d.owner?.removed(d.ref)
+        }, ctx)
         IOHIDDeviceRegisterInputReportCallback(d.ref, d.inputBuffer, d.maxInput, { ctx, result, _, _, _, report, length in
             guard let ctx, result == kIOReturnSuccess, length > 0 else { return }
             let d = Unmanaged<Device>.fromOpaque(ctx).takeUnretainedValue()
@@ -320,8 +325,8 @@ final class HIDPassthrough {
         isSteamController(d) && d.live
     }
 
-    /// Re-matching an open manager creates new refs for the same registry entries, without
-    /// removal callbacks for the old refs. Keep their open, scheduled Device until removal by ID.
+    /// Registry identity while matching a live service, for de-duplicating re-matches. Removal
+    /// uses the retained device's callback instead: terminated services need not answer queries.
     static func registryID(_ ref: IOHIDDevice) -> UInt64? {
         var id: UInt64 = 0
         guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(ref), &id) == kIOReturnSuccess else { return nil }
@@ -396,15 +401,23 @@ final class HIDPassthrough {
     /// GET_REPORT of report `id`: the report (ID first) or an error, on the main queue.
     func getReport(_ d: Device, type: ReportType, id: UInt8, done: @escaping (Result<[UInt8], IOReturnError>) -> Void) {
         // The IOHIDDevice, not the Device: a Device is released on the main thread only (deinit).
-        // Headroom over the descriptor's size: macOS returns a Bluetooth LE Steam Controller's
-        // 64-byte feature report 1 as 65 bytes and fails a 64-byte buffer (kIOReturnNoSpace).
-        let ref = d.ref, size = (type == .input ? d.maxInput : d.maxFeature) + 64
+        // macOS needs headroom for a BLE Steam Controller's feature reports (64 bytes become
+        // 65). Do not enlarge other devices' requests: this length reaches the USB transfer,
+        // and a DualSense firmware-info request must keep its descriptor-sized buffer.
+        let headroom = type == .feature && d.identity.bus == HIDPassthrough.busBluetooth
+            && HIDPassthrough.isSteamController(d) ? 64 : 0
+        let ref = d.ref, size = (type == .input ? d.maxInput : d.maxFeature) + headroom
+        let name = d.identity.name, bus = d.identity.bus, registryID = d.registryID
         io.async {
             var buf = [UInt8](repeating: 0, count: size)
             buf[0] = id
             var len = CFIndex(size)
             let r = buf.withUnsafeMutableBufferPointer {
                 IOHIDDeviceGetReport(ref, type.io, CFIndex(id), $0.baseAddress!, &len)
+            }
+            if r != kIOReturnSuccess {
+                log("hid passthrough: GET \(type.rawValue) report \(id) from \(name) (bus \(bus), registry \(registryID)): "
+                    + "\(HIDPassthrough.describe(r)) (requested \(size) bytes, result length \(len))")
             }
             let result: Result<[UInt8], IOReturnError> =
                 r == kIOReturnSuccess ? .success(Array(buf.prefix(len))) : .failure(IOReturnError(code: r))
