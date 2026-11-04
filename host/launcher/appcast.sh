@@ -75,6 +75,9 @@ else
 fi
 rm -f "$dir/$dmg_name"
 cp -c "$dmg" "$dir/$dmg_name" 2>/dev/null || cp "$dmg" "$dir/$dmg_name"
+before="$OUT/.appcast-before.$$.xml"   # outside $dir: generate_appcast reads the feeds there
+trap 'rm -f "$before"' EXIT
+[[ ! -f $dir/appcast.xml ]] || cp "$dir/appcast.xml" "$before"
 
 echo "=== generate_appcast $version ($prefix)"
 "$SPARKLE_BIN/generate_appcast" ${key_args[@]+"${key_args[@]}"} --download-url-prefix "$prefix" --versions "$version" \
@@ -90,7 +93,33 @@ enclosures = [e for e in ET.parse(path).iter('enclosure') if e.get('url') == url
 sys.exit(0 if enclosures and all(e.get(sparkle + 'edSignature') for e in enclosures) else 1)
 PY
 
-# Deltas: "FX Steam Launcher<new>-<old>.delta" -> "FX.Steam.Launcher<new>-<old>.delta", feed re-signed.
+# generate_appcast rewrites the items of earlier versions whose archives are here (kept for the
+# deltas) with this release's download prefix: they keep the URLs they were published with.
+if [[ -f $before ]]; then
+    python3 - "$before" "$dir/appcast.xml" "$version" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+before, path, version = sys.argv[1:]
+ns = '{http://www.andymatuschak.org/xml-namespaces/sparkle}'
+def urls(tree):
+    out = {}
+    for item in tree.iter('item'):
+        v = item.findtext(ns + 'version')
+        for e in item.iter('enclosure'):
+            out[(v, e.get('url').rsplit('/', 1)[-1])] = e.get('url')
+    return out
+old = urls(ET.parse(before))
+text = open(path, encoding='utf-8').read()
+for (v, name), url in urls(ET.parse(path)).items():
+    if v != version and (v, name) in old and old[(v, name)] != url:
+        text = text.replace(url, old[(v, name)])
+        print(f'kept {old[(v, name)]}')
+open(path, 'w', encoding='utf-8').write(text)
+PY
+    rm -f "$before"
+fi
+
+# Deltas: "FX Steam Launcher<new>-<old>.delta" -> "FX.Steam.Launcher<new>-<old>.delta".
 deltas=()
 for d in "$dir/FX Steam Launcher$version-"*.delta; do
     [[ -e $d ]] || continue
@@ -109,9 +138,7 @@ open(path, 'w', encoding='utf-8').write(text.replace(url, prefix + new))
 PY
     deltas+=("$dir/$dotted")
 done
-if ((${#deltas[@]})); then
-    "$SPARKLE_BIN/sign_update" ${key_args[@]+"${key_args[@]}"} "$dir/appcast.xml"
-fi
+"$SPARKLE_BIN/sign_update" ${key_args[@]+"${key_args[@]}"} "$dir/appcast.xml"   # after the edits above
 "$SPARKLE_BIN/sign_update" ${key_args[@]+"${key_args[@]}"} --verify "$dir/appcast.xml" || die "the feed's signature does not verify"
 echo "feed: $dir/appcast.xml (${#deltas[@]} delta update(s))"
 

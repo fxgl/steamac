@@ -1,8 +1,50 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>FX Steam Launcher</title>
+        <item>
+            <title>1.9.12</title>
+            <pubDate>Wed, 04 Nov 2026 23:44:41 +0300</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.12</sparkle:version>
+            <sparkle:shortVersionString>1.9.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.11.
+
+- **Stream SteamOS to Moonlight.** FX Steam Launcher now has a built-in GameStream host: turn on **Settings → Streaming → Enable Moonlight streaming**, pick this Mac in [Moonlight](https://moonlight-stream.org/) on a phone, tablet, TV or another computer on your local network, and enter the PIN on the Mac. The stream carries the SteamOS display (DXMT games included) and SteamOS sound, encoded in hardware (H.264 / HEVC, Opus); keyboard, mouse, touch and controllers work on the other device, with rumble. No Screen Recording permission or audio driver is needed. Off by default; paired devices can be revoked in the same tab. Use it on a trusted local network only. Proposed in #63.
+- **First update delivered in the app.** If you run 1.9.11, this version arrives through **FX Steam Launcher → Check for Updates…** (or the automatic check) — no DMG needed.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.11.
+
+- **Трансляция SteamOS в Moonlight.** В FX Steam Launcher появился встроенный хост GameStream: включите **Настройки → Трансляция → Включить трансляцию Moonlight**, выберите этот Mac в [Moonlight](https://moonlight-stream.org/) на телефоне, планшете, телевизоре или другом компьютере в вашей локальной сети и введите PIN-код на Mac. В трансляции — экран SteamOS (включая игры на DXMT) и звук SteamOS с аппаратным кодированием (H.264 / HEVC, Opus); клавиатура, мышь, касания и контроллеры работают на другом устройстве, с вибрацией. Не нужны ни разрешение на запись экрана, ни аудиодрайвер. По умолчанию выключено; доступ сопряжённых устройств можно отозвать в той же вкладке. Используйте только в доверенной локальной сети. Предложено в #63.
+- **Первое обновление прямо в приложении.** Если у вас 1.9.11, эта версия приходит через **FX Steam Launcher → Проверить обновления…** (или автоматическую проверку) — DMG не нужен.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
+
+---
+
+1.9.11 以来的新内容。
+
+- **将 SteamOS 串流到 Moonlight。** FX Steam Launcher 内置了 GameStream 主机：打开 **设置 → 串流 → 启用 Moonlight 串流**，在本地网络中的手机、平板、电视或另一台电脑上用 [Moonlight](https://moonlight-stream.org/) 选择这台 Mac，并在 Mac 上输入 PIN。串流内容为 SteamOS 画面（含 DXMT 游戏）与 SteamOS 声音，硬件编码（H.264 / HEVC、Opus）；键盘、鼠标、触控与手柄可在另一台设备上使用，支持震动。无需屏幕录制权限或音频驱动。默认关闭；可在同一标签页撤销已配对设备。仅在可信的本地网络中使用。提议见 #63。
+- **首次应用内更新。** 如果你在用 1.9.11，可通过 **FX Steam Launcher → 检查更新…**（或自动检查）获得此版本——无需 DMG。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.12-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX-Steam-Launcher-1.9.12.dmg" length="95607600" type="application/octet-stream" sparkle:edSignature="JidsYPzXHqusdgNXIPuIVako9td7293SXU2pE/M4U+k0gQoXtz7GEe2gqMWa78oim0xgi6iafZ1/y4mzeVw3Dg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX.Steam.Launcher1.9.12-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="1833646" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="7TU7Az4GElQ1NvYXktjztVyzzckl9l1rg17tRhuLF2a62R7zGhyZxhxS60MUCueuYZxRHNmPptzTxEtJPniEDg=="/>
+            </sparkle:deltas>
+        </item>
         <item>
             <title>1.9.11</title>
             <pubDate>Wed, 04 Nov 2026 22:59:11 +0300</pubDate>
@@ -50,10 +92,11 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.11-gpl-sources.tar`。
 
 ]]></description>
-            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.11/FX-Steam-Launcher-1.9.11.dmg" length="95302497" type="application/octet-stream" sparkle:edSignature="U+/jgCfGQQll4aJBMMF37bgHEk/L7QoZOGjTS4TKGntGo/D/PoM1xiYmuEwuqvPCB3ILn85QW1w2jRrEkOxzCQ=="></enclosure>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.11/FX-Steam-Launcher-1.9.11.dmg" length="95302497" type="application/octet-stream" sparkle:edSignature="U+/jgCfGQQll4aJBMMF37bgHEk/L7QoZOGjTS4TKGntGo/D/PoM1xiYmuEwuqvPCB3ILn85QW1w2jRrEkOxzCQ=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: Ds1mecTY7U2OclCgmFRlTj0G+Pmyc15PhoIWd4rG8ZeGJXL5w4sLTa02yR4sr10waegEksxq6puskLzWu5ZqDg==
-length: 6923
+</rss>
+<!-- sparkle-signatures:
+edSignature: IFSop53P1rzaRHGxuwVQtl3VeN4wj1Tvltu9Pd3UeTXkkVXpQCGsZc2QyQOkboiR+hRzTYa+8YR3ilCzVfS6BA==
+length: 12541
 -->
