@@ -22,6 +22,10 @@ final class SettingsContext: ObservableObject {
     /// Opens Report a Problem over the Settings window (nil without a VM; set after the window exists).
     @Published var reportProblem: (() -> Void)?
     @Published var restartRequested = false
+    /// HID could not open a Steam Controller / composite device: Settings > Controller shows a warning.
+    @Published var needsInputMonitoring = false
+    /// Asks macOS for Input Monitoring again (and the HID layer starts polling for a grant).
+    var requestInputMonitoring: (() -> Void)?
 
     init(settings: LauncherSettings, sound: SoundControl?, restart: (() -> Void)?, vmHasPad: Bool, vmHasSound: Bool,
          diskPath: String? = nil, streamHost: GameStreamHost? = nil) {
@@ -85,7 +89,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .general: return 830
             case .display: return 600
             case .mouse: return 470
-            case .controller: return 620
+            case .controller: return 700
             case .sound: return 440
             case .streaming: return 560
             case .games: return 620
@@ -727,6 +731,15 @@ private struct ControllerTab: View {
     var body: some View {
         Form {
             Section {
+                if context.needsInputMonitoring {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SizeWarning(text: String(localized: "A Steam Controller (Bluetooth or its Puck) needs Input Monitoring to pass through as itself. Without it, SteamOS sees an Xbox 360 controller. Enable FX Steam Launcher in System Settings › Privacy & Security › Input Monitoring; the launcher picks up the grant within a few seconds."))
+                        Button(String(localized: "Enable Input Monitoring…")) {
+                            context.requestInputMonitoring?()
+                            openInputMonitoringSettings()
+                        }
+                    }
+                }
                 Toggle(isOn: $settings.virtualPad) {
                     Label2(title: "Virtual controller",
                            detail: String(localized: "SteamOS gets a gamepad while a controller is connected."),
@@ -1367,6 +1380,17 @@ private struct SizeWarning: View {
     var body: some View {
         Label { Text(verbatim: text) } icon: { Image(systemName: "exclamationmark.triangle") }
             .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// System Settings › Privacy & Security › Input Monitoring (Sequoia URL first, older fallback).
+private func openInputMonitoringSettings() {
+    let candidates = [
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+    ]
+    for s in candidates {
+        if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
     }
 }
 

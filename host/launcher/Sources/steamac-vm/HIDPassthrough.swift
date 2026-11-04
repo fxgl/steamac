@@ -154,6 +154,12 @@ final class HIDPassthrough {
     private var gameControllerSupport: [UInt64: Bool] = [:]
     /// Devices came or went.
     var onChange: (() -> Void)?
+    /// Settings > Controller shows a warning while Input Monitoring is still required for a
+    /// matched Steam Controller / composite HID device.
+    private(set) var needsInputMonitoring = false {
+        didSet { if needsInputMonitoring != oldValue { onPermissionNeededChange?(needsInputMonitoring) } }
+    }
+    var onPermissionNeededChange: ((Bool) -> Void)?
     private let io = DispatchQueue(label: "es.fxgam.steamac.hid-passthrough")
     private var failedOpenCount = 0
     private var loggedOpenFailures = false
@@ -191,6 +197,7 @@ final class HIDPassthrough {
         }
         manager = m
         acceptsDevices = true
+        needsInputMonitoring = false
         return true
     }
 
@@ -202,9 +209,15 @@ final class HIDPassthrough {
     private var recreatedAfterGrant = false
     private var loggedRelaunchNeeded = false
 
+    /// Settings > Controller "Enable Input Monitoring…": request access again and keep polling.
+    func requestInputMonitoring() {
+        awaitPermission()
+    }
+
     /// A Steam Controller's descriptor has keyboard and mouse collections, so macOS opens it only
     /// with Input Monitoring: ask for it, then recreate the manager once it is granted.
     private func awaitPermission() {
+        needsInputMonitoring = true
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         // Already recreated after a grant and devices still fail: only a relaunch helps.
         if recreatedAfterGrant {

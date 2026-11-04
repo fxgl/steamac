@@ -721,6 +721,18 @@ final class GamepadBridge {
     var intercept: ((_ buttonPressed: Bool) -> Bool)? {
         didSet { for s in slots { s.intercept = intercept } }
     }
+    /// Settings > Controller: Input Monitoring is required for a matched HID device (Steam Controller).
+    var onInputMonitoringNeeded: ((Bool) -> Void)? {
+        didSet {
+            hid.onPermissionNeededChange = onInputMonitoringNeeded
+            onInputMonitoringNeeded?(hid.needsInputMonitoring)
+        }
+    }
+
+    /// Settings > Controller button: ask macOS again and reopen HID once granted.
+    func requestInputMonitoring() {
+        hid.requestInputMonitoring()
+    }
 
     struct PadState: Equatable {
         var buttons: [UInt16: Bool] = [:]
