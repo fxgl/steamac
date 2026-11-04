@@ -157,6 +157,9 @@ final class HIDPassthrough {
     private let io = DispatchQueue(label: "es.fxgam.steamac.hid-passthrough")
     private var failedOpenCount = 0
     private var loggedOpenFailures = false
+    /// Matching may add devices only after a successful manager open (false after a failed open
+    /// until restart). Defaults to true so unit tests can call `added` without `start`.
+    private var acceptsDevices = true
 
     /// Start watching for supported devices; false if the IOHIDManager cannot be opened.
     @discardableResult
@@ -172,12 +175,22 @@ final class HIDPassthrough {
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
-        manager = m
         guard r == kIOReturnSuccess else {
             log("hid passthrough: cannot open the HID manager: \(HIDPassthrough.describe(r))")
+            // Independent-devices matching still delivers devices after a failed open. Opening
+            // them then looks fine in logs (`found` / `passed through`) while GET/SET_REPORT
+            // return kIOReturnNotOpen: a BLE Steam Controller never sends input, and Puck slots
+            // never go live so GameController keeps an Xbox 360 pad. Drop the manager until
+            // Input Monitoring is granted and restart() opens a working one.
+            IOHIDManagerUnscheduleFromRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            _ = IOHIDManagerClose(m, IOOptionBits(kIOHIDOptionsTypeNone))
+            manager = nil
+            acceptsDevices = false
             if r == kIOReturnNotPermitted { awaitPermission() }
             return false
         }
+        manager = m
+        acceptsDevices = true
         return true
     }
 
@@ -231,6 +244,9 @@ final class HIDPassthrough {
     }
 
     private func added(_ ref: IOHIDDevice, result: IOReturn) {
+        // After a failed manager open, ignore matching so we never keep a device that later
+        // returns kIOReturnNotOpen on GET/SET_REPORT.
+        guard acceptsDevices else { return }
         guard let id = HIDPassthrough.registryID(ref),
               (matchSteamControllers || !HIDPassthrough.isValve(ref)),
               !devices.contains(where: { $0.registryID == id }) else { return }
@@ -505,6 +521,9 @@ final class HIDPassthrough {
     static func describe(_ r: IOReturn) -> String {
         if r == kIOReturnNotPermitted {
             return "not permitted (System Settings > Privacy & Security > Input Monitoring)"
+        }
+        if r == kIOReturnNotOpen {
+            return "device not open"
         }
         return String(format: "IOReturn 0x%08x", UInt32(bitPattern: r))
     }

@@ -125,7 +125,9 @@ func IOHIDManagerRegisterDeviceRemovalCallback(_ manager: IOHIDManager, _ callba
 }
 func IOHIDManagerScheduleWithRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) { manager.scheduled = true }
 func IOHIDManagerUnscheduleFromRunLoop(_ manager: IOHIDManager, _ runLoop: CFRunLoop?, _ mode: CFString?) { manager.scheduled = false }
+var managerOpenResult: IOReturn = kIOReturnSuccess
 func IOHIDManagerOpen(_ manager: IOHIDManager, _ options: IOOptionBits) -> IOReturn {
+    guard managerOpenResult == kIOReturnSuccess else { return managerOpenResult }
     manager.isOpen = true
     return kIOReturnSuccess
 }
@@ -268,9 +270,11 @@ extension HIDPassthrough {
         check(rematched.devices.isEmpty, "duplicate removal is harmless")
         hid.deactivate(reconnected, owner: owner)
 
+        hid.matchSteamControllers = true
         let ble = TestHIDDevice(id: 20, bluetooth: true, valve: true)
         hid.manager!.emitMatch(ble)
         let valve = hid.devices.last!
+        check(HIDPassthrough.isSteamController(valve), "Valve BLE is matched once Steam Controllers are enabled")
         let feature = get(hid, valve, .feature, 1)
         check(feature?.count == 65 && feature?.first == 1, "BLE Steam Controller keeps the 65-byte feature fix")
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
@@ -397,6 +401,19 @@ extension HIDPassthrough {
                   "unnumbered output uses report ID zero without stripping payload")
         }
         #endif
+
+        // Failed IOHIDManagerOpen must not leave a scheduled manager that can deliver devices
+        // which then return kIOReturnNotOpen on GET_REPORT (1.9.9 BLE / Puck regression).
+        managerOpenResult = kIOReturnNotPermitted
+        let deniedManager = HIDPassthrough()
+        check(!deniedManager.start(), "manager open NotPermitted fails start")
+        check(deniedManager.devices.isEmpty, "failed manager open keeps no devices")
+        deniedManager.matchSteamControllers = true
+        let zombie = TestHIDDevice(id: 50, bluetooth: true, valve: true)
+        deniedManager.added(zombie, result: kIOReturnSuccess)
+        check(deniedManager.devices.isEmpty, "matching after a failed open cannot add a Steam Controller")
+        managerOpenResult = kIOReturnSuccess
+
         print("HID passthrough: \(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1
     }
