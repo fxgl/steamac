@@ -751,7 +751,11 @@ filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
 connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
-with the original technical diagnostic in event details.
+with the original technical diagnostic in event details. If the bundled desync is missing, unreadable or
+not executable (STEAMAC-8K), the window explains that the installation is incomplete: reinstall from the
+official DMG into Applications and check security software. One warning per installation records
+translocation, desync's presence and permissions, the code-signature result and bundle-relative
+Resources names and sizes; the bundle's absolute path stays in the local log and no crash-report dialog opens.
 The launcher logs the target/cache filesystem type. A chunk-cache rename collision is retried once with a
 single worker and no cache. A rootfs hash mismatch is checked again with a sequential read to distinguish bad
 sparse-extent metadata from bad file bytes. If the bytes are bad, the temporary rootfs and chunk cache are
@@ -896,9 +900,14 @@ an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage aux
 packed into Metal's 31 buffer slots (STEAMAC-67); full 32-bit specialization constant IDs work
 (STEAMAC-6A); an optimal image in imported host memory gets a placement heap, so 2D views of a 3D image
 used as render attachments no longer dereference a missing heap (STEAMAC-76/77); failed pipelines log
-complete small shaders, Metal descriptors, blend state and fragment output indices (STEAMAC-41/75).
-SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V and keeps a dual-source blend
-output's second index when it packs outputs (STEAMAC-75)
+complete small shaders, Metal descriptors, blend state and fragment output indices (STEAMAC-41/75);
+dual-source blend factors on an attachment whose shader has no secondary output use zero for it, which
+Vulkan leaves undefined and Metal rejected (STEAMAC-75); on M1, sample-qualified perspective projection
+interpolates at `get_sample_position(sample_id)`, avoiding Metal's missing `llvm.agx2.sample.itrproj`
+intrinsic (STEAMAC-8J). SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V, keeps a
+dual-source blend output's second index when it packs outputs (STEAMAC-75), and keeps explicit
+interface-block member Locations with gaps (Locations 0 and 2 became `locn0`/`locn1`, a candidate for
+STEAMAC-88/2M)
 (`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader). wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
