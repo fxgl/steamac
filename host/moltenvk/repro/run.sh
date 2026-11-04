@@ -274,7 +274,7 @@ build gamescope_cs
 gspv=$work/geometry-spv
 rm -rf "$gspv"
 mkdir -p "$gspv"
-for s in "$here"/shaders/*.vert "$here"/shaders/*.geom "$here"/shaders/*.frag; do
+for s in "$here"/shaders/*.vert "$here"/shaders/*.tesc "$here"/shaders/*.tese "$here"/shaders/*.geom "$here"/shaders/*.frag; do
 	glslangValidator -V --quiet "$s" -o "$gspv/$(basename "$s").spv"
 done
 for s in "$here"/shaders/*.comp; do
@@ -310,18 +310,19 @@ build robust_access
 build invalid_usage
 "$work/invalid_usage" "$gspv"
 if [ "$driver" = moltenvk ]; then
-	# The failing MSL is logged after the error: the first lines without SPIRV-Cross' helper templates, and the
-	# lines around the error locations, each once (the two errors are on neighboring lines).
+	# Library errors happen before the failed-pipeline logger can run (STEAMAC-6V/87).
+	# Keep the complete small source, including helper templates, with unique line numbers.
 	msl_log=$work/msl-log.txt
 	"$work/invalid_usage" "$gspv" msl-log 2> "$msl_log"
 	msl_context=$(grep '^\[mvk-msl\] [0-9][0-9]*: ' "$msl_log" || true)
-	if grep -q '^\[mvk-msl\] #include <metal_stdlib>$' "$msl_log" && grep -q '^\[mvk-msl\] \.\.\. ([0-9]* lines of templates left out)$' "$msl_log" &&
-		! grep -q '^\[mvk-msl\] struct spvUnsafeArray' "$msl_log" && [ "$(printf '%s\n' "$msl_context" | grep -c 'double')" -eq 2 ] &&
+	if grep -q '^\[mvk-msl\] // Library failure MSL bytes=.*capture=full$' "$msl_log" &&
+		grep -q '^\[mvk-msl\] [0-9][0-9]*: #include <metal_stdlib>$' "$msl_log" &&
+		grep -q '^\[mvk-msl\] [0-9][0-9]*: template<' "$msl_log" &&
+		[ "$(printf '%s\n' "$msl_context" | grep -c 'double')" -eq 2 ] &&
 		[ -z "$(printf '%s\n' "$msl_context" | sed 's/: .*//' | sort | uniq -d)" ]; then
-		echo "OK   failing MSL logged: $(grep -c '^\[mvk-msl\] ' "$msl_log") [mvk-msl] lines, $(grep '^\[mvk-msl\] \.\.\. (' "$msl_log" | sed 's/^\[mvk-msl\] //' | tr '\n' ' ')error context (each line once):"
-		printf '%s\n' "$msl_context"
+		echo "OK complete small failed library source logged, including templates and both error lines"
 	else
-		echo "FAIL failing MSL not logged as [mvk-msl] lines (head without templates, both error lines, each context line once):"
+		echo "FAIL failing library source lacks full replayable diagnostics:"
 		cat "$msl_log"
 		exit 1
 	fi
@@ -335,6 +336,15 @@ if [ "$driver" = moltenvk ]; then
 	build pipeline_limits
 	MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 "$work/pipeline_limits" "$gspv" buffers
 	"$work/pipeline_limits" "$gspv" blend
+	# STEAMAC-83: tessellation+geometry is not implemented; never feed sentinel 255 to Metal.
+	tessgeom_log=$work/tessgeom-log.txt
+	"$work/pipeline_limits" "$gspv" tessgeom 2> "$tessgeom_log"
+	if ! grep -q 'Tessellation pipelines with a geometry shader are not supported' "$tessgeom_log" ||
+		grep -q 'buffer(255)\|Shader library compile failed' "$tessgeom_log"; then
+		cat "$tessgeom_log"
+		echo "FAIL combined tessellation+geometry lacks an explicit unsupported-feature diagnostic"
+		exit 1
+	fi
 	build spec_ids
 	"$work/spec_ids" "$gspv"
 	# STEAMAC-76/77: imported optimal volumes still need placement-backed 2D aliases.
@@ -344,10 +354,12 @@ if [ "$driver" = moltenvk ]; then
 	"$work/pipeline_limits" "$gspv" shared
 	compute_log=$work/compute-memory-log.txt
 	"$work/pipeline_limits" "$gspv" oversized 2> "$compute_log"
-	if grep -q 'Compute pipeline diagnostics: entry=main hash=.*shared-memory-limit=32768' "$compute_log" &&
+	if grep -q '^\[mvk-msl\] // Compute pipeline diagnostics: entry=main hash=.*shared-memory-limit=32768' "$compute_log" &&
+		grep -q '^\[mvk-msl\] // Metal pipeline descriptor:' "$compute_log" &&
+		! grep -q '^\[mvk-error\] Compute pipeline diagnostics:' "$compute_log" &&
 		grep -q '^\[mvk-msl\] // Pipeline failure MSL stage=.*bytes=.*lines=' "$compute_log" &&
 		grep -q 'threadgroup .*11616' "$compute_log"; then
-		echo "OK oversized compute pipeline logs workgroup, memory limit and MSL declarations"
+		echo "OK oversized compute failure keeps workgroup, descriptor and MSL in one report stream"
 	else
 		cat "$compute_log"
 		echo "FAIL oversized compute pipeline lacks memory/source diagnostics"

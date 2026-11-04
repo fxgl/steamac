@@ -28,6 +28,19 @@
 #   and entry point in bounded diagnostics. Preserve complete small shaders and
 #   failed Metal descriptors; run.sh's link-log checks templates, shader middle
 #   and descriptors. Diagnostic-only: no proven workaround for Apple's compiler.
+#   MoltenVK 0048 (STEAMAC-6V/87/88/2M/81): library compilation bypassed 0047,
+#   while a second compute error prematurely closed the launcher's report. Keep
+#   complete library/pipeline shaders up to 64 KiB / 1536 lines, compute descriptors,
+#   and a single diagnostic stream. Launcher fields retain 128 KiB independently
+#   instead of cutting small vertex shaders and descriptors off at 8000 characters.
+#   Existing pull-model regression shaders still need full source from the new 6V
+#   report; no speculative shader workaround or Apple-compiler workaround is applied.
+#   MoltenVK 0049 (STEAMAC-83/89): combining tessellation and geometry selected
+#   incompatible paths and emitted the unassigned vertex capture slot buffer(255).
+#   Reject this unsupported combination before Metal compilation instead of silently
+#   dropping its required geometry stage. pipeline_limits tessgeom reproduces the
+#   old error with a four-stage, no-fragment layered pass. This is a diagnostic,
+#   not tessellation-to-geometry support or a fix for the separately observed hang.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos

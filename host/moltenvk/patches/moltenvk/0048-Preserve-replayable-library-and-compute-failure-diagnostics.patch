@@ -1,0 +1,66 @@
+From: steamac <steamac@localhost>
+Subject: [PATCH] Preserve replayable library and compute failure diagnostics
+
+STEAMAC-6V/87/88/2M/81: library failures bypassed the complete-source
+pipeline logger, and compute diagnostic errors closed the launcher report
+before its source. Keep bounded complete library/pipeline MSL and emit
+compute metadata and its descriptor in the same diagnostic stream.
+No shader compilation or successful pipeline behavior changes.
+
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+@@ -218,7 +218,7 @@
+ 	}
+ 	// Small shaders must be replayable: omitting the middle loses the object-stage
+ 	// payload, bindings and entry point of geometry pipelines (STEAMAC-41).
+-	const bool fullSource = msl.size() <= 32768 && lines.size() <= 512;
++	const bool fullSource = msl.size() <= 65536 && lines.size() <= 1536;
+ 	string out = "[mvk-msl] // Pipeline failure MSL stage=" + to_string(stage) +
+ 		" entry=" + _shaderConversionResultInfo.entryPoint.mtlFunctionName +
+ 		" bytes=" + to_string(msl.size()) + " lines=" + to_string(lines.size()) +
+@@ -732,6 +732,23 @@
+ 		lines.emplace_back(p, len);
+ 		p += len + (eol ? 1 : 0);
+ 	}
++	// Library compilation fails before a pipeline has a shader library to capture.
++	// Apply the same replayable-source policy here, not just on pipeline failure.
++	if (strlen(src) <= 65536 && lines.size() <= 1536) {
++		string out = "[mvk-msl] // Library failure MSL bytes=" + to_string(strlen(src)) +
++			" lines=" + to_string(lines.size()) + " capture=full\n";
++		for (size_t i = 0; i < lines.size(); i++) {
++			out += "[mvk-msl] " + to_string(i + 1) + ": ";
++			out.append(lines[i]);
++			out += '\n';
++		}
++		for (size_t done = 0; done < out.size();) {
++			ssize_t written = write(STDERR_FILENO, out.data() + done, out.size() - done);
++			if (written <= 0) { break; }
++			done += size_t(written);
++		}
++		return;
++	}
+ 
+ 	string out;
+ 	auto append = [&](size_t lineNum, string_view text) {
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -3227,16 +3227,17 @@
+ 		MVKComputePipelineCompiler* plc = new MVKComputePipelineCompiler(this);
+ 		_mtlPipelineState = plc->newMTLComputePipelineState(plDesc);	// retained
+ 		plc->destroy();
+-		[plDesc release];															// temp release
+ 
+ 		if ( !_mtlPipelineState ) {
+ 			_hasValidMTLPipelineStates = false;
+-			MVKLogError("Compute pipeline diagnostics: entry=%s hash=%016zx workgroup=%zux%zux%zu shared-memory-limit=%lu.",
++			fprintf(stderr, "[mvk-msl] // Compute pipeline diagnostics: entry=%s hash=%016zx workgroup=%zux%zux%zu shared-memory-limit=%lu.\n",
+ 				pCreateInfo->stage.pName, _module->getKey().codeHash,
+ 				_mtlThreadgroupSize.width, _mtlThreadgroupSize.height, _mtlThreadgroupSize.depth,
+ 				(unsigned long)getMTLDevice().maxThreadgroupMemoryLength);
++			logFailedMetalPipelineDescriptor(plDesc);
+ 			logFailedPipelineShaders();
+ 		}
++		[plDesc release];															// temp release
+ 	} else {
+ 		_hasValidMTLPipelineStates = false;
+ 	}

@@ -73,7 +73,7 @@ enum MetalCompilerCache {
         let path = String(message[start..<end])
         guard path.contains("/com.apple.metalfe/"), path.hasSuffix("/monolithic_metal.pcm") else { return nil }
         let directory = (path as NSString).deletingLastPathComponent
-        var lines = ["startup=\(outcome) detail=\(startupDetail)"]
+        var lines = ["reporter-startup=\(outcome) reporter-detail=\(startupDetail); VM startup decision is the metal_cache tag"]
         for item in [(directory as NSString).deletingLastPathComponent, directory, path] {
             var info = stat()
             if lstat(item, &info) == 0 {

@@ -356,6 +356,7 @@ enum CrashReporting {
             "mouse": options.mouseMode.rawValue,
             "network": options.network ? "on" : "off",
             "sound": options.sound ? "on" : "off",
+            "metal_cache": MetalCompilerCache.outcome,
         ])
         let kernel = options.kernel
         guard !kernel.isEmpty else { return }
@@ -372,7 +373,7 @@ enum CrashReporting {
             if had && locked({ running }) { SentrySDK.configureScope { $0.removeTag(key: key) } }
         }
         guard role == .vm, let dir = Supervisor.runDir else { return }
-        let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid"]
+        let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache"]
         let snapshot = locked { tags.filter { keys.contains($0.key) } }
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) {
             try? data.write(to: URL(fileURLWithPath: dir + "/sentry-tags.json"), options: .atomic)
@@ -564,7 +565,7 @@ enum CrashReporting {
         report(.notResponding, key: "not-responding", message: "SteamOS not responding (no GPU work for \(Int(diagnostic.idle)) s)",
                tags: ["stall_seconds": String(Int(diagnostic.idle)),
                       "heartbeat_age_seconds": String(Int(diagnostic.heartbeatAge))],
-               extra: ["stall_history": diagnostic.history])
+               extra: ["stall_history": diagnostic.history, "memory_history": diagnostic.memoryHistory, "thread_snapshot": diagnostic.threadSnapshot])
     }
 
     static func provisionFailed(reason: String) {
@@ -665,7 +666,10 @@ enum CrashReporting {
         let event = Event(level: kind == .test ? .info : level)
         event.message = SentryMessage(formatted: String(scrub(message).prefix(2000)))
         event.fingerprint = [kind.rawValue, String(key.prefix(200))]
-        if !extra.isEmpty { event.extra = extra.mapValues { String(scrub($0).prefix(8000)) } }
+        if !extra.isEmpty {
+            let limit = kind == .pipelineCompile ? LineScanner.mslLimit : 8000
+            event.extra = extra.mapValues { String(scrub($0).prefix(limit)) }
+        }
         if kind == .gpuContextFatal || kind == .vmKilled, let dir = role == .launcher ? runDir : Supervisor.runDir,
            let history = try? String(contentsOfFile: dir + "/gpu-history.txt", encoding: .utf8) {
             var diagnostics = event.extra ?? [:]
@@ -810,7 +814,7 @@ enum CrashReporting {
         }
         FileManager.default.createFile(atPath: dir + "/steamos.img", contents: Data(count: 512))
         if AppBundle.isDiskImage(dir + "/Apps.app") { failures.append("disk: an app bundle is a disk image") }
-        if !AppBundle.isDiskImage(dir + "/steamos.img") { failures.append("disk: a file is no disk image") }
+        if AppBundle.isDiskImage(dir + "/steamos.img") { failures.append("disk: a file without a SteamOS GPT is a disk image") }
         let header = #"{"app_name":"steamac-vm","bug_type":"309","name":"steamac-vm"}"#
         let body = #"""
             {"pid": 4242, "exception": {"type": "EXC_BREAKPOINT", "signal": "SIGTRAP", "subtype": "Trace/BPT trap: 5"},
@@ -908,12 +912,41 @@ enum CrashReporting {
         var capped = LineScanner()
         let large = Array(pipelineLines.prefix(3))
             + ["[mvk-msl] // Pipeline failure MSL stage=0 entry=main"]
-            + (1...1000).map { "[mvk-msl] \($0): " + String(repeating: "v", count: 80) }
+            + (1...3000).map { "[mvk-msl] \($0): " + String(repeating: "v", count: 80) }
             + Array(pipelineLines.suffix(7))
         let bounded = large.flatMap { capped.feed($0) } + capped.flushPending()
-        if bounded.first?.extra.values.contains(where: { $0.count > 8000 }) != false
+        if bounded.first?.extra.values.contains(where: { $0.count > LineScanner.mslLimit }) != false
+            || bounded.first?.extra["msl_stage_0"]?.contains("1400: ") != true
             || bounded.first?.extra["msl_stage_4"]?.contains("fragment float4 main") != true {
-            failures.append("scanner: per-stage shader source cap lost or crowded out fragment source")
+            failures.append("scanner: replayable shader source cap lost or crowded out fragment source")
+        }
+        var library = LineScanner()
+        let libraryLines = ["[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Shader library compile failed (Error code 3):",
+                            "program_source:299:11: error: cannot initialize float from float4",
+                            "[mvk-msl] // Library failure MSL bytes=40000 lines=1107 capture=full"]
+            + (1...1107).map { "[mvk-msl] \($0): shader line \($0)" }
+        let libraries = libraryLines.flatMap { library.feed($0) } + library.flushPending()
+        if libraries.count != 1 || libraries.first?.extra["msl_error_context"]?.contains("1107: shader line 1107") != true {
+            failures.append("scanner: full library source lost after 120 lines")
+        }
+        var compute = LineScanner()
+        let computeLines = ["[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Compute pipeline compile failed (Error code 3):",
+                            "Compiler encountered an internal error.",
+                            "[mvk-msl] // Compute pipeline diagnostics: entry=main hash=1 workgroup=64x1x1",
+                            "[mvk-msl] // Metal pipeline descriptor: maxTotalThreadsPerThreadgroup=64",
+                            "[mvk-msl] // Pipeline failure MSL stage=5 entry=main capture=full",
+                            "[mvk-msl] 1: kernel void main0() {}"]
+        let computes = computeLines.flatMap { compute.feed($0) } + compute.flushPending()
+        if computes.count != 1 || computes.first?.extra["msl_stage_5"]?.contains("kernel void") != true {
+            failures.append("scanner: compute diagnostic preamble split the shader report")
+        }
+        var cache = LineScanner()
+        let cacheLines = ["[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Shader library compile failed (Error code 3):",
+                          "error: unable to open output file '/var/folders/steamac-selftest/com.apple.metalfe/306AKY0LJMPLL/monolithic_metal.pcm': 'Operation not permitted'",
+                          "program_source:1:10: fatal error: could not build module 'monolithic_metal'"]
+        let caches = cacheLines.flatMap { cache.feed($0) } + cache.flushPending()
+        if caches.count != 1 || caches.first?.extra["metal_cache_probe"]?.contains("306AKY0LJMPLL") != true {
+            failures.append("scanner: runtime Metal module-cache diagnostics lost")
         }
         log("selftest-settings: scanner check: \(LineScanner.teardownSample.count) teardown lines → no report, "
             + "\(LineScanner.fatalSample.count) fatal lines → one report each: "
@@ -1087,16 +1120,17 @@ private struct LineScanner {
         var extra: [String: String] = [:]
     }
 
-    /// MoltenVK (patch) logs the source of a shader library that failed to compile after the
-    /// error: the first 40 lines, a "... (N lines total)" line, then "L: text" around each
-    /// error location.
+    /// MoltenVK logs complete bounded small shaders, or excerpts of larger sources,
+    /// after compilation fails. Keep each stage separate from descriptors and interfaces.
     static let mslPrefix = "[mvk-msl] "
+    static let mslLimit = 131072  // 64 KiB MSL plus numbered-line prefixes; at most eight stages.
 
     private final class Pending {
         let kind: CrashReporting.Kind
         let header: String
         var lines: [String] = []
         var msl: [String] = []
+        var mslCount = 0
         var stage: String?
         var stages: [String: String] = [:]
         var interfaces = ""
@@ -1106,7 +1140,7 @@ private struct LineScanner {
         func appendMSL(_ text: String) {
             if text.hasPrefix("// Metal pipeline descriptor:") || text.hasPrefix("// Vulkan static blend ")
                 || text.hasPrefix("// color-attachment ") {
-                if interfaces.count < 8000 { interfaces += (text + "\n").prefix(8000 - interfaces.count) }
+                if interfaces.count < LineScanner.mslLimit { interfaces += (text + "\n").prefix(LineScanner.mslLimit - interfaces.count) }
                 return
             }
             let prefix = "// Pipeline failure MSL stage="
@@ -1117,15 +1151,17 @@ private struct LineScanner {
             } else if text.hasPrefix("// Failed graphics pipeline stage interfaces") {
                 stage = nil
             }
-            // Each extra field has its own 8K cap. A long vertex shader must never crowd out
-            // fragment/geometry source or the small descriptor/interface diagnostics (41/75).
+            // Keep replayable small shaders (including library failures) independently.
+            // A large vertex source must never crowd out fragment source or descriptors.
             if let stage {
                 let count = stages[stage, default: ""].count
-                if count < 8000 { stages[stage, default: ""] += (text + "\n").prefix(8000 - count) }
+                if count < LineScanner.mslLimit { stages[stage, default: ""] += (text + "\n").prefix(LineScanner.mslLimit - count) }
             } else if !stages.isEmpty {
-                if interfaces.count < 8000 { interfaces += (text + "\n").prefix(8000 - interfaces.count) }
-            } else if msl.count < 120 {
-                msl.append(text)   // single shader-library compile diagnostics (no stage headers)
+                if interfaces.count < LineScanner.mslLimit { interfaces += (text + "\n").prefix(LineScanner.mslLimit - interfaces.count) }
+            } else if mslCount < LineScanner.mslLimit {
+                let line = String(text.prefix(LineScanner.mslLimit - mslCount))
+                msl.append(line)
+                mslCount += line.count + 1
             }
         }
 
@@ -1289,6 +1325,9 @@ private struct LineScanner {
             if !context.isEmpty { f.extra["msl_error_context"] = context.joined(separator: "\n") }
             for (stage, source) in p.stages { f.extra["msl_stage_" + stage] = source }
             if !p.interfaces.isEmpty { f.extra["msl_interfaces"] = p.interfaces }
+            if let cache = MetalCompilerCache.failureDiagnostics(p.header + "\n" + detail) {
+                f.extra["metal_cache_probe"] = cache
+            }
             return f
         }
     }
