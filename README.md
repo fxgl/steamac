@@ -771,8 +771,11 @@ without which `--create-disk` prints the links and exits with code 2. Acceptance
 agreement URL) is stored in the settings domain and remains valid until the agreement URL in the
 code (`SteamOSLicense.eulaURL`) changes.
 
-External APFS, Mac OS Extended, and exFAT volumes can hold the disk. FAT32/MS-DOS is rejected
-before downloading because of its 4 GiB per-file limit (the temporary rootfs alone is 10 GiB).
+External APFS, Mac OS Extended, and exFAT volumes can hold the disk; APFS is recommended. FAT32/MS-DOS is
+rejected before downloading because of its 4 GiB per-file limit (the temporary rootfs alone is 10 GiB), and
+so are NTFS, network filesystems and unknown filesystem drivers (STEAMAC-8S: an NTFS driver refused the
+92 GB disk with “File too large” after an hour of downloading); a late file-size refusal is explained and
+logged, not sent to Sentry.
 Read-only volumes and folders you can't write to are also rejected. Unlike APFS, exFAT has no sparse files: it needs space for the
 full selected disk size plus the temporary rootfs, even before games are installed. There the download cache also costs far
 more than its ~4.4 GB of data: macOS keeps each chunk file's provenance attribute in an extra `._` file, and every file and
@@ -939,10 +942,12 @@ dual-source blend factors on an attachment whose shader has no secondary output 
 Vulkan leaves undefined and Metal rejected (STEAMAC-75); on M1, sample-qualified perspective projection
 interpolates at `get_sample_position(sample_id)`, avoiding Metal's missing `llvm.agx2.sample.itrproj`
 intrinsic (STEAMAC-8J). SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V, keeps a
-dual-source blend output's second index when it packs outputs (STEAMAC-75), and keeps explicit
-interface-block member Locations with gaps (Locations 0 and 2 became `locn0`/`locn1`, a candidate for
-STEAMAC-88/2M)
-(`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader). wmtr (DXMT) refuses only
+dual-source blend output's second index when it packs outputs (STEAMAC-75), keeps explicit
+interface-block member Locations with gaps (Locations 0 and 2 became `locn0`/`locn1`), and declares an
+object shader's payload `locations` as `uint[32][4]` (same layout): Apple's compiler crashed on partial
+stores into `uint4 locations[32]`, reported as an internal error or an interrupted XPC connection
+(STEAMAC-41/R); interrupted compiler-service reports carry host memory pressure and swap (STEAMAC-3X).
+`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
 (STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives DXMT's own command lists through the shipped
@@ -1174,7 +1179,10 @@ What is sent:
   guest uptime/load, process CPU-time and host polling-gap samples, even with performance statistics
   off (STEAMAC-8). Missing agent heartbeats alone do not prove that the whole guest or GPU hung.
   GPU-activity, VM-memory and host-thread snapshots are bounded separately; thread states and CPU
-  estimates are evidence, not backtraces or proof of a GPU deadlock.
+  estimates are evidence, not backtraces or proof of a GPU deadlock. The history also records host
+  activation, key window and window visibility/occlusion. “Still working” means the guest heartbeat is
+  alive; it does not prove that a game is progressing or compiling shaders. A VM exit report states why
+  macOS's crash report was not attached (none written in time, unreadable, incomplete or another pid).
   The same samples are logged once when an idle indicator lasts 10 s, including with a live
   heartbeat, so Report a Problem can diagnose game stalls without enabling performance statistics.
   After a host scheduling gap (the launcher itself not running for seconds) the detector watches a
@@ -1626,7 +1634,12 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
   speakers and downmixing missing ones with headroom. Guest channel maps stay fixed for a boot
   (virtio-snd/ALSA cache them): restart the VM to expose more channels or a new layout to games.
   `STEAMAC_SND_DUMP` records guest PCM before speaker mapping. 5.1.2 was tested on hardware, 7.1.4
-  only by automated mapping tests; the microphone stays mono/stereo and has not been tested.
+  only by automated mapping tests; the microphone stays mono/stereo and has not been tested. Microphone
+  capture uses the macOS default input. If microphone permission is denied, no input device is
+  available or CoreAudio does not start within 200 ms, recording fails with an ordinary audio error
+  instead of blocking the VM's sound control queue; playback is independent of capture (STEAMAC-8N/8P:
+  a stuck capture start left the guest's capture buffers outstanding). Capture logs include the input
+  device and microphone permission state.
 - Anti-cheat systems that block VMs will not work.
 - `logicOp` is unavailable (the private Metal API in the MoltenVK fork does not build); zink emits a warning.
 

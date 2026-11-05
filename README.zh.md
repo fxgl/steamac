@@ -537,7 +537,7 @@ work/out/steamac-vm --create-disk ~/steamos.img [--branch stable] [--home-gib 64
 `https://store.steampowered.com/steamos/download/?ver=steamframe`：仅个人使用、禁止再分发）与 Steam 订户协议。窗口中为带两个文本链接的复选框——不勾选无法创建；命令行用 `--accept-eula`，
 无此标志 `--create-disk` 打印链接并以代码 2 退出。接受记录（日期与协议 URL）存于设置域，代码中协议 URL（`SteamOSLicense.eulaURL`）变化前一直有效。
 
-外接 APFS、Mac OS 扩展与 exFAT 卷可存放磁盘。FAT32/MS-DOS 因 4 GiB 单文件限制在下载前拒绝
+外接 APFS、Mac OS 扩展与 exFAT 卷可存放磁盘，推荐 APFS；NTFS、网络文件系统和未知文件系统驱动在下载前即被拒绝（STEAMAC-8S：NTFS 驱动在下载一小时后以“File too large”拒绝了 92 GB 的磁盘），下载后才出现的文件大小限制会向用户说明并只记日志，不发送到 Sentry。FAT32/MS-DOS 因 4 GiB 单文件限制在下载前拒绝
 （临时 rootfs 就 10 GiB）。只读卷和没有写入权限的文件夹同样会被拒绝。与 APFS 不同，exFAT 无稀疏文件：即使游戏还没装，也需要所选磁盘全尺寸加临时 rootfs 的空间。下载缓存在 exFAT 上也远超其约 4.4 GB 的数据：macOS 把每个分块文件的来源（provenance）属性存进额外的 `._` 文件，且每个文件和文件夹都占用整簇（2 TB 盘上为 128 KiB），合计约 28 GB。启动器先检查空间再重建 rootfs；在 exFAT 上，若卷空间不足，会在分配磁盘前删除分块缓存（`--keep-cache` 保留缓存，需要两者的空间）。
 预期存储错误（目标已存在、缓存正被使用、只读卷、没有写入权限、空间耗尽、磁盘断开、创建过程中磁盘或缓存文件夹消失或文件系统 I/O 错误）
 会显示处理建议并只记日志，不作为错误发送到 Sentry；创建开始后的错误也遵循此规则。元数据/包下载的网络错误
@@ -626,7 +626,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 切换改变 Venus 驱动身份（管线缓存 UUID），Steam 与游戏重建着色器缓存。宿主驱动建不出的管线在 virglrenderer 中是占位：其绘制与派发被丢弃，驱动永远见不到 `VK_NULL_HANDLE`。
 
-宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），并保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`，可能是 STEAMAC-88/2M 的原因）（`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器）。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
+宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
@@ -795,7 +795,7 @@ SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）�
   failed`）、磁盘创建失败、非预期虚拟机退出（用户未要求关机时的非零退出码或信号）与空闲指示器“SteamOS 无响应…”；
   “SteamOS 无响应”报告附带 `stall_history`：最多 32 个每秒采样的 GPU 命令计数、心跳时长、
   客户机运行时间/负载、进程 CPU 时间和宿主轮询间隔，即使未开启性能统计也会收集（STEAMAC-8）。
-  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。GPU 活动、虚拟机内存和宿主线程快照分别有上限；线程状态与 CPU 估算只是证据，不是调用栈，也不能证明 GPU 死锁。
+  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。GPU 活动、虚拟机内存和宿主线程快照分别有上限；线程状态与 CPU 估算只是证据，不是调用栈，也不能证明 GPU 死锁。历史还记录宿主应用是否激活、关键窗口以及窗口可见/遮挡状态。“仍在工作”只表示客户机心跳仍在，不能证明游戏在推进或在编译着色器。虚拟机退出报告会说明为何没有附上 macOS 崩溃报告（未及时写出、不可读、不完整或属于其他 pid）。
   空闲指示器持续 10 秒时，同样的采样会写入日志一次，即使心跳仍正常，
   因此无需启用性能统计，“报告问题”也可包含游戏卡顿的诊断信息。
   宿主调度停顿（启动器自身数秒未运行）之后，检测器先观察一个新的心跳窗口，不把停顿算作客户机挂起。
@@ -1142,7 +1142,7 @@ SteamOS 根文件系统不动：所有改动来自 initramfs 与层。因此
   也没有 Dolby Atmos 编码。多声道布局时，`audio-layout` 在 WirePlumber 启动前读取 VirtIO ALSA 播放声道映射，用对应的 Pro Audio 输出替换 SteamOS 的立体声策略
   （定时器调度、播放与录音分组：宿主设备时钟彼此独立）；立体声宿主保持 SteamOS 原有配置。默认输出变化或所选设备被拔出时播放立即跟随，布局每秒复查一次，
   按物理扬声器路由并以余量缩混缺少的扬声器。客户机声道映射在一次启动内固定（virtio-snd/ALSA 会缓存）：要让游戏看到更多声道或新布局需重启虚拟机。
-  `STEAMAC_SND_DUMP` 记录扬声器映射前的客户机 PCM。5.1.2 已在硬件上测试，7.1.4 仅有自动化映射测试；麦克风仍为单声道/立体声且未经测试。
+  `STEAMAC_SND_DUMP` 记录扬声器映射前的客户机 PCM。5.1.2 已在硬件上测试，7.1.4 仅有自动化映射测试；麦克风仍为单声道/立体声且未经测试。麦克风录音使用 macOS 默认输入。若麦克风权限被拒、没有输入设备或 CoreAudio 在 200 毫秒内未能启动，录音以普通音频错误失败，不会阻塞虚拟机的声音控制队列；播放不受录音影响（STEAMAC-8N/8P：卡住的录音启动曾使客户机的录音缓冲区无法归还）。录音日志包含输入设备和麦克风权限状态。
 - 屏蔽虚拟机的反作弊不可用。
 - `logicOp` 不可用（MoltenVK 分支中私有 Metal API 编不过）；zink 报警告。
 
