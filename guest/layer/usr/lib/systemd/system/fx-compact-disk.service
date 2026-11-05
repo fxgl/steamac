@@ -8,6 +8,8 @@ ConditionPathExists=/home/steamos/.local/share/steamac/compact-request
 
 [Service]
 Type=oneshot
+# Bound a stuck FITRIM below the agent's 15-minute response timeout.
+TimeoutStartSec=14min
 ExecStart=/usr/lib/steamac/compact-disk
 Nice=19
 IOSchedulingClass=idle

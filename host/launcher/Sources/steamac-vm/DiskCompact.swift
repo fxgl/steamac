@@ -5,7 +5,7 @@ import QuartzCore
 /// VM process: ask SteamOS to fstrim free blocks so virtio-blk DISCARD punches holes in the
 /// sparse steamos.img (`compact-disk <id>` → `compact-disk-ok|failed <id> …`; see
 /// guest/progress-agent/src/compact.rs). Main thread only. Does not shrink capacity — only
-/// allocated size on APFS / Mac OS Extended.
+/// allocated size on APFS. Clones and snapshots may retain the freed extents.
 final class DiskCompact {
     static let timeout: TimeInterval = 16 * 60
 
@@ -45,7 +45,8 @@ final class DiskCompact {
                 self.finish(.success(Outcome(path: p.path, beforeAllocated: p.before, afterAllocated: after, detail: rest)))
             }
         case "compact-disk-failed":
-            finish(.failure(OptionError("SteamOS agent: \(rest.isEmpty ? "fstrim failed" : rest)")))
+            log("compact-disk: guest failure: \(rest)")
+            finish(.failure(OptionError("fstrim failed", localized: String(localized: "SteamOS could not trim free blocks. See the log for details."))))
         default:
             return false
         }
@@ -55,6 +56,10 @@ final class DiskCompact {
     /// `path` is the running writable disk image (the one virtio-blk backs).
     func request(path: String, done: @escaping (Result<Outcome, OptionError>) -> Void) {
         if pending != nil { finish(.failure(OptionError("superseded"))) }
+        if let error = Self.filesystemError(path) {
+            done(.failure(error))
+            return
+        }
         guard agentRunning else {
             done(.failure(OptionError("SteamOS is not ready yet; wait until Steam has started",
                                       localized: String(localized: "SteamOS is not ready yet; wait until Steam has started"))))
@@ -76,6 +81,21 @@ final class DiskCompact {
             self.finish(.failure(OptionError("no answer from SteamOS within \(Int(Self.timeout)) s",
                                              localized: String(localized: "no answer from SteamOS within \(Int(Self.timeout)) s"))))
         }
+    }
+
+    /// Check the image's actual volume, not the user's home or the bundle volume.
+    static func filesystemError(_ path: String) -> OptionError? {
+        var fs = statfs()
+        guard statfs(path, &fs) == 0 else {
+            return OptionError("cannot read filesystem for \(path)", localized: String(localized: "cannot read \(path)"))
+        }
+        let name = withUnsafePointer(to: &fs.f_fstypename) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MFSTYPENAMELEN)) { String(cString: $0) }
+        }
+        guard name == "apfs" else {
+            return OptionError("Reclaim Disk Space requires APFS", localized: String(localized: "Reclaim Disk Space requires the disk image to be on an APFS volume. HFS+, exFAT and other filesystems cannot reclaim space this way."))
+        }
+        return nil
     }
 
     static func allocatedBytes(_ path: String) -> UInt64? {

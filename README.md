@@ -336,8 +336,10 @@ free space first. Terminal, with SteamOS stopped:
 `steamos.img` can stay large on disk even though SteamOS no longer needs those blocks.
 **Settings → Advanced → Reclaim Disk Space…** (SteamOS running) asks the guest to `fstrim`
 `/home` (and `/var` when mounted); virtio-blk DISCARD punches holes in the Mac image. Capacity
-is unchanged — only allocated size on APFS / Mac OS Extended can drop. exFAT has no sparse holes,
-so reclaim does not free host space there. This is not a GPT/home shrink (that remains grow-only).
+is unchanged — allocated size can drop **only when the image is on APFS**. HFS+ and exFAT cannot
+reclaim space this way; the launcher checks the volume before starting. APFS clones and snapshots
+may retain the freed blocks, so the Mac's free space need not increase by the same amount.
+This is not a GPT/home shrink (that remains grow-only).
 
 For tests: `STEAMAC_DEFAULTS_DOMAIN=<domain>` substitutes the settings domain; `--selftest-settings
 --selftest-out DIR` opens the window without a VM and writes a PNG of each tab; `--control-fifo` has

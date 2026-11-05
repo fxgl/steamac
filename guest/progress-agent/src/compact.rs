@@ -94,19 +94,14 @@ fn run(id: &str) -> io::Result<String> {
         f.write_all(b"\n")?;
         f.sync_all()?;
     }
-    // Path unit may already be watching; `systemctl start` covers a missed edge.
-    let _ = std::process::Command::new("systemctl")
-        .args(["start", "fx-compact-disk.service"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
 
     let deadline = Instant::now() + TIMEOUT;
     loop {
         if let Ok(text) = fs::read_to_string(&res) {
             let _ = fs::remove_file(&res);
-            return parse_result(id, text.trim());
+            if let Some(result) = parse_result(id, text.trim()) {
+                return result;
+            }
         }
         if Instant::now() >= deadline {
             let _ = fs::remove_file(&req);
@@ -116,25 +111,22 @@ fn run(id: &str) -> io::Result<String> {
     }
 }
 
-fn parse_result(id: &str, text: &str) -> io::Result<String> {
+fn parse_result(id: &str, text: &str) -> Option<io::Result<String>> {
     let mut parts = text.splitn(3, ' ');
     let status = parts.next().unwrap_or_default();
     let got_id = parts.next().unwrap_or_default();
     let detail = parts.next().unwrap_or_default();
     if got_id != id {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unexpected result id {got_id:?}"),
-        ));
+        return None;
     }
-    match status {
+    Some(match status {
         "ok" => Ok(if detail.is_empty() { "trimmed".into() } else { detail.into() }),
         "failed" => Err(io::Error::new(
             io::ErrorKind::Other,
             if detail.is_empty() { "fstrim failed" } else { detail },
         )),
         _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("bad result {text:?}"))),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -143,11 +135,18 @@ mod tests {
 
     #[test]
     fn parse_ok() {
-        assert_eq!(parse_result("abc", "ok abc /home: 1.2 GiB").unwrap(), "/home: 1.2 GiB");
+        assert_eq!(parse_result("abc", "ok abc /home: 1.2 GiB").unwrap().unwrap(), "/home: 1.2 GiB");
     }
 
     #[test]
     fn parse_failed() {
-        assert!(parse_result("abc", "failed abc permission denied").is_err());
+        assert!(parse_result("abc", "failed abc permission denied").unwrap().is_err());
+    }
+
+    #[test]
+    fn stale_result_keeps_waiting() {
+        assert!(parse_result("new", "ok old trimmed").is_none());
+        assert!(parse_result("new", "failed old fstrim-failed").is_none());
+        assert!(parse_result("new", "ok new trimmed").unwrap().is_ok());
     }
 }

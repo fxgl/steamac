@@ -1206,7 +1206,7 @@ private struct AdvancedTab: View {
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… returns unused blocks to the Mac on APFS / Mac OS Extended (sparse image; capacity stays the same). Free space on the Mac does not automatically increase SteamOS's capacity."),
+                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity."),
                            now: false, key: .diskImage)
                     HStack {
                         Text(verbatim: diskStatus.0)
@@ -1218,10 +1218,13 @@ private struct AdvancedTab: View {
                         Spacer()
                         Button("Create New Disk…") { CreateDiskWindowController.show(settings: settings) }
                         Button("Grow Disk…") { growDisk() }.disabled(nextDisk == nil)
-                        Button("Reclaim Disk Space…") { reclaimDiskSpace() }
-                            .disabled(context.compactDisk == nil || context.diskPath == nil || context.diskPath != nextDisk)
                         Button("Use Existing Disk…") { chooseDisk() }
                         Button("Use Default") { settings.diskImage = "" }.disabled(settings.diskImage.isEmpty)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Reclaim Disk Space…") { reclaimDiskSpace() }
+                            .disabled(context.compactDisk == nil || context.diskPath == nil || context.diskPath != nextDisk)
                     }
                 }
                 VStack(alignment: .leading, spacing: 6) {
@@ -1360,10 +1363,17 @@ private struct AdvancedTab: View {
 
     private func reclaimDiskSpace() {
         guard let compact = context.compactDisk, let path = context.diskPath, path == nextDisk else { return }
+        if let error = DiskCompact.filesystemError(path) {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Could not reclaim disk space")
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            return
+        }
         let before = DiskCompact.allocatedBytes(path).map(DiskCompact.gb) ?? "?"
         let confirm = NSAlert()
         confirm.messageText = String(localized: "Reclaim Disk Space")
-        confirm.informativeText = String(localized: "Trim free blocks inside SteamOS so the Mac can reclaim unused space in the sparse disk image. Games and saves are not deleted. Capacity stays the same; only allocated size on APFS / Mac OS Extended can drop. Currently \(before) allocated. This can take several minutes.")
+        confirm.informativeText = String(localized: "Trim free blocks inside SteamOS to reduce the sparse disk image's allocated size. Games and saves are not deleted. Capacity stays the same. This works only when the image is on APFS; clones and snapshots may retain space on the Mac. Currently \(before) allocated. This can take several minutes.")
         confirm.addButton(withTitle: String(localized: "Reclaim"))
         confirm.addButton(withTitle: String(localized: "Cancel"))
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
@@ -1387,9 +1397,9 @@ private struct AdvancedTab: View {
                 done.messageText = String(localized: "Disk space reclaimed")
                 let reclaimed = o.reclaimed
                 if reclaimed > 1 << 20 {
-                    done.informativeText = String(localized: "Allocated size went from \(DiskCompact.gb(o.beforeAllocated)) to \(DiskCompact.gb(o.afterAllocated)) (about \(DiskCompact.gb(UInt64(reclaimed))) returned to the Mac). \(o.detail)")
+                    done.informativeText = String(localized: "Allocated size went from \(DiskCompact.gb(o.beforeAllocated)) to \(DiskCompact.gb(o.afterAllocated)) (about \(DiskCompact.gb(UInt64(reclaimed))) less). APFS clones and snapshots may retain this space on the Mac.")
                 } else {
-                    done.informativeText = String(localized: "SteamOS trimmed free blocks (\(o.detail)). Allocated size is still about \(DiskCompact.gb(o.afterAllocated)); little or nothing was returned this time (already compact, or the volume does not support sparse holes).")
+                    done.informativeText = String(localized: "SteamOS trimmed free blocks. Allocated size is still about \(DiskCompact.gb(o.afterAllocated)); little or nothing changed this time. The image may already be compact.")
                 }
             case .failure(let error):
                 done.messageText = String(localized: "Could not reclaim disk space")
