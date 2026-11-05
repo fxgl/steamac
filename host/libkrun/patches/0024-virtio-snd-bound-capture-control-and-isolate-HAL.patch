@@ -1,0 +1,535 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 07:30:00 +0000
+Subject: [PATCH] virtio-snd: bound capture control requests and isolate HAL/TCC
+
+STEAMAC-8N reports PCM_START (0x104) timeout for hw:0c before the
+HELLDIVERS 2 frame stall; STEAMAC-8P retains 4096 capture queue errors.
+The baseline also reproduces on the development M1 Max: arecord times
+out START, STOP, RELEASE; sampling finds the virtio-snd worker stuck in
+HostStream::configure -> AudioUnitSetProperty -> HALC_ProxyObject RPC,
+with the shared playback pump blocked behind its hosts mutex.
+
+Move capture device calls to one bounded-command worker, independent of
+playback. Return IO_ERR after 200 ms instead of losing the control queue
+while a HAL call or microphone permission prompt waits. Cancel late starts,
+make STOP nonblocking, and return capture descriptors on RELEASE even if
+HAL is still stuck (including RX descriptors processed after RELEASE).
+Log input-device identity, microphone permission, and setup results.
+Known denied/restricted permission fails without starting the audio unit.
+
+The capture scheduler integration tests use a deliberately blocked device
+call, exercise cancellation and failure completion without microphone/TCC.
+The game freeze itself is not proven to have an audio-only cause.
+---
+diff --git a/src/devices/src/virtio/snd/audio_backends.rs b/src/devices/src/virtio/snd/audio_backends.rs
+index 3046a90..2f71b1d 100644
+--- a/src/devices/src/virtio/snd/audio_backends.rs
++++ b/src/devices/src/virtio/snd/audio_backends.rs
+@@ -1,6 +1,8 @@
+ // Manos Pitsidianakis <manos.pitsidianakis@linaro.org>
+ // SPDX-License-Identifier: Apache-2.0 or BSD-3-Clause
+ 
++#[cfg(target_os = "macos")]
++mod capture;
+ #[cfg(target_os = "macos")]
+ mod channel_layout;
+ #[cfg(target_os = "macos")]
+diff --git a/src/devices/src/virtio/snd/audio_backends/capture.rs b/src/devices/src/virtio/snd/audio_backends/capture.rs
+new file mode 100644
+index 0000000..64f9a74
+--- /dev/null
++++ b/src/devices/src/virtio/snd/audio_backends/capture.rs
+@@ -0,0 +1,157 @@
++// SPDX-License-Identifier: Apache-2.0 or BSD-3-Clause
++// Keep potentially blocking microphone/TCC calls off virtio's control and playback threads.
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{mpsc, Arc};
++use std::time::Duration;
++
++const START_TIMEOUT: Duration = Duration::from_millis(200);
++
++pub(super) enum Operation<P> {
++    Start(P),
++    Stop,
++    Poll,
++}
++
++enum Command<P> {
++    Start(P, u64, mpsc::SyncSender<Result<(), String>>),
++    Stop,
++}
++
++pub(super) struct CaptureWorker<P> {
++    tx: mpsc::SyncSender<Command<P>>,
++    generation: Arc<AtomicU64>,
++    pending: Arc<AtomicBool>,
++    quit: Arc<AtomicBool>,
++}
++
++impl<P: Send + 'static> CaptureWorker<P> {
++    pub(super) fn new(
++        mut handle: impl FnMut(Operation<P>) -> Result<(), String> + Send + 'static,
++    ) -> std::io::Result<Self> {
++        let (tx, rx) = mpsc::sync_channel(1);
++        let generation = Arc::new(AtomicU64::new(0));
++        let pending = Arc::new(AtomicBool::new(false));
++        let quit = Arc::new(AtomicBool::new(false));
++        let (epoch, busy, done) = (generation.clone(), pending.clone(), quit.clone());
++        // Do not join on drop: a system audio API can be waiting for a permission dialog.
++        // The worker owns its audio resources until that call returns, then stops them.
++        std::thread::Builder::new()
++            .name("virtio-snd capture".into())
++            .spawn(move || {
++                while !done.load(Ordering::Acquire) {
++                    match rx.recv_timeout(Duration::from_secs(1)) {
++                        Ok(Command::Start(params, requested, reply)) => {
++                            let result = if epoch.load(Ordering::Acquire) == requested {
++                                handle(Operation::Start(params))
++                            } else {
++                                Err("capture start canceled".into())
++                            };
++                            let failed = result.is_err();
++                            if epoch.load(Ordering::Acquire) != requested
++                                || reply.send(result).is_err()
++                                || failed
++                            {
++                                let _ = handle(Operation::Stop);
++                            }
++                            busy.store(false, Ordering::Release);
++                        }
++                        Ok(Command::Stop) => { let _ = handle(Operation::Stop); }
++                        Err(mpsc::RecvTimeoutError::Timeout) => { let _ = handle(Operation::Poll); }
++                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
++                    }
++                }
++                let _ = handle(Operation::Stop);
++            })?;
++        Ok(Self { tx, generation, pending, quit })
++    }
++
++    pub(super) fn start(&self, params: P) -> Result<(), String> {
++        if self.pending.swap(true, Ordering::AcqRel) {
++            return Err("capture device is still starting/stopping".into());
++        }
++        let (tx, rx) = mpsc::sync_channel(0);
++        let epoch = self.generation.load(Ordering::Acquire);
++        if self.tx.try_send(Command::Start(params, epoch, tx)).is_err() {
++            self.pending.store(false, Ordering::Release);
++            return Err("capture worker is busy".into());
++        }
++        match rx.recv_timeout(START_TIMEOUT) {
++            Ok(result) => result,
++            Err(_) => {
++                self.stop();
++                Err("capture start exceeded 200 ms (microphone permission/device); request failed, late start canceled".into())
++            }
++        }
++    }
++
++    pub(super) fn stop(&self) {
++        self.generation.fetch_add(1, Ordering::AcqRel);
++        // A full queue contains either Stop or a Start canceled by the generation above.
++        let _ = self.tx.try_send(Command::Stop);
++    }
++}
++
++impl<P> Drop for CaptureWorker<P> {
++    fn drop(&mut self) {
++        self.generation.fetch_add(1, Ordering::AcqRel);
++        self.quit.store(true, Ordering::Release);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::Mutex;
++    use std::time::Instant;
++
++    #[test]
++    fn blocked_start_times_out_and_late_start_is_stopped() {
++        let (entered_tx, entered_rx) = mpsc::channel();
++        let (unblock_tx, unblock_rx) = mpsc::channel();
++        let (stopped_tx, stopped_rx) = mpsc::channel();
++        let worker = CaptureWorker::new(move |op| {
++            match op {
++                Operation::Start(()) => {
++                    entered_tx.send(()).unwrap();
++                    unblock_rx.recv().unwrap();
++                }
++                Operation::Stop => { let _ = stopped_tx.send(()); }
++                Operation::Poll => (),
++            }
++            Ok(())
++        }).unwrap();
++        let before = Instant::now();
++        assert!(worker.start(()).unwrap_err().contains("exceeded 200 ms"));
++        assert!(before.elapsed() < Duration::from_secs(1));
++        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        let before = Instant::now();
++        worker.stop();
++        assert!(worker.start(()).is_err());
++        assert!(before.elapsed() < Duration::from_millis(100));
++        unblock_tx.send(()).unwrap();
++        stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++    }
++
++    #[test]
++    fn successful_and_failed_starts_complete_and_stop_is_nonblocking() {
++        let seen = Arc::new(Mutex::new(Vec::new()));
++        let events = seen.clone();
++        let worker = CaptureWorker::new(move |op| {
++            match op {
++                Operation::Start(fail) => {
++                    events.lock().unwrap().push("start");
++                    if fail { return Err("no input device".into()); }
++                }
++                Operation::Stop => events.lock().unwrap().push("stop"),
++                Operation::Poll => (),
++            }
++            Ok(())
++        }).unwrap();
++        assert!(worker.start(false).is_ok());
++        // Pending is cleared after the rendezvous; wait for the worker's next dispatch.
++        while worker.pending.load(Ordering::Acquire) { std::thread::yield_now(); }
++        assert_eq!(worker.start(true).unwrap_err(), "no input device");
++        worker.stop();
++        assert_eq!(seen.lock().unwrap()[0], "start");
++    }
++}
+diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+index 951e286..af3f2df 100644
+--- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
++++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+@@ -16,11 +16,10 @@
+ // CoreAudio path after the callback (IO buffer, safety offset, device + stream latency, unit
+ // latency), which the guest driver feeds into runtime->delay.
+ //
+-// Capture: a HAL output unit with input enabled on the default input device (re-selected when
+-// the default changes) renders Float32 at the device rate into a second ring; the pump thread
+-// converts it (AudioConverter: rate and format) into the guest's buffers and completes each
+-// one when it is full. The input unit runs only between START and STOP, so the microphone (and
+-// its permission prompt) is only touched while a guest application records.
++// Capture: a HAL input unit renders Float32 into a ring; the pump converts it into guest
++// buffers. Device setup/start/stop and TCC interaction run on a separate capture worker.
++// START waits at most 200 ms, returning IO_ERR if the device/permission is still pending.
++// A timed-out start is canceled; PREPARE/RELEASE return queued buffers even if HAL is stuck.
+ //
+ // Underruns: after START, and again after the ring ran dry, the callback plays silence until
+ // the ring holds a FIFO's worth (or a FIFO's time has passed), then plays on; each gap followed
+@@ -48,6 +47,7 @@ use super::super::{
+     virtio_sound::*,
+     Direction, Error, Result, SndControl, Stream,
+ };
++use super::capture::{CaptureWorker, Operation};
+ use super::channel_layout::{self, Mixer, MAX_CHANNELS, MAX_DEVICE_CHANNELS};
+ use super::AudioBackend;
+ 
+@@ -331,6 +331,36 @@ mod ffi {
+ 
+ use ffi::*;
+ 
++#[link(name = "AVFoundation", kind = "framework")]
++extern "C" {
++    static AVMediaTypeAudio: *mut c_void;
++}
++#[link(name = "objc")]
++extern "C" {
++    fn objc_getClass(name: *const c_char) -> *mut c_void;
++    fn sel_registerName(name: *const c_char) -> *mut c_void;
++    // Only used for +[AVCaptureDevice authorizationStatusForMediaType:].
++    fn objc_msgSend(receiver: *mut c_void, selector: *mut c_void, media: *mut c_void) -> isize;
++}
++
++fn microphone_permission() -> (isize, &'static str) {
++    // SAFETY: framework class method with one NSString argument and NSInteger result.
++    let status = unsafe {
++        objc_msgSend(
++            objc_getClass(c"AVCaptureDevice".as_ptr()),
++            sel_registerName(c"authorizationStatusForMediaType:".as_ptr()),
++            AVMediaTypeAudio,
++        )
++    };
++    (status, match status {
++        0 => "undetermined",
++        1 => "restricted",
++        2 => "denied",
++        3 => "authorized",
++        _ => "unknown",
++    })
++}
++
+ /// Ring capacity per stream: ~2.7 s of 48 kHz FLOAT stereo, ~0.45 s at twelve channels. A
+ /// guest buffer that does not fit waits in the queue until the ring drains.
+ const RING_BYTES: usize = 1 << 20;
+@@ -2339,7 +2369,9 @@ impl Drop for HostStream {
+ 
+ struct Inner {
+     streams: Arc<RwLock<Vec<Stream>>>,
+-    hosts: Mutex<Vec<HostStream>>,
++    hosts: Vec<Arc<Mutex<HostStream>>>,
++    capture: Vec<Option<CaptureWorker<Format>>>,
++    shared: Vec<Arc<Shared>>,
+     wake: Arc<Semaphore>,
+     quit: AtomicBool,
+     /// Set by `route_listener`: recheck the output route on the next pass.
+@@ -2374,11 +2406,14 @@ fn pump_thread(inner: Arc<Inner>) {
+     while !inner.quit.load(Ordering::Acquire) {
+         inner.wake.wait(timeout);
+         timeout = HOUSEKEEPING;
+-        let mut hosts = inner.hosts.lock().unwrap();
++        // Capture's worker may be inside a TCC/device call: never wait for it here.
+         let recheck =
+             inner.route_changed.swap(false, Ordering::AcqRel) || last.elapsed() >= HOUSEKEEPING;
+-        for host in hosts.iter_mut() {
+-            host.apply_control(recheck);
++        for (id, lock) in inner.hosts.iter().enumerate() {
++            let Ok(mut host) = lock.try_lock() else { continue };
++            if inner.capture[id].is_none() {
++                host.apply_control(recheck);
++            }
+             host.pump(&inner.streams);
+             if let Some(due) = host.next_completion() {
+                 timeout = timeout.min(due);
+@@ -2386,7 +2421,9 @@ fn pump_thread(inner: Arc<Inner>) {
+         }
+         if last.elapsed() >= HOUSEKEEPING {
+             last = Instant::now();
+-            for host in hosts.iter_mut() {
++            for (id, lock) in inner.hosts.iter().enumerate() {
++                if inner.capture[id].is_some() { continue; }
++                let Ok(mut host) = lock.try_lock() else { continue };
+                 host.housekeeping(&inner.streams);
+             }
+         }
+@@ -2403,17 +2440,62 @@ impl CoreAudioBackend {
+         let wake = Arc::new(Semaphore::new()?);
+         let waker = wake.clone();
+         control.set_waker(Box::new(move || waker.signal()));
+-        let hosts = streams
++        let hosts: Vec<_> = streams
+             .read()
+             .unwrap()
+             .iter()
+             .enumerate()
+-            .map(|(id, s)| HostStream::new(id, s.direction, wake.clone(), control.clone()))
++            .map(|(id, s)| Arc::new(Mutex::new(HostStream::new(
++                id, s.direction, wake.clone(), control.clone(),
++            ))))
+             .collect();
++        let shared = hosts.iter().map(|h| h.lock().unwrap().shared.clone()).collect();
++        let capture = hosts.iter().map(|lock| {
++            if lock.lock().unwrap().direction != Direction::Input {
++                return Ok(None);
++            }
++            let host = lock.clone();
++            let streams = streams.clone();
++            CaptureWorker::new(move |op| {
++                let mut host = host.lock().unwrap();
++                match op {
++                    Operation::Start(fmt) => {
++                        host.stop_unit();
++                        host.shared.ring.clear();
++                        host.guest_format = Some(fmt);
++                        let device: AudioObjectID = object_property(
++                            kAudioObjectSystemObject, kAudioHardwarePropertyDefaultInputDevice,
++                            kAudioObjectPropertyScopeGlobal,
++                        ).unwrap_or(0);
++                        let (permission, name) = microphone_permission();
++                        log::warn!("snd: capture start: input device {device} '{}', microphone permission {name}", device_name(device));
++                        if permission == 1 || permission == 2 {
++                            return Err(format!("microphone permission {name}"));
++                        }
++                        let result = host.configure(fmt).and_then(|()| host.start_unit());
++                        log::warn!("snd: capture start finished: {}", if result.is_ok() { "OK".to_string() } else { format!("{:?}", result.as_ref().err().unwrap()) });
++                        result.map_err(|err| err.to_string())
++                    }
++                    Operation::Stop => {
++                        host.shared.running.store(false, Ordering::Release);
++                        host.stop_unit();
++                        host.shared.ring.clear();
++                        Ok(())
++                    }
++                    Operation::Poll => {
++                        host.apply_control(true);
++                        host.housekeeping(&streams);
++                        Ok(())
++                    }
++                }
++            }).map(Some).map_err(|err| Error::UnexpectedAudioBackendError(err.to_string()))
++        }).collect::<Result<Vec<_>>>()?;
+         let inner = Arc::new(Inner {
+             streams,
+-            hosts: Mutex::new(hosts),
++            hosts,
+             wake,
++            capture,
++            shared,
+             quit: AtomicBool::new(false),
+             route_changed: AtomicBool::new(false),
+         });
+@@ -2499,7 +2581,16 @@ impl Drop for CoreAudioBackend {
+ }
+ 
+ impl AudioBackend for CoreAudioBackend {
+-    fn write(&self, _stream_id: u32) -> Result<()> {
++    fn write(&self, stream_id: u32) -> Result<()> {
++        if self.inner.capture.get(stream_id as usize).is_some_and(Option::is_some) {
++            let mut streams = self.inner.streams.write().unwrap();
++            let stream = &mut streams[stream_id as usize];
++            // The control queue can process RELEASE before the RX queue's already-posted
++            // descriptors. Return those too: no capture callback will consume them now.
++            if stream.state == PCMState::Release {
++                stream.buffers.clear();
++            }
++        }
+         self.inner.wake.signal();
+         Ok(())
+     }
+@@ -2535,6 +2626,12 @@ impl AudioBackend for CoreAudioBackend {
+ 
+     fn prepare(&self, stream_id: u32) -> Result<()> {
+         self.transition(stream_id, "prepare", PCMState::Prepare, PCMState::prepare)?;
++        if let Some(capture) = &self.inner.capture[stream_id as usize] {
++            self.inner.shared[stream_id as usize].running.store(false, Ordering::Release);
++            capture.stop();
++            self.inner.streams.write().unwrap()[stream_id as usize].buffers.clear();
++            return Ok(());
++        }
+         let (fmt, buffer) = {
+             let params = &self.inner.streams.read().unwrap()[stream_id as usize].params;
+             let fmt =
+@@ -2545,8 +2642,8 @@ impl AudioBackend for CoreAudioBackend {
+             );
+             (fmt, buffer)
+         };
+-        let mut hosts = self.inner.hosts.lock().unwrap();
+-        let host = &mut hosts[stream_id as usize];
++        let mut host = self.inner.hosts[stream_id as usize].lock().unwrap();
++        let host = &mut *host;
+         self.trace(host, "PREPARE");
+         host.stop_unit();
+         host.flush(&mut self.inner.streams.write().unwrap()[stream_id as usize]);
+@@ -2569,8 +2666,14 @@ impl AudioBackend for CoreAudioBackend {
+ 
+     fn release(&self, stream_id: u32) -> Result<()> {
+         self.transition(stream_id, "release", PCMState::Release, PCMState::release)?;
+-        let mut hosts = self.inner.hosts.lock().unwrap();
+-        let host = &mut hosts[stream_id as usize];
++        if let Some(capture) = &self.inner.capture[stream_id as usize] {
++            self.inner.shared[stream_id as usize].running.store(false, Ordering::Release);
++            capture.stop();
++            self.inner.streams.write().unwrap()[stream_id as usize].buffers.clear();
++            return Ok(());
++        }
++        let mut host = self.inner.hosts[stream_id as usize].lock().unwrap();
++        let host = &mut *host;
+         self.trace(host, "RELEASE");
+         if host.direction == Direction::Output {
+             host.play_out();
+@@ -2583,47 +2686,41 @@ impl AudioBackend for CoreAudioBackend {
+ 
+     fn start(&self, stream_id: u32) -> Result<()> {
+         self.transition(stream_id, "start", PCMState::Start, PCMState::start)?;
+-        let mut hosts = self.inner.hosts.lock().unwrap();
+-        let host = &mut hosts[stream_id as usize];
++        if let Some(capture) = &self.inner.capture[stream_id as usize] {
++            let fmt = Format::from_params(
++                &self.inner.streams.read().unwrap()[stream_id as usize].params,
++            ).ok_or(Error::UnexpectedAudioBackendConfiguration)?;
++            self.inner.shared[stream_id as usize].running.store(false, Ordering::Release);
++            capture.start(fmt).map_err(Error::UnexpectedAudioBackendError)?;
++            self.inner.shared[stream_id as usize].running.store(true, Ordering::Release);
++            self.inner.wake.signal();
++            return Ok(());
++        }
++        let mut host = self.inner.hosts[stream_id as usize].lock().unwrap();
++        let host = &mut *host;
+         host.shared.primed.store(false, Ordering::Relaxed);
+         host.shared.starved.store(false, Ordering::Relaxed);
+         // SAFETY: plain clock read.
+         host.shared
+             .prime_since
+             .store(unsafe { mach_absolute_time() }, Ordering::Relaxed);
+-        if host.direction == Direction::Input {
+-            // The microphone (and its permission prompt) is only touched while the guest
+-            // records: set the unit up for the current default input device now.
+-            let fmt = host
+-                .guest_format
+-                .ok_or(Error::UnexpectedAudioBackendConfiguration)?;
+-            host.stop_unit();
+-            host.shared.ring.clear();
+-            host.configure(fmt)?;
+-            host.shared.running.store(true, Ordering::Release);
+-            if let Err(err) = host.start_unit() {
+-                host.shared.running.store(false, Ordering::Release);
+-                return Err(err);
+-            }
+-        } else {
+-            // A guest starting without a PREPARE after RELEASE (which stopped the unit), or
+-            // a unit that failed to start at PREPARE: make sure the device is playing.
+-            if host.unit.as_ref().is_none_or(|u| !u.started) {
+-                let fmt = match host.guest_format {
+-                    Some(fmt) => fmt,
+-                    None => Format::from_params(
+-                        &self.inner.streams.read().unwrap()[stream_id as usize].params,
+-                    )
+-                    .ok_or(Error::UnexpectedAudioBackendConfiguration)?,
+-                };
+-                if host.format != Some(fmt) || host.unit.is_none() {
+-                    host.configure(fmt)?;
+-                }
+-                host.start_unit()?;
++        // A guest starting without a PREPARE after RELEASE (which stopped the unit), or
++        // a unit that failed to start at PREPARE: make sure the device is playing.
++        if host.unit.as_ref().is_none_or(|u| !u.started) {
++            let fmt = match host.guest_format {
++                Some(fmt) => fmt,
++                None => Format::from_params(
++                    &self.inner.streams.read().unwrap()[stream_id as usize].params,
++                )
++                .ok_or(Error::UnexpectedAudioBackendConfiguration)?,
++            };
++            if host.format != Some(fmt) || host.unit.is_none() {
++                host.configure(fmt)?;
+             }
+-            host.shared.limit.store(u64::MAX, Ordering::Release);
+-            host.shared.running.store(true, Ordering::Release);
++            host.start_unit()?;
+         }
++        host.shared.limit.store(u64::MAX, Ordering::Release);
++        host.shared.running.store(true, Ordering::Release);
+         self.trace(host, "START");
+         self.inner.wake.signal();
+         Ok(())
+@@ -2631,8 +2728,13 @@ impl AudioBackend for CoreAudioBackend {
+ 
+     fn stop(&self, stream_id: u32) -> Result<()> {
+         self.transition(stream_id, "stop", PCMState::Stop, PCMState::stop)?;
+-        let mut hosts = self.inner.hosts.lock().unwrap();
+-        let host = &mut hosts[stream_id as usize];
++        if let Some(capture) = &self.inner.capture[stream_id as usize] {
++            self.inner.shared[stream_id as usize].running.store(false, Ordering::Release);
++            capture.stop();
++            return Ok(());
++        }
++        let mut host = self.inner.hosts[stream_id as usize].lock().unwrap();
++        let host = &mut *host;
+         host.shared.running.store(false, Ordering::Release);
+         match host.direction {
+             // Play out what the guest already saw completed (drain), keep the rest (pause).
+diff --git a/src/devices/tests/macos_capture.rs b/src/devices/tests/macos_capture.rs
+new file mode 100644
+index 0000000..2c0d1fc
+--- /dev/null
++++ b/src/devices/tests/macos_capture.rs
+@@ -0,0 +1,8 @@
++#![cfg(all(target_os = "macos", feature = "snd"))]
++#![allow(dead_code)]
++// Exercise the actual capture scheduler without TCC, a microphone, or stale upstream tests.
++mod audio_backends {
++    mod capture {
++        include!("../src/virtio/snd/audio_backends/capture.rs");
++    }
++}

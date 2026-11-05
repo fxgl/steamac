@@ -30,6 +30,11 @@
 # was ambiguous). It does not retry or change activation failure behavior.
 # Patch 0023 exposes a non-realtime guest playback tap for Moonlight, before host
 # volume/mute and physical speaker mapping; unregister waits for pending delivery.
+# Patch 0024 isolates microphone/TCC work from playback and virtio's control queue.
+# Capture START has a 200 ms deadline and returns IO_ERR on device/permission failure;
+# late starts are canceled, STOP never waits for HAL, RELEASE returns queued buffers.
+# test/capture-guest.sh checks repeated capture failure/recovery and surviving playback
+# inside a fresh throwaway VM; unavailable input is an ordinary logged audio error.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -118,6 +123,9 @@ done
 	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_audio
+	# Blocked capture setup must time out; late starts stop, and errors complete promptly.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features snd --test macos_capture
 	# A missing proxy identifies connect (not bind), its endpoint path and errno.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features net --lib -- missing_proxy_reports_connect_operation_and_peer_path
