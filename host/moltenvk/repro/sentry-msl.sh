@@ -170,4 +170,7 @@ sh "$here/sentry-8j-projected.sh" "$src" "$build" "$work/projected-sampling"
 
 # 87/88/2M candidate: block flattening must retain explicit locations after gaps.
 sh "$here/sentry-block-locations.sh" "$spvc" "$work/block-locations"
+
+# 41/R: exact captured object/mesh pipeline with the translator's shared payload ABI.
+sh "$here/sentry-mesh-payload.sh" "$spvc" "$work/mesh-payload"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'

@@ -48,6 +48,8 @@
  *                                  helpers that emit vertices (DXVK's dxbc-spirv helper signatures)
  *   vinactive/vduplicate + glin + f  GS object wrapper calling a vertex shader with unused/non-interface
  *                                  builtin inputs, or two active variables for the same builtin (STEAMAC-1E)
+ *   sentry-41-payload + sentry-41-payload + f  point-to-quad with a scalar payload location;
+ *                                  partial object_data vector stores crashed Apple's compiler (41/R)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,6 +480,8 @@ int main(int argc, char **argv)
 		  { { 2, 2 }, { 10, 2 } }, { { 0, 128, 0, 255 }, { 0, 128, 0, 255 } }, 0, 0, DRAW_SNORM16 },
 		{ "vfmt.vert.spv", "zink_passthrough.geom.spv", "f.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 6,
 		  { { 2, 2 }, { 10, 2 } }, { { 0, 128, 0, 255 }, { 0, 128, 0, 255 } }, 0, 0, DRAW_SNORM8 },
+		{ "sentry-41-payload.vert.spv", "sentry-41-payload.geom.spv", "f.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, 1,
+		  { { 2, 2 }, { 10, 2 } }, { { 0, 255, 0, 255 }, { 0, 255, 0, 255 } }, 0, 0, DRAW_DIRECT },
 		{ "vfmt.vert.spv", NULL, "f.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 6,
 		  { { 2, 2 }, { 10, 2 } }, { { 0, 128, 0, 255 }, { 0, 128, 0, 255 } }, 0, 0, DRAW_SSCALED16 },
 	};

@@ -1,0 +1,57 @@
+From 55a3c5888bd029d0ee97adb1c1335756f9988055 Mon Sep 17 00:00:00 2001
+From: FX Steam Launcher <steamac@fxgam.es>
+Date: Thu, 5 Nov 2026 10:10:00 +0300
+Subject: [PATCH] MSL: avoid partial object payload vector stores (STEAMAC-41/R)
+
+The complete 1.9.12 STEAMAC-41 object/mesh shaders reproduce a deterministic
+MTLCompilerService SIGSEGV on M1 Max/macOS 27.0.1. Apple's
+AGCLLVMUserObjectShaderSW::replacePayloadBufferAccesses crashes in
+IRBuilderBase::CreateCall when a scalar varying leaves a uint4 location
+partially written. Metal returns XPC_ERROR_CONNECTION_INTERRUPTED after
+its own retries (also the exact pipeline captured by STEAMAC-R); other
+macOS/GPU versions return "Compiler encountered an internal error".
+
+Represent the component slots as a scalar array. This avoids vector
+read/modify/write lowering without initializing Vulkan-undefined lanes or
+adding stores. Retain the old uint4 alignment, offsets, and payload size
+for independently compiled object/mesh stages. Full-vector stores also
+avoid the compiler crash but would unnecessarily initialize unused lanes.
+
+Both distinct captured pipelines compile after this substitution.
+sentry-mesh-payload.sh replays the captured pipeline with the translator's
+emitted payload ABI, failing before and passing afterwards. The point-to-quad
+sentry-41-payload regression and existing geometry, vertex format, transform
+feedback and component-packing tests check GPU pixels with the new layout.
+---
+ spirv_msl.cpp | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -2028,8 +2028,9 @@ uint32_t CompilerMSL::vertex_count_in_primitive(Options::PrimitiveType primitive_ty
+ 
+ // The vertex shader (object stage) and the geometry shader (mesh stage) of a geometry pipeline are
+ // compiled separately, so the vertices they exchange through the payload use a layout that depends
+-// on neither shader's interface: position, point size, clip/cull distances, and one uint4 per
+-// location holding the bits of each component. Vertex outputs are stored by location and component,
++// on neither shader's interface: position, point size, clip/cull distances, and four uints per
++// location holding the bits of each component. Keep the component array 16-byte aligned, matching
++// the original uint4 layout. Vertex outputs are stored by location and component,
+ // geometry inputs are loaded by location and component, so a geometry shader may read any subset of
+ // the vertex outputs, with any types, and gl_in[] blocks work.
+ static const uint32_t kMeshPayloadLocations = 32;
+@@ -2043,7 +2044,10 @@ void CompilerMSL::emit_mesh_payload_vertex_struct()
+ 	statement("float pointSize;");
+ 	statement("float clipDistance[", kMeshPayloadClipCullDistances, "];");
+ 	statement("float cullDistance[", kMeshPayloadClipCullDistances, "];");
+-	statement("uint4 locations[", kMeshPayloadLocations, "];");
++	// Partial vector stores in object_data crash Apple's replacePayloadBufferAccesses pass
++	// (STEAMAC-41/R). Scalar slots avoid read/modify/write of uninitialized vector lanes,
++	// without adding stores to unused components. Both stages retain the same payload ABI.
++	statement("alignas(16) uint locations[", kMeshPayloadLocations, "][4];");
+ 	end_scope_decl();
+ 	statement("");
+ }
+-- 
+2.50.1

@@ -66,6 +66,14 @@
 #   combinations link in Metal. This proves a translator bug, not these events'
 #   root cause: their SPIR-V is absent, 87's repeated identical locations were not
 #   reproduced, and 2M also used tessellation. Keep all three reports unresolved.
+#   SPIRV-Cross 0055 (STEAMAC-41/R): the complete 1.9.12 point-to-quad shaders
+#   reproduce MTLCompilerService SIGSEGV in replacePayloadBufferAccesses on M1 Max;
+#   Metal returns an ICE on macOS 15 or XPC interruption after retries on macOS 27.
+#   Partial stores to object_data uint4 locations trigger it. Use 16-byte-aligned
+#   scalar component slots, preserving the payload ABI and avoiding extra stores.
+#   Both captured pipelines link after this substitution. sentry-mesh-payload.sh
+#   fails before and passes after with the actual emitted payload ABI; geometry's
+#   point-to-quad scalar-varying case checks rendered pixels after the change.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -443,6 +451,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         pointer copies and split access chains (STEAMAC-6V: float initialized from float4 centroid result)"
 	echo "  0051 = steamac: component-packed fragment outputs use both Location and Index, preserving"
 	echo "         source 1 and distinct fixups (STEAMAC-75); four validated shaders render expected blend pixels"
+	echo "  0055 = steamac: aligned scalar object/mesh payload slots avoid Apple's partial-vector-store"
+	echo "         compiler crash (STEAMAC-41/R); point-to-quad scalar varying checks pipeline and GPU pixels"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"
