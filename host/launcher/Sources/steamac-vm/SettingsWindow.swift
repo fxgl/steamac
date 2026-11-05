@@ -19,6 +19,8 @@ final class SettingsContext: ObservableObject {
     var vmHasSound: Bool
     /// The running VM's main disk (nil without a VM).
     let diskPath: String?
+    /// Reclaim sparse steamos.img space via guest fstrim (nil without a running VM).
+    let compactDisk: DiskCompact?
     /// Opens Report a Problem over the Settings window (nil without a VM; set after the window exists).
     @Published var reportProblem: (() -> Void)?
     @Published var restartRequested = false
@@ -31,7 +33,7 @@ final class SettingsContext: ObservableObject {
     var requestInputMonitoring: (() -> Void)?
 
     init(settings: LauncherSettings, sound: SoundControl?, restart: (() -> Void)?, vmHasPad: Bool, vmHasSound: Bool,
-         diskPath: String? = nil, streamHost: GameStreamHost? = nil) {
+         diskPath: String? = nil, streamHost: GameStreamHost? = nil, compactDisk: DiskCompact? = nil) {
         self.settings = settings
         self.sound = sound
         self.streamHost = streamHost
@@ -39,6 +41,7 @@ final class SettingsContext: ObservableObject {
         self.vmHasPad = vmHasPad
         self.vmHasSound = vmHasSound
         self.diskPath = diskPath
+        self.compactDisk = compactDisk
     }
 }
 
@@ -1203,7 +1206,7 @@ private struct AdvancedTab: View {
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Free space on the Mac does not automatically increase SteamOS's capacity."),
+                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… returns unused blocks to the Mac on APFS / Mac OS Extended (sparse image; capacity stays the same). Free space on the Mac does not automatically increase SteamOS's capacity."),
                            now: false, key: .diskImage)
                     HStack {
                         Text(verbatim: diskStatus.0)
@@ -1215,6 +1218,8 @@ private struct AdvancedTab: View {
                         Spacer()
                         Button("Create New Disk…") { CreateDiskWindowController.show(settings: settings) }
                         Button("Grow Disk…") { growDisk() }.disabled(nextDisk == nil)
+                        Button("Reclaim Disk Space…") { reclaimDiskSpace() }
+                            .disabled(context.compactDisk == nil || context.diskPath == nil || context.diskPath != nextDisk)
                         Button("Use Existing Disk…") { chooseDisk() }
                         Button("Use Default") { settings.diskImage = "" }.disabled(settings.diskImage.isEmpty)
                     }
@@ -1350,6 +1355,47 @@ private struct AdvancedTab: View {
             alert.messageText = String(localized: "SteamOS disk could not be grown")
             alert.informativeText = error.localizedDescription
             alert.runModal()
+        }
+    }
+
+    private func reclaimDiskSpace() {
+        guard let compact = context.compactDisk, let path = context.diskPath, path == nextDisk else { return }
+        let before = DiskCompact.allocatedBytes(path).map(DiskCompact.gb) ?? "?"
+        let confirm = NSAlert()
+        confirm.messageText = String(localized: "Reclaim Disk Space")
+        confirm.informativeText = String(localized: "Trim free blocks inside SteamOS so the Mac can reclaim unused space in the sparse disk image. Games and saves are not deleted. Capacity stays the same; only allocated size on APFS / Mac OS Extended can drop. Currently \(before) allocated. This can take several minutes.")
+        confirm.addButton(withTitle: String(localized: "Reclaim"))
+        confirm.addButton(withTitle: String(localized: "Cancel"))
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        let parent = NSApp.keyWindow
+        let waiting = NSAlert()
+        waiting.messageText = String(localized: "Reclaiming disk space…")
+        waiting.informativeText = String(localized: "SteamOS is trimming free blocks. Keep SteamOS running until this finishes.")
+        if let parent {
+            // Non-blocking: the sheet stays until the guest replies (or times out).
+            waiting.beginSheetModal(for: parent) { _ in }
+        }
+        compact.request(path: path) { result in
+            if let parent {
+                let sheet = waiting.window
+                parent.endSheet(sheet)
+                sheet.orderOut(nil)
+            }
+            let done = NSAlert()
+            switch result {
+            case .success(let o):
+                done.messageText = String(localized: "Disk space reclaimed")
+                let reclaimed = o.reclaimed
+                if reclaimed > 1 << 20 {
+                    done.informativeText = String(localized: "Allocated size went from \(DiskCompact.gb(o.beforeAllocated)) to \(DiskCompact.gb(o.afterAllocated)) (about \(DiskCompact.gb(UInt64(reclaimed))) returned to the Mac). \(o.detail)")
+                } else {
+                    done.informativeText = String(localized: "SteamOS trimmed free blocks (\(o.detail)). Allocated size is still about \(DiskCompact.gb(o.afterAllocated)); little or nothing was returned this time (already compact, or the volume does not support sparse holes).")
+                }
+            case .failure(let error):
+                done.messageText = String(localized: "Could not reclaim disk space")
+                done.informativeText = error.localizedDescription
+            }
+            done.runModal()
         }
     }
 

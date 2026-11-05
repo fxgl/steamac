@@ -1,0 +1,44 @@
+#!/bin/bash
+# Reclaim host SSD space for a sparse steamos.img: TRIM free blocks in SteamOS so
+# virtio-blk DISCARD punches holes (imago F_PUNCHHOLE on macOS). Invoked as root by
+# fx-compact-disk.service when the session agent drops compact-request.
+set -euo pipefail
+DIR=/home/steamos/.local/share/steamac
+REQ=$DIR/compact-request
+RES=$DIR/compact-result
+mkdir -p "$DIR"
+if [[ ! -f $REQ ]]; then
+	echo "fx-compact-disk: no request file" >&2
+	exit 1
+fi
+# One token: request id from the launcher (alphanumeric / -), max 32 chars.
+ID=$(tr -cd 'A-Za-z0-9-' <"$REQ" | head -c 32)
+rm -f "$REQ"
+if [[ -z $ID ]]; then
+	printf 'failed unknown empty-id\n' >"$RES.tmp"
+	chown steamos:steamos "$RES.tmp" 2>/dev/null || true
+	mv -f "$RES.tmp" "$RES"
+	exit 1
+fi
+# Games live on home. Other mounts on the same image (e.g. /var) are trimmed when present.
+detail=""
+status=0
+for mp in /home /var; do
+	findmnt -n "$mp" >/dev/null 2>&1 || continue
+	if out=$(fstrim -v "$mp" 2>&1); then
+		detail="${detail}${detail:+; }${out}"
+	else
+		detail="${detail}${detail:+; }${mp}: ${out}"
+		status=1
+	fi
+done
+# Collapse newlines / control chars so the result is one fx.progress token stream.
+detail=$(printf '%s' "$detail" | tr '\n\r\t' '   ' | tr -s ' ' | head -c 400)
+if [[ $status -eq 0 ]]; then
+	printf 'ok %s %s\n' "$ID" "${detail:-trimmed}"
+else
+	printf 'failed %s %s\n' "$ID" "${detail:-fstrim-failed}"
+fi >"$RES.tmp"
+chown steamos:steamos "$RES.tmp" 2>/dev/null || true
+mv -f "$RES.tmp" "$RES"
+exit "$status"

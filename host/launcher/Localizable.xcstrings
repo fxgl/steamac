@@ -724,6 +724,28 @@
         }
       }
     },
+    "Allocated size went from %@ to %@ (about %@ returned to the Mac). %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allocated size went from %1$@ to %2$@ (about %3$@ returned to the Mac). %4$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выделенный размер был %@, стал %@ (примерно %@ вернулось на Mac). %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已分配大小从 %@ 变为 %@（约 %@ 已归还给 Mac）。%@"
+          }
+        }
+      }
+    },
     "Allow DXMT" : {
       "localizations" : {
         "ru" : {
@@ -1715,6 +1737,22 @@
         }
       }
     },
+    "Could not reclaim disk space" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось освободить место на диске"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法回收磁盘空间"
+          }
+        }
+      }
+    },
     "Couldn't check for updates" : {
       "localizations" : {
         "ru" : {
@@ -2175,6 +2213,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "磁盘映像"
+          }
+        }
+      }
+    },
+    "Disk space reclaimed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Место на диске освобождено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已回收磁盘空间"
           }
         }
       }
@@ -5120,6 +5174,70 @@
         }
       }
     },
+    "Reclaim" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Освободить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回收"
+          }
+        }
+      }
+    },
+    "Reclaim Disk Space" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Освободить место на диске"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回收磁盘空间"
+          }
+        }
+      }
+    },
+    "Reclaim Disk Space…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Освободить место на диске…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回收磁盘空间…"
+          }
+        }
+      }
+    },
+    "Reclaiming disk space…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Освобождение места на диске…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在回收磁盘空间…"
+          }
+        }
+      }
+    },
     "Recommended: %@" : {
       "localizations" : {
         "ru" : {
@@ -6840,6 +6958,22 @@
         }
       }
     },
+    "SteamOS is not ready yet; wait until Steam has started" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS ещё не готова; дождитесь запуска Steam"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 尚未就绪；请等到 Steam 启动完成"
+          }
+        }
+      }
+    },
     "SteamOS is not responding…" : {
       "localizations" : {
         "ru" : {
@@ -6921,6 +7055,22 @@
         }
       }
     },
+    "SteamOS is trimming free blocks. Keep SteamOS running until this finishes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS обрезает свободные блоки. Не останавливайте SteamOS, пока это не закончится."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 正在整理空闲块。完成前请保持 SteamOS 运行。"
+          }
+        }
+      }
+    },
     "SteamOS keeps running; the download continues when this window is hidden." : {
       "localizations" : {
         "ru" : {
@@ -6953,18 +7103,18 @@
         }
       }
     },
-    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Free space on the Mac does not automatically increase SteamOS's capacity." : {
+    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… returns unused blocks to the Mac on APFS / Mac OS Extended (sparse image; capacity stays the same). Free space on the Mac does not automatically increase SteamOS's capacity." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Диск SteamOS в формате raw GPT используется на месте (никогда не копируется). Если Steam сообщает о нехватке места, «Увеличить диск…» добавит место для игр без пересоздания диска. Свободное место на Mac не увеличивает объём SteamOS автоматически."
+            "value" : "Диск SteamOS в формате raw GPT используется на месте (никогда не копируется). Если Steam сообщает о нехватке места, «Увеличить диск…» добавит место для игр без пересоздания диска. После удаления игр «Освободить место на диске…» вернёт неиспользуемые блоки на Mac на APFS / Mac OS Extended (разреженный образ; ёмкость не меняется). Свободное место на Mac не увеличивает объём SteamOS автоматически."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "SteamOS 原始 GPT 磁盘，直接在原位置使用（不会拷贝）。若 Steam 提示空间不足，可用“扩展磁盘…”增加游戏空间，无需重新创建磁盘。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
+            "value" : "SteamOS 原始 GPT 磁盘，直接在原位置使用（不会拷贝）。若 Steam 提示空间不足，可用“扩展磁盘…”增加游戏空间，无需重新创建磁盘。卸载游戏后，“回收磁盘空间…”可在 APFS / Mac OS 扩展格式上将未用块归还给 Mac（稀疏映像；容量不变）。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
           }
         }
       }
@@ -7030,6 +7180,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SteamOS 已挂起 — FX Steam Launcher"
+          }
+        }
+      }
+    },
+    "SteamOS trimmed free blocks (%@). Allocated size is still about %@; little or nothing was returned this time (already compact, or the volume does not support sparse holes)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "SteamOS trimmed free blocks (%1$@). Allocated size is still about %2$@; little or nothing was returned this time (already compact, or the volume does not support sparse holes)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS обрезала свободные блоки (%@). Выделенный размер всё ещё около %@; в этот раз почти ничего не вернулось (уже компактно, или том не поддерживает разреженные дырки)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 已整理空闲块（%@）。已分配大小仍约 %@；本次几乎未回收（本已紧凑，或卷不支持稀疏空洞）。"
           }
         }
       }
@@ -7887,6 +8059,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换全屏（Ctrl+Cmd+F）"
+          }
+        }
+      }
+    },
+    "Trim free blocks inside SteamOS so the Mac can reclaim unused space in the sparse disk image. Games and saves are not deleted. Capacity stays the same; only allocated size on APFS / Mac OS Extended can drop. Currently %@ allocated. This can take several minutes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обрезать свободные блоки в SteamOS, чтобы Mac мог вернуть неиспользуемое место в разреженном образе диска. Игры и сохранения не удаляются. Ёмкость не меняется; уменьшается только выделенный размер на APFS / Mac OS Extended. Сейчас выделено %@. Это может занять несколько минут."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理 SteamOS 内的空闲块，以便 Mac 回收稀疏磁盘映像中的未用空间。不会删除游戏和存档。容量不变；仅 APFS / Mac OS 扩展格式上的已分配大小可能下降。当前已分配 %@. 可能需要几分钟。"
           }
         }
       }
@@ -8761,6 +8949,22 @@
         }
       }
     },
+    "cannot read %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не удалось прочитать %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取 %@"
+          }
+        }
+      }
+    },
     "click to capture the mouse" : {
       "localizations" : {
         "ru" : {
@@ -8997,6 +9201,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要 macOS 26 或更高版本（Metal 4）"
+          }
+        }
+      }
+    },
+    "no answer from SteamOS within %lld s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "нет ответа от SteamOS за %lld с"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 秒内未收到 SteamOS 的回复"
           }
         }
       }

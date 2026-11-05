@@ -512,7 +512,8 @@ struct LineSplitter {
 }
 
 /// The `fx.progress` virtio-console port: guest writes lines, the launcher reads them; the
-/// launcher writes requests the other way (`collect-logs <id>`, GuestLogs).
+/// launcher writes requests the other way (`collect-logs <id>`, GuestLogs; `compact-disk <id>`,
+/// DiskCompact).
 final class ProgressPort {
     static let name = "fx.progress"
     /// Handed to libkrun: guest -> host data is written here.
