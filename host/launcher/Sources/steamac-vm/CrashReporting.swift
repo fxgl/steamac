@@ -993,6 +993,19 @@ enum CrashReporting {
         if caches.count != 1 || caches.first?.extra["metal_cache_probe"]?.contains("306AKY0LJMPLL") != true {
             failures.append("scanner: runtime Metal module-cache diagnostics lost")
         }
+        var interrupted = LineScanner()
+        let interruptedLines = [
+            "[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Shader library compile failed (Error code 3):",
+            "Compilation failed due to an interrupted connection: XPC_ERROR_CONNECTION_INTERRUPTED. This error occurred after multiple retries.",
+            "[mvk-msl] // Library failure MSL bytes=32 lines=1 capture=full",
+            "[mvk-msl] 1: vertex float4 MainVs() { return 0; }",
+        ]
+        let interruptions = interruptedLines.flatMap { interrupted.feed($0) } + interrupted.flushPending()
+        if interruptions.count != 1
+            || interruptions.first?.extra["host_memory"]?.contains("pressure") != true
+            || interruptions.first?.extra["msl_error_context"]?.contains("MainVs") != true {
+            failures.append("scanner: interrupted Metal compiler lost memory pressure or shader context")
+        }
         var interleaved = LineScanner()
         let interleavedLines = [
             "[mvk-error] VK_ERROR_INITIALIZATION_FAILED: Render pipeline compile failed (Error code 2):",
@@ -1447,6 +1460,11 @@ private struct LineScanner {
             if !p.interfaces.isEmpty { f.extra["msl_interfaces"] = p.interfaces }
             if let cache = MetalCompilerCache.failureDiagnostics(p.header + "\n" + detail) {
                 f.extra["metal_cache_probe"] = cache
+            }
+            if p.kind == .pipelineCompile && f.message.contains("XPC_ERROR_CONNECTION_INTERRUPTED") {
+                // An interrupted compiler service may have crashed or been killed. Free RAM alone
+                // cannot distinguish pressure from normal compression (STEAMAC-3X).
+                f.extra["host_memory"] = CrashReporting.HostMemory.current().summary
             }
             return f
         }
