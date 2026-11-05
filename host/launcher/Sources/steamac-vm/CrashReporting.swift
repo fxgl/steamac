@@ -539,7 +539,8 @@ enum CrashReporting {
             // carries what Sentry's report of the VM process leaves out: libmalloc's message on a
             // heap corruption trap (STEAMAC-31/13: SIGTRAP in libsystem_malloc under
             // mtl_new_compute_pipeline_state, no message).
-            if signal != 0, let crash = SystemCrashReport.find(pid: exit.pid, timeout: 8) {
+            var capture = ""
+            if signal != 0, let crash = SystemCrashReport.find(pid: exit.pid, timeout: 8, diagnostics: &capture) {
                 if let site = crash.site {
                     lines[0] = exitSummary(status: exit.status) + " in " + site + lastError
                     key += " " + site
@@ -547,6 +548,10 @@ enum CrashReporting {
                 }
                 lines += crash.messages
                 extra["macos_crash_report"] = crash.summary
+            }
+            if signal != 0 {
+                extra["macos_crash_report_capture"] = capture
+                log("crash report capture: \(capture)")
             }
             report(.vmExited, key: key, message: lines.joined(separator: "\n"), tags: exitTags, extra: extra)
         }
@@ -850,6 +855,36 @@ enum CrashReporting {
             || crash?.frames.last != "??? + 0x7b" {
             failures.append("crash report: \(crash?.summary ?? "nil")")
         }
+        var capture = ""
+        if SystemCrashReport.find(pid: 4242, timeout: 0, directory: dir + "/missing", diagnostics: &capture) != nil
+            || !capture.contains("directory error") {
+            failures.append("crash capture: missing report directory is not diagnosed")
+        }
+        capture = ""
+        if SystemCrashReport.find(pid: 4242, timeout: 0, directory: dir, diagnostics: &capture) != nil
+            || !capture.contains("recent=0") || !capture.contains("pid=4242") {
+            failures.append("crash capture: no report after timeout is not diagnosed")
+        }
+        do {
+            let fixture = dir + "/steamac-vm-fixture.ips"
+            try (header + "\n" + body).write(toFile: fixture, atomically: true, encoding: .utf8)
+            capture = ""
+            if SystemCrashReport.find(pid: 4243, timeout: 0, directory: dir, diagnostics: &capture) != nil
+                || !capture.contains("other-pid=1") {
+                failures.append("crash capture: wrong-pid report is not diagnosed")
+            }
+            capture = ""
+            if SystemCrashReport.find(pid: 4242, timeout: 0, directory: dir, diagnostics: &capture)?.site != crash?.site
+                || !capture.contains("found") {
+                failures.append("crash capture: matching report is not captured")
+            }
+            try (header + "\n" + body.prefix(100)).write(toFile: fixture, atomically: true, encoding: .utf8)
+            capture = ""
+            if SystemCrashReport.find(pid: 4242, timeout: 0, directory: dir, diagnostics: &capture) != nil
+                || !capture.contains("incomplete=1") {
+                failures.append("crash capture: incomplete report is not diagnosed")
+            }
+        } catch { failures.append("crash capture fixture: \(error)") }
         let incomplete = Event(level: .fatal)
         let native = Exception(value: "Signal 10, Code 1", type: "SIGBUS")
         native.mechanism = Mechanism(type: "signal")
@@ -1602,21 +1637,50 @@ struct SystemCrashReport {
     static let directory = NSHomeDirectory() + "/Library/Logs/DiagnosticReports"
 
     /// The report of process `pid`, waiting up to `timeout` for ReportCrash to write it.
-    static func find(pid: pid_t, timeout: TimeInterval) -> SystemCrashReport? {
-        guard pid > 0 else { return nil }
-        let deadline = Date().addingTimeInterval(timeout)
+    static func find(pid: pid_t, timeout: TimeInterval, directory: String = directory,
+                     diagnostics: inout String) -> SystemCrashReport? {
+        guard pid > 0 else {
+            diagnostics = "unavailable: invalid pid=\(pid)"
+            return nil
+        }
+        let started = ProcessInfo.processInfo.systemUptime
+        let deadline = started + timeout
         while true {
-            let names = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+            let names: [String]
+            do { names = try FileManager.default.contentsOfDirectory(atPath: directory) }
+            catch {
+                let e = error as NSError
+                diagnostics = "unavailable: pid=\(pid); directory error \(e.domain) \(e.code)"
+                return nil
+            }
+            var recent = 0, unreadable = 0, incomplete = 0, otherPid = 0
             for name in names where name.hasPrefix("steamac-vm") && name.hasSuffix(".ips") {
                 let path = directory + "/" + name
                 guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
-                      Date().timeIntervalSince(modified) < 600,
-                      let text = try? String(contentsOfFile: path, encoding: .utf8),
-                      let report = parse(text, pid: pid) else { continue }
-                return report
+                      abs(Date().timeIntervalSince(modified)) < 600 else { continue }
+                recent += 1
+                guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+                    unreadable += 1
+                    continue
+                }
+                if let report = parse(text, pid: pid) {
+                    diagnostics = "found: pid=\(pid); waited=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - started))s; frames=\(report.frames.count)"
+                    return report
+                }
+                if let newline = text.firstIndex(of: "\n"),
+                   let body = try? JSONSerialization.jsonObject(with: Data(text[text.index(after: newline)...].utf8)) as? [String: Any],
+                   let reportedPid = body["pid"] as? Int, reportedPid != Int(pid) {
+                    otherPid += 1
+                } else {
+                    incomplete += 1
+                }
             }
-            guard Date() < deadline else { return nil }
-            Thread.sleep(forTimeInterval: 0.25)
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now < deadline else {
+                diagnostics = "unavailable: pid=\(pid); waited=\(String(format: "%.2f", now - started))s; recent=\(recent); unreadable=\(unreadable); incomplete=\(incomplete); other-pid=\(otherPid)"
+                return nil
+            }
+            Thread.sleep(forTimeInterval: min(0.25, deadline - now))
         }
     }
 
