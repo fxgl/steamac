@@ -440,7 +440,7 @@ macOS GameController 框架支持的任何控制器（Xbox、DualSense、DualSho
 分别按下并松开按钮后提交报告。启动器日志记录 GameController 是否提供 Home、系统手势绑定、
 按钮及配置文件回调，以及事件是否进入客户机手柄端口队列；`pad state` 也包含 Home 当前状态。
 这些信息用于区分 Mac 输入处理与客户机传递故障，不能将所有蓝牙故障都归因于 DualSense
-直通（DualShock 4 使用虚拟手柄）。
+直通（DualShock 4 使用虚拟手柄）。`pad state` 以及包含启动器日志的问题报告中的 `controllers.txt` 还列出被动的 HID 清单（ID、名称、传输方式、usage 以及每个设备是否被路由及原因；被排除的设备不会被打开，也不请求“输入监控”权限），以及 DualSense 摇杆、原始运动传感器和触摸的最新快照及其时间（STEAMAC-8R/8V）。
 
 **振动。** 手柄带 `FF_RUMBLE`，如真实驱动，SDL 与 Steam 可驱动振动——经 Steam Input 的游戏经 Steam 虚拟 Xbox 手柄触达。uinput 把回放交给用户态驱动：`fx-pad` 实现内核 ff-memless 规则（延迟、时长、重复、重载、效果叠加）并向启动器发送合成等级 `rumble <strong> <weak>`，启动器用 GameController 触觉播放：强电机左手、弱电机右手（无分 TW 电机的控制器 whole one level）；虚拟机挂起期间无振动。端口协议：`guest/progress-agent/src/pad.rs`。触摸板、陀螺仪、光条与自适应扳机是真实控制器的 HID 功能，该 evdev 设备没有。
 

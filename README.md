@@ -571,7 +571,10 @@ the button on each connection. The launcher log records whether GameController e
 its system-gesture binding, button and profile callbacks, and whether the Home event was queued
 for the guest pad port; `pad state` includes the current Home state. This distinguishes host input
 handling from guest delivery without assuming that a Bluetooth failure is a DualSense passthrough
-problem (DualShock 4 uses the virtual pad).
+problem (DualShock 4 uses the virtual pad). `pad state`, and `controllers.txt` in a problem report that
+includes launcher logs, also list a passive HID inventory (IDs, names, transport, usages and why each
+device is or isn't routed; excluded devices are never opened and Input Monitoring is not requested) and
+the latest DualSense stick, raw motion-sensor and touch snapshot with its age (STEAMAC-8R/8V).
 
 **Rumble.** The pad has `FF_RUMBLE`, like the real drivers, so SDL and Steam rumble it — games
 through Steam Input reach it via Steam's virtual Xbox pad. uinput leaves playback to its user-space
