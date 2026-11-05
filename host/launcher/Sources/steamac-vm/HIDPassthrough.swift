@@ -158,6 +158,12 @@ final class HIDPassthrough {
     private var gameControllerSupport: [UInt64: Bool] = [:]
     /// Devices came or went.
     var onChange: (() -> Void)?
+    /// Settings > Controller shows a warning while Input Monitoring is still required for a
+    /// matched Steam Controller / composite HID device.
+    private(set) var needsInputMonitoring = false {
+        didSet { if needsInputMonitoring != oldValue { onPermissionNeededChange?(needsInputMonitoring) } }
+    }
+    var onPermissionNeededChange: ((Bool) -> Void)?
     private let io = DispatchQueue(label: "es.fxgam.steamac.hid-passthrough")
     private var failedOpenCount = 0
     private var loggedOpenFailures = false
@@ -176,12 +182,12 @@ final class HIDPassthrough {
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
-        manager = m
         guard r == kIOReturnSuccess else {
             log("hid passthrough: cannot open the HID manager: \(HIDPassthrough.describe(r))")
-            if r == kIOReturnNotPermitted { awaitPermission() }
             return false
         }
+        manager = m
+        needsInputMonitoring = false
         return true
     }
 
@@ -193,9 +199,15 @@ final class HIDPassthrough {
     private var recreatedAfterGrant = false
     private var loggedRelaunchNeeded = false
 
+    /// Settings > Controller "Enable Input Monitoring…": request access again and keep polling.
+    func requestInputMonitoring() {
+        awaitPermission()
+    }
+
     /// A Steam Controller's descriptor has keyboard and mouse collections, so macOS opens it only
     /// with Input Monitoring: ask for it, then recreate the manager once it is granted.
     private func awaitPermission() {
+        needsInputMonitoring = true
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         // Already recreated after a grant and devices still fail: only a relaunch helps.
         if recreatedAfterGrant {
@@ -603,6 +615,9 @@ final class HIDPassthrough {
     static func describe(_ r: IOReturn) -> String {
         if r == kIOReturnNotPermitted {
             return "not permitted (System Settings > Privacy & Security > Input Monitoring)"
+        }
+        if r == kIOReturnNotOpen {
+            return "device not open"
         }
         return String(format: "IOReturn 0x%08x", UInt32(bitPattern: r))
     }

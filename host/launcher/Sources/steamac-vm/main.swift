@@ -544,6 +544,12 @@ do {
     let settingsContext = SettingsContext(settings: settings, sound: sound, restart: { lifecycle.requestRestart() },
                                           vmHasPad: gamepad != nil, vmHasSound: vm.hasSound,
                                           diskPath: options.disks.first?.path, streamHost: streamHost)
+    gamepad?.onInputMonitoringNeeded = { needed in
+        settingsContext.needsInputMonitoring = needed
+    }
+    settingsContext.requestInputMonitoring = {
+        gamepad?.requestInputMonitoring()
+    }
     let settingsWindow = SettingsWindowController(context: settingsContext)
     lifecycle.settingsContext = settingsContext
     lifecycle.settingsWindow = settingsWindow

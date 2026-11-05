@@ -276,9 +276,11 @@ extension HIDPassthrough {
         check(rematched.devices.isEmpty, "duplicate removal is harmless")
         hid.deactivate(reconnected, owner: owner)
 
+        hid.matchSteamControllers = true
         let ble = TestHIDDevice(id: 20, bluetooth: true, valve: true)
         hid.manager!.emitMatch(ble)
         let valve = hid.devices.last!
+        check(HIDPassthrough.isSteamController(valve), "Valve BLE is matched once Steam Controllers are enabled")
         let feature = get(hid, valve, .feature, 1)
         check(feature?.count == 65 && feature?.first == 1, "BLE Steam Controller keeps the 65-byte feature fix")
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
