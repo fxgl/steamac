@@ -12,10 +12,12 @@ Signed-off-by: Sergio Lopez <slp@redhat.com>
 (cherry picked from commit d166df9a80948d3017315d46b4822f203b1d01da)
 Signed-off-by: Sergio Lopez <slp@redhat.com>
 
-[steamac: libkrun/libkrun@d69ece58 from PR #980 (the open 1.19.8
-cherry-picks) rebased onto v1.19.6; only the Cargo.toml context differs.
-Without it a guest fstrim whose discard reaches the end of steamos.img
-truncates the image, libkrun/libkrun#949.]
+[steamac: from libkrun/libkrun PR #980 (the open 1.19.8 cherry-picks),
+rebased onto v1.19.6; only the Cargo.toml context differs.
+imago 0.2.3 shrinks raw images when discard or write-zeroes reaches the
+last byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after
+home: this hardens future guest-wide discard and Reclaim Disk Space
+(steamac#78), rather than fixing observed loss on steamac's layout.]
 ---
  Cargo.lock             | 166 ++++++++++++++++++++++++++++++++---------
  src/devices/Cargo.toml |   2 +-

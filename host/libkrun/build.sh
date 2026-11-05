@@ -35,10 +35,11 @@
 # late starts are canceled, STOP never waits for HAL, RELEASE returns queued buffers.
 # test/capture-guest.sh checks repeated capture failure/recovery and surviving playback
 # inside a fresh throwaway VM; unavailable input is an ordinary logged audio error.
-# Patch 0025 bumps imago to 0.2.6 (libkrun/libkrun@d69ece58, from the open 1.19.8
-# cherry-picks libkrun/libkrun#980): imago 0.2.3 truncates a raw image when a
-# discard reaches its end, so a guest fstrim (#78) cuts the end off steamos.img
-# (libkrun/libkrun#949).
+# Patch 0025 bumps imago to 0.2.6 (libkrun/libkrun#980, the open 1.19.8 cherry-picks).
+# imago 0.2.3 shrinks a raw image when a discard or write-zeroes reaches its last
+# byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after home, so this
+# is hardening, not a fix for observed data loss on steamac's layout. It also
+# protects future guest-wide discard and the planned Reclaim Disk Space (#78).
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
