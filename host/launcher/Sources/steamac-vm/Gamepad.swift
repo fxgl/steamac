@@ -721,7 +721,7 @@ final class GamepadBridge {
     var intercept: ((_ buttonPressed: Bool) -> Bool)? {
         didSet { for s in slots { s.intercept = intercept } }
     }
-    /// Settings > Controller: Input Monitoring is required for a matched HID device (Steam Controller).
+    /// Settings > Controller: Input Monitoring is required for a matched Steam Controller / composite HID device.
     var onInputMonitoringNeeded: ((Bool) -> Void)? {
         didSet {
             hid.onPermissionNeededChange = onInputMonitoringNeeded

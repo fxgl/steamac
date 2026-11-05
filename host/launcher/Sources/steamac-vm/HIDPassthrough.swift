@@ -127,6 +127,12 @@ final class HIDPassthrough {
     }
 
     private func rematch() {
+        if !matchSteamControllers && !matchGenericControllers {
+            needsInputMonitoring = false
+            permissionTimer?.invalidate()
+            permissionTimer = nil
+            waitingForPermission = false
+        }
         guard let m = manager else { return }
         IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
         let excluded = devices.filter {
@@ -193,6 +199,7 @@ final class HIDPassthrough {
 
     /// A grant is being waited for (the poll timer is running).
     private var waitingForPermission = false
+    private var permissionTimer: Timer?
     /// After Input Monitoring was granted we already recreated the manager once: further
     /// `kIOReturnNotPermitted` sometimes only clears on a relaunch (do not keep recreating a
     /// passed-through DualSense every 3 s).
@@ -204,8 +211,8 @@ final class HIDPassthrough {
         awaitPermission()
     }
 
-    /// A Steam Controller's descriptor has keyboard and mouse collections, so macOS opens it only
-    /// with Input Monitoring: ask for it, then recreate the manager once it is granted.
+    /// Steam Controllers and generic composite controllers can have keyboard/mouse collections:
+    /// ask for Input Monitoring, then recreate the manager once it is granted.
     private func awaitPermission() {
         needsInputMonitoring = true
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
@@ -222,11 +229,12 @@ final class HIDPassthrough {
         // device. Poll TCC and, once granted, recreate the manager so the devices open.
         guard !waitingForPermission else { return }
         waitingForPermission = true
-        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] t in
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             guard IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted else { return }
             t.invalidate()
             self.waitingForPermission = false
+            self.permissionTimer = nil
             self.recreatedAfterGrant = true
             log("hid passthrough: Input Monitoring granted, reopening the HID manager")
             self.restart()

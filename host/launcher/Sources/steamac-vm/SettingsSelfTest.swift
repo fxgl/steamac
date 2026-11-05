@@ -39,6 +39,25 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+        let savedVirtualPad = settings.virtualPad
+        let savedPadType = settings.padType
+        context.needsInputMonitoring = true
+        settings.virtualPad = true
+        for type in [LauncherSettings.PadType.auto, .steamController, .dualSense, .dualShock4, .xbox360] {
+            settings.padType = type
+            let expected = type == .auto || type == .steamController
+            if context.showsInputMonitoringWarning != expected {
+                failures.append("Input Monitoring warning: wrong visibility for \(type)")
+            }
+        }
+        settings.padType = .auto
+        settings.virtualPad = false
+        if context.showsInputMonitoringWarning { failures.append("Input Monitoring warning: passthrough disabled") }
+        settings.virtualPad = true
+        context.needsInputMonitoring = false
+        if context.showsInputMonitoringWarning { failures.append("Input Monitoring warning: permission not needed") }
+        settings.virtualPad = savedVirtualPad
+        settings.padType = savedPadType
         var tabs = SettingsWindowController.Tab.allCases[...]
 
         func capture(_ name: String, _ rep: NSBitmapImageRep?) {

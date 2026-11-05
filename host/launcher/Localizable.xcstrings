@@ -4,34 +4,34 @@
     "" : {
 
     },
-    "A Steam Controller (Bluetooth or its Puck) needs Input Monitoring to pass through as itself. Without it, SteamOS sees an Xbox 360 controller. Enable FX Steam Launcher in System Settings › Privacy & Security › Input Monitoring; the launcher picks up the grant within a few seconds." : {
+    "This controller needs Input Monitoring to pass through as itself. Enable FX Steam Launcher in Mac System Settings › Privacy & Security › Input Monitoring. If access is already enabled but the controller is still unavailable, restart the launcher." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Steam Controller (Bluetooth или его Puck) нужен доступ Input Monitoring, чтобы пройти в SteamOS как он сам. Без него SteamOS видит Xbox 360. Включите FX Steam Launcher в Системных настройках › Конфиденциальность и безопасность › Мониторинг ввода; лаунчер подхватит разрешение за несколько секунд."
+            "value" : "Для этого контроллера нужен доступ «Мониторинг ввода», чтобы передавать его в SteamOS как исходное устройство. Включите FX Steam Launcher в Системных настройках Mac › Конфиденциальность и безопасность › Мониторинг ввода. Если доступ уже включён, но контроллер всё ещё недоступен, перезапустите лаунчер."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Steam Controller（蓝牙或其 Puck）需要“输入监控”权限才能以自身身份传入 SteamOS。没有该权限时，SteamOS 会把它看成 Xbox 360。请在“系统设置 › 隐私与安全性 › 输入监控”中为 FX Steam Launcher 打开开关；启动器会在几秒内识别授权。"
+            "value" : "此控制器需要“输入监控”权限才能以自身身份传入 SteamOS。请在 Mac 系统设置 › 隐私与安全性 › 输入监控中启用 FX Steam Launcher。如果已启用访问权限但控制器仍不可用，请重新启动启动器。"
           }
         }
       }
     },
-    "Enable Input Monitoring…" : {
+    "Mac Input Monitoring Settings…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Включить Input Monitoring…"
+            "value" : "Mac: Мониторинг ввода…"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启用输入监控…"
+            "value" : "Mac 输入监控设置…"
           }
         }
       }

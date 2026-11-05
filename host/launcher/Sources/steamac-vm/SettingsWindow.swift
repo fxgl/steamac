@@ -24,6 +24,9 @@ final class SettingsContext: ObservableObject {
     @Published var restartRequested = false
     /// HID could not open a Steam Controller / composite device: Settings > Controller shows a warning.
     @Published var needsInputMonitoring = false
+    var showsInputMonitoringWarning: Bool {
+        needsInputMonitoring && settings.virtualPad && (settings.padType == .auto || settings.padType == .steamController)
+    }
     /// Asks macOS for Input Monitoring again (and the HID layer starts polling for a grant).
     var requestInputMonitoring: (() -> Void)?
 
@@ -89,7 +92,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .general: return 830
             case .display: return 600
             case .mouse: return 470
-            case .controller: return 700
+            case .controller: return 620
             case .sound: return 440
             case .streaming: return 560
             case .games: return 620
@@ -102,6 +105,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let tabs: SettingsTabController
     let context: SettingsContext
+    private var subscriptions: [AnyCancellable] = []
 
     init(context: SettingsContext) {
         self.context = context
@@ -126,11 +130,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         super.init()
         window.delegate = self
         tabs.didSelect = { [weak self] tab in self?.fit(tab) }
+        for changes in [context.$needsInputMonitoring.map { _ in () }.eraseToAnyPublisher(),
+                        context.settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(),
+                        context.settings.$padType.map { _ in () }.eraseToAnyPublisher()] {
+            subscriptions.append(changes.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in
+                guard let self, self.tabs.selectedTabViewItemIndex == Tab.controller.rawValue else { return }
+                self.fit(.controller)
+            })
+        }
         fit(.general)
     }
 
     private func fit(_ tab: Tab) {
-        let size = NSSize(width: SettingsWindowController.width, height: tab.height)
+        let height = tab == .controller && context.showsInputMonitoringWarning ? 700 : tab.height
+        let size = NSSize(width: SettingsWindowController.width, height: height)
         let frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
         var f = window.frame
         f.origin.y += f.height - frame.height
@@ -731,10 +744,10 @@ private struct ControllerTab: View {
     var body: some View {
         Form {
             Section {
-                if context.needsInputMonitoring {
+                if context.showsInputMonitoringWarning {
                     VStack(alignment: .leading, spacing: 8) {
-                        SizeWarning(text: String(localized: "A Steam Controller (Bluetooth or its Puck) needs Input Monitoring to pass through as itself. Without it, SteamOS sees an Xbox 360 controller. Enable FX Steam Launcher in System Settings › Privacy & Security › Input Monitoring; the launcher picks up the grant within a few seconds."))
-                        Button(String(localized: "Enable Input Monitoring…")) {
+                        SizeWarning(text: String(localized: "This controller needs Input Monitoring to pass through as itself. Enable FX Steam Launcher in Mac System Settings › Privacy & Security › Input Monitoring. If access is already enabled but the controller is still unavailable, restart the launcher."))
+                        Button(String(localized: "Mac Input Monitoring Settings…")) {
                             context.requestInputMonitoring?()
                             openInputMonitoringSettings()
                         }

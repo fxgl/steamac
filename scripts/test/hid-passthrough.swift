@@ -276,7 +276,6 @@ extension HIDPassthrough {
         check(rematched.devices.isEmpty, "duplicate removal is harmless")
         hid.deactivate(reconnected, owner: owner)
 
-        hid.matchSteamControllers = true
         let ble = TestHIDDevice(id: 20, bluetooth: true, valve: true)
         hid.manager!.emitMatch(ble)
         let valve = hid.devices.last!
@@ -465,6 +464,31 @@ extension HIDPassthrough {
         check(inputs == 2, "diagnostics do not reactivate a deactivated input route")
         #elseif HAS_GENERIC_HID
         check(false, "HID discovery and DualSense axis diagnostics present (STEAMAC-8V/8R)")
+        #endif
+        #if HAS_INPUT_MONITORING_WARNING
+        let warningHID = HIDPassthrough()
+        warningHID.matchSteamControllers = true
+        var permissionChanges: [Bool] = []
+        warningHID.onPermissionNeededChange = { permissionChanges.append($0) }
+        warningHID.awaitPermission()
+        check(warningHID.needsInputMonitoring && warningHID.waitingForPermission,
+              "permission denial publishes warning and polls for a grant")
+        warningHID.matchGenericControllers = true
+        warningHID.matchSteamControllers = false
+        check(warningHID.needsInputMonitoring, "generic matching keeps the composite-controller warning")
+        let permissionTimer = warningHID.permissionTimer
+        warningHID.matchGenericControllers = false
+        check(!warningHID.needsInputMonitoring && !warningHID.waitingForPermission
+              && warningHID.permissionTimer == nil && permissionTimer?.isValid == false,
+              "disabling permission-requiring matching clears warning and stops polling even before start")
+        check(permissionChanges == [true, false], "permission warning changes propagate to Settings")
+        warningHID.matchSteamControllers = true
+        warningHID.recreatedAfterGrant = true
+        warningHID.awaitPermission()
+        check(warningHID.needsInputMonitoring && warningHID.permissionTimer == nil
+              && !warningHID.waitingForPermission,
+              "second denial after grant retains warning without promising another automatic reopen")
+        warningHID.matchSteamControllers = false
         #endif
         print("HID passthrough: \(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1

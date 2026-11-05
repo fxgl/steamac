@@ -37,6 +37,8 @@ if "GenericHIDRouting" in production:
     flags += ["-D", "HAS_GENERIC_HID"]
 if "func diagnosticLines()" in production:
     flags += ["-D", "HAS_HID_DIAGNOSTICS"]
+if "var needsInputMonitoring" in production:
+    flags += ["-D", "HAS_INPUT_MONITORING_WARNING"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:
     directory = Path(temporary)
     source = directory / "main.swift"

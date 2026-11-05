@@ -652,7 +652,9 @@ Its report descriptor has keyboard and mouse collections (the controller's deskt
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
 for it and opens the device as soon as it is granted (`hid passthrough: Input Monitoring granted, reopening the HID manager`).
 Settings → Controller shows a warning when a controller needs this permission, with an
-**Enable Input Monitoring…** button that requests access and opens the relevant System Settings pane.
+**Mac Input Monitoring Settings…** button that requests access and opens the relevant System Settings pane.
+The warning is shown only while Steam Controller or generic HID matching is enabled. If access is already
+enabled but the controller is still unavailable, restart the launcher.
 macOS returns a Bluetooth LE Steam Controller's 64-byte feature report 1 (Steam's command channel) as
 65 bytes, so only that controller's Bluetooth GET_REPORT buffers have headroom over the descriptor's
 sizes; a USB DualSense gets exactly the descriptor's sizes (its firmware report 32 timed out with the
