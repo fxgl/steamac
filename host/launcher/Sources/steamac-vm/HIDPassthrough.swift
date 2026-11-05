@@ -81,6 +81,10 @@ final class HIDPassthrough {
         /// Which PadSlot last activated this device: `deactivate` from another slot must not
         /// clear a handler the new owner just set (device moving to a lower player).
         fileprivate var inputOwner: ObjectIdentifier?
+        /// Diagnostic snapshot uses IOKit's existing callback buffer; no report copy or
+        /// per-input allocation. Only read on the main thread, like the callback itself.
+        fileprivate var lastInputLength = 0
+        fileprivate var lastInputTime: TimeInterval = 0
 
         var live: Bool {
             guard puckSlot != nil else { return true }
@@ -320,6 +324,8 @@ final class HIDPassthrough {
             guard let ctx, result == kIOReturnSuccess, length > 0 else { return }
             let d = Unmanaged<Device>.fromOpaque(ctx).takeUnretainedValue()
             guard let me = d.owner else { return }
+            d.lastInputLength = length
+            d.lastInputTime = ProcessInfo.processInfo.systemUptime
             let reportID = report[0]
             if d.puckSlot != nil, HIDPassthrough.stateReports.contains(reportID) {
                 let wasLive = d.live
@@ -355,6 +361,98 @@ final class HIDPassthrough {
     private func stopPuckTimer() {
         puckTimer?.invalidate()
         puckTimer = nil
+    }
+    /// On-demand inventory for `pad state` and problem reports (STEAMAC-8V). An
+    /// independent manager enumerates *all* usages without opening any HID device,
+    /// scheduling callbacks, seizing it or asking for Input Monitoring. In particular,
+    /// show devices the routing manager never matched, rather than only accepted pads.
+    func diagnosticLines() -> [String] {
+        var lines = ["HID routing: generic=\(matchGenericControllers), Valve=\(matchSteamControllers)"]
+        for d in devices {
+            let route = d.onInput == nil ? "not forwarding" : "forwarding"
+            var line = String(format: "HID %04x:%04x", d.identity.vendor, d.identity.product)
+                + " \(d.identity.name), registry=\(d.registryID), \(route)"
+            if d.lastInputLength > 0 {
+                let report = UnsafeBufferPointer(start: d.inputBuffer, count: min(d.lastInputLength, d.maxInput))
+                line += String(format: ", input=%d bytes age=%.3fs", report.count,
+                               ProcessInfo.processInfo.systemUptime - d.lastInputTime)
+                if Self.dualSenses.contains(where: { $0.vendor == Int(d.identity.vendor) && $0.product == Int(d.identity.product) }),
+                   let decoded = Self.dualSenseDiagnostic(report, bus: d.identity.bus) {
+                    line += ", " + decoded
+                }
+            } else { line += ", no input reports" }
+            lines.append(line)
+        }
+        let census = IOHIDManagerCreate(kCFAllocatorDefault, IOHIDManagerOptions.independentDevices.rawValue)
+        IOHIDManagerSetDeviceMatching(census, nil)
+        let result = IOHIDManagerOpen(census, IOOptionBits(kIOHIDOptionsTypeNone))
+        defer { IOHIDManagerClose(census, IOOptionBits(kIOHIDOptionsTypeNone)) }
+        guard result == kIOReturnSuccess else {
+            lines.append("HID inventory unavailable: \(Self.describe(result))")
+            return lines
+        }
+        let refs = IOHIDManagerCopyDevices(census) as? Set<IOHIDDevice> ?? []
+        if refs.isEmpty { lines.append("HID inventory: no HID devices") }
+        for ref in refs.sorted(by: { (Self.registryID($0) ?? 0) < (Self.registryID($1) ?? 0) }) {
+            func int(_ key: String) -> Int { (IOHIDDeviceGetProperty(ref, key as CFString) as? NSNumber)?.intValue ?? 0 }
+            func string(_ key: String) -> String { (IOHIDDeviceGetProperty(ref, key as CFString) as? String) ?? "?" }
+            let id = Self.registryID(ref)
+            let controller = GenericHIDRouting.usages.contains { IOHIDDeviceConformsTo(ref, 1, UInt32($0)) }
+            let multiAxis = IOHIDDeviceConformsTo(ref, 1, 8)
+            let known = Self.isKnownController(ref)
+            let route: String
+            if devices.contains(where: { $0.registryID == id }) { route = "passed through (see forwarding state above)" }
+            else if known { route = "known controller, not opened (see settings/open errors)" }
+            else if !controller { route = "excluded usage" }
+            else if GCController.supportsHIDDevice(ref) { route = "GameController-supported (not opened as generic HID)" }
+            else if !matchGenericControllers { route = "generic routing disabled" }
+            else { route = "eligible generic HID, not opened (see matching/open errors)" }
+            var line = String(format: "HID inventory: %04x:%04x", int(kIOHIDVendorIDKey), int(kIOHIDProductIDKey))
+                + " \(string(kIOHIDProductKey)), transport=\(string(kIOHIDTransportKey)), registry=\(id.map(String.init) ?? "?")"
+                + ", primary=\(int(kIOHIDPrimaryUsagePageKey))/\(int(kIOHIDPrimaryUsageKey))"
+            if let pairs = IOHIDDeviceGetProperty(ref, kIOHIDDeviceUsagePairsKey as CFString) as? [[String: NSNumber]] {
+                line += ", usages=" + pairs.map {
+                    "\($0[kIOHIDDeviceUsagePageKey]?.intValue ?? 0)/\($0[kIOHIDDeviceUsageKey]?.intValue ?? 0)"
+                }.joined(separator: ",")
+            }
+            line += ", \(route)"
+            // Descriptor bytes describe layout, not input values; do not dump keyboard,
+            // mouse or other unrelated HID reports/descriptors, nor any serial numbers.
+            if controller || multiAxis || known,
+               let descriptor = IOHIDDeviceGetProperty(ref, kIOHIDReportDescriptorKey as CFString) as? Data,
+               descriptor.count <= 4096 {
+                line += ", descriptor=" + Self.hex([UInt8](descriptor))
+            }
+            lines.append(line)
+        }
+        return lines
+    }
+
+    /// Diagnostic-only decoding; never changes forwarded bytes or applies a deadzone.
+    /// Layout/offsets: Linux hid-playstation.c, dualsense_input_report and
+    /// dualsense_parse_report (USB data[1], Bluetooth data[2]). Motion is raw signed
+    /// sensor counts, not calibrated evdev units; touch coordinates are valid only
+    /// for active contacts. This separates the candidate inputs in STEAMAC-8R.
+    static func dualSenseDiagnostic(_ report: UnsafeBufferPointer<UInt8>, bus: UInt16) -> String? {
+        let base: Int
+        if bus == busUSB, report.count == 64, report[0] == 1 { base = 1 }
+        else if bus == busBluetooth, report.count == 78, report[0] == 0x31 { base = 2 }
+        else { return nil }
+        func signed(_ offset: Int) -> Int16 {
+            Int16(bitPattern: UInt16(report[base + offset]) | UInt16(report[base + offset + 1]) << 8)
+        }
+        func touch(_ index: Int) -> String {
+            let offset = base + 32 + index * 4
+            guard report[offset] & 0x80 == 0 else { return "inactive" }
+            let x = Int(report[offset + 1]) | Int(report[offset + 2] & 0x0f) << 8
+            let y = Int(report[offset + 2] >> 4) | Int(report[offset + 3]) << 4
+            return "\(x),\(y)"
+        }
+        return "sticks L=\(report[base]),\(report[base + 1]) R=\(report[base + 2]),\(report[base + 3])"
+            + " (center 127/128; passthrough has no launcher deadzone), triggers=\(report[base + 4]),\(report[base + 5])"
+            + ", gyro=\(signed(15)),\(signed(17)),\(signed(19)) raw"
+            + ", accel=\(signed(21)),\(signed(23)),\(signed(25)) raw"
+            + ", touch0=\(touch(0)), touch1=\(touch(1))"
     }
 
     static let busUSB: UInt16 = 0x03

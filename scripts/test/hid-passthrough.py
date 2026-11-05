@@ -35,6 +35,8 @@ if "IOHIDManagerOptions.independentDevices" in production:
     flags += ["-D", "HAS_INDEPENDENT_DEVICES"]
 if "GenericHIDRouting" in production:
     flags += ["-D", "HAS_GENERIC_HID"]
+if "func diagnosticLines()" in production:
+    flags += ["-D", "HAS_HID_DIAGNOSTICS"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:
     directory = Path(temporary)
     source = directory / "main.swift"

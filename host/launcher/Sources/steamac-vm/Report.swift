@@ -192,6 +192,8 @@ struct ReportContext {
     var guest: GuestLogs?
     /// The VM window's picture (nil without a window).
     var captureScreenshot: ((@escaping (CGImage?) -> Void) -> Void)?
+    /// Main-thread controller state and passive HID inventory, only with launcher logs.
+    var controllerDiagnostics: (() -> String)?
     /// After an unexpected VM exit: what happened ("VM process crashed (SIGABRT)").
     var exitSummary: String?
 }
@@ -233,6 +235,9 @@ final class ReportBundle: @unchecked Sendable {
     @MainActor
     static func collect(context: ReportContext, choices: ReportChoices, status: (String) -> Void) async throws -> ReportBundle {
         let b = try ReportBundle(context: context, choices: choices)
+        if choices.launcherLogs, let diagnostics = context.controllerDiagnostics {
+            b.write("controllers.txt", CrashReporting.scrub(diagnostics()))
+        }
         status(choices.launcherLogs ? String(localized: "Collecting launcher logs…") : String(localized: "Collecting system information…"))
         await Task.detached { b.writeHostFiles() }.value
         if choices.screenshot {
@@ -580,7 +585,7 @@ enum FeedbackSender {
     }
 
     private static func loadItems(_ dir: String) -> [Item] {
-        let order = ["system-info.txt", "settings.txt", "launcher.log", "perf-stall.log", "console.log",
+        let order = ["system-info.txt", "settings.txt", "controllers.txt", "launcher.log", "perf-stall.log", "console.log",
                      "steamos-logs.tar.gz", "screenshot.png"]
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
             .filter { $0 != "report.json" && !$0.hasPrefix(".") }

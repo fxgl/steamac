@@ -551,7 +551,8 @@ do {
     func openReport(_ origin: String, on parent: NSWindow) {
         wc.releasePointer()
         let context = ReportContext(origin: origin, options: options, runDir: Supervisor.runDir, guest: guestLogs,
-                                    captureScreenshot: { done in wc.captureWindow { drawable, _ in done(drawable) } })
+                                    captureScreenshot: { done in wc.captureWindow { drawable, _ in done(drawable) } },
+                                    controllerDiagnostics: { gamepad?.diagnosticLines().joined(separator: "\n") ?? "No gamepad bridge" })
         MainActor.assumeIsolated { _ = ReportSheet.present(on: parent, context: context) }
     }
     lifecycle.report = { openReport("menu", on: wc.window) }

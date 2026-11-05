@@ -10,6 +10,7 @@ typealias TestDeviceCallback = (UnsafeMutableRawPointer?, IOReturn, UnsafeMutabl
 private var services: [io_service_t: TestHIDDevice] = [:]
 private var nextService: io_service_t = 1
 private var permissionRequests = 0
+private var diagnosticInventory: [TestHIDDevice] = []
 
 final class TestHIDElement: NSObject {
     let reportID: UInt32
@@ -47,6 +48,8 @@ final class TestHIDDevice: NSObject {
     var inputContext: UnsafeMutableRawPointer?
     var removalCallback: IOHIDCallback?
     var removalContext: UnsafeMutableRawPointer?
+    var inputBuffer: UnsafeMutablePointer<UInt8>?
+    var inputCapacity = 0
 
     init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil) {
         self.id = id
@@ -66,11 +69,10 @@ final class TestHIDDevice: NSObject {
 
     func emit(_ report: [UInt8]) {
         guard live && isOpen && scheduled else { return }
-        var report = report
-        report.withUnsafeMutableBufferPointer {
-            inputCallback?(inputContext, kIOReturnSuccess, nil, kIOHIDReportTypeInput,
-                           UInt32($0[0]), $0.baseAddress!, $0.count)
-        }
+        guard let inputBuffer, report.count <= inputCapacity else { return }
+        for (i, byte) in report.enumerated() { inputBuffer[i] = byte }
+        inputCallback?(inputContext, kIOReturnSuccess, nil, kIOHIDReportTypeInput,
+                       UInt32(report[0]), inputBuffer, report.count)
     }
 
     func emitRemoval() {
@@ -115,6 +117,10 @@ final class TestHIDManager {
 func log(_ line: String) { print(line) }
 let IOHIDManagerCreate: (CFAllocator?, IOOptionBits) -> IOHIDManager = { _, options in TestHIDManager(options: options) }
 func IOHIDManagerSetDeviceMatchingMultiple(_ manager: IOHIDManager, _ matching: CFArray?) {}
+func IOHIDManagerSetDeviceMatching(_ manager: IOHIDManager, _ matching: CFDictionary?) {}
+func IOHIDManagerCopyDevices(_ manager: IOHIDManager) -> CFSet? {
+    diagnosticInventory.isEmpty ? nil : NSSet(array: diagnosticInventory) as CFSet
+}
 func IOHIDManagerRegisterDeviceMatchingCallback(_ manager: IOHIDManager, _ callback: TestDeviceCallback?, _ context: UnsafeMutableRawPointer?) {
     manager.matchingCallback = callback
     manager.matchingContext = context
@@ -178,6 +184,8 @@ func IOHIDDeviceRegisterInputReportCallback(_ device: IOHIDDevice, _ report: Uns
                                           _ callback: IOHIDReportCallback?, _ context: UnsafeMutableRawPointer?) {
     device.inputCallback = callback
     device.inputContext = context
+    device.inputBuffer = report
+    device.inputCapacity = size
 }
 func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafeMutablePointer<UInt8>, _ size: UnsafeMutablePointer<CFIndex>) -> IOReturn {
@@ -396,6 +404,65 @@ extension HIDPassthrough {
             check(unnumbered.setRequests.last?.1 == 0 && unnumbered.setRequests.last?.2 == [0x81, 0x55],
                   "unnumbered output uses report ID zero without stripping payload")
         }
+        #endif
+        #if HAS_HID_DIAGNOSTICS
+        let unseen = generic(50, usage: 8)
+        unseen.properties[kIOHIDProductKey] = "Horizon SLT6"
+        unseen.properties[kIOHIDVendorIDKey] = 0x35cf
+        unseen.properties[kIOHIDProductIDKey] = 0x04fb
+        unseen.properties[kIOHIDPrimaryUsagePageKey] = 1
+        unseen.properties[kIOHIDPrimaryUsageKey] = 8
+        let keyboard = generic(51, usage: 6)
+        keyboard.properties[kIOHIDProductKey] = "Keyboard"
+        diagnosticInventory = [unseen, keyboard, supported, numbered]
+        let census = genericHID.diagnosticLines().joined(separator: "\n")
+        check(census.contains("35cf:04fb") && census.contains("Horizon SLT6")
+              && census.contains("primary=1/8") && census.contains("excluded usage"),
+              "inventory exposes controllers excluded by usage matching (STEAMAC-8V)")
+        check(census.contains("GameController-supported"), "inventory distinguishes GameController filtering")
+        check(census.contains("passed through"), "inventory identifies active raw HID routes")
+        check(unseen.openCalls == 0 && keyboard.openCalls == 0 && supported.openCalls == 0
+              && !unseen.scheduled && !keyboard.scheduled && permissionRequests == requestsBefore + 1,
+              "diagnostic census never opens or schedules excluded devices or requests access")
+        check(keyboard.supportQueries == 0, "diagnostics do not probe GameController support for keyboards")
+        diagnosticInventory = []
+        check(genericHID.diagnosticLines().contains(where: { $0.contains("no HID devices") }),
+              "empty inventory is explicit")
+
+        func dualSenseReport(bluetooth: Bool) -> [UInt8] {
+            var report = [UInt8](repeating: 0, count: bluetooth ? 78 : 64)
+            report[0] = bluetooth ? 0x31 : 1
+            let base = bluetooth ? 2 : 1
+            for (i, byte): (Int, UInt8) in [128, 127, 129, 126, 0, 255].enumerated() { report[base + i] = byte }
+            report[base + 15] = 0xff; report[base + 16] = 0xff // gyro x = -1, little endian
+            report[base + 21] = 0x00; report[base + 22] = 0xe0 // accel x = -8192
+            report[base + 32] = 0 // first contact active at (0x345, 0x678)
+            report[base + 33] = 0x45; report[base + 34] = 0x83; report[base + 35] = 0x67
+            report[base + 36] = 0x80 // second contact inactive; coordinates must not be interpreted
+            return report
+        }
+        for bluetooth in [false, true] {
+            let report = dualSenseReport(bluetooth: bluetooth)
+            let decoded = report.withUnsafeBufferPointer { HIDPassthrough.dualSenseDiagnostic($0, bus: bluetooth ? busBluetooth : busUSB) }
+            check(decoded?.contains("sticks L=128,127 R=129,126") == true
+                  && decoded?.contains("triggers=0,255") == true
+                  && decoded?.contains("gyro=-1,0,0") == true
+                  && decoded?.contains("accel=-8192,0,0") == true
+                  && decoded?.contains("touch0=837,1656") == true
+                  && decoded?.contains("touch1=inactive") == true,
+                  "\(bluetooth ? "Bluetooth" : "USB") DualSense diagnostics separate sticks, sensors and touches (STEAMAC-8R)")
+            let truncated = Array(report.dropLast())
+            check(truncated.withUnsafeBufferPointer { HIDPassthrough.dualSenseDiagnostic($0, bus: bluetooth ? busBluetooth : busUSB) } == nil,
+                  "truncated DualSense report is not decoded")
+        }
+        let snapshot = dualSenseReport(bluetooth: true)
+        bluetooth.emit(snapshot)
+        let lines = hid.diagnosticLines().joined(separator: "\n")
+        check(lines.contains("sticks L=128,127 R=129,126") && lines.contains("age="),
+              "diagnostic report reads the latest callback buffer and its age")
+        check(inputs == 2, "diagnostics do not reactivate a deactivated input route")
+        #elseif HAS_GENERIC_HID
+        check(false, "HID discovery and DualSense axis diagnostics present (STEAMAC-8V/8R)")
         #endif
         print("HID passthrough: \(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1

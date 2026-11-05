@@ -1144,6 +1144,24 @@ final class GamepadBridge {
         for s in slots.prefix(2) where s.index == 0 || s.serviceReady { s.injectTestSequence() }
     }
 
+    /// Shared by `pad state` and the opt-in launcher-log attachment. Main thread only.
+    func diagnosticLines() -> [String] {
+        var lines = ["Controller settings: pad=\((typeOverride ?? settings.padType).rawValue), "
+            + "virtual=\(settings.virtualPad), DualSense passthrough=\(settings.dualSensePassthrough), "
+            + "stick deadzone=\(settings.stickDeadzone)% (uinput only)"]
+        for s in slots where s.index == 0 || s.serviceReady || s.controller != nil { lines.append(s.stateLine) }
+        let steam = hid.devices.filter(HIDPassthrough.isSteamController).count
+        let generic = hid.devices.filter(\.generic).count
+        lines.append("HID DualSenses \(hid.devices.count - steam - generic), Steam Controllers \(steam), generic controllers \(generic)")
+        for d in hid.devices where d.generic {
+            let player = rawPlayers[d.registryID].map { String($0 + 1) } ?? "none (no usable free player)"
+            lines.append(String(format: "generic HID %04x:%04x", d.identity.vendor, d.identity.product)
+                + " \(d.identity.name), registry \(d.registryID), player \(player)")
+        }
+        lines += hid.diagnosticLines()
+        return lines
+    }
+
     /// --control-fifo `pad on|off|test [<player>]`, `pad state` (DebugControl).
     func control(_ args: [String]) {
         let usage = "control: pad on|off|test [1…\(slots.count)] | state"
@@ -1155,15 +1173,7 @@ final class GamepadBridge {
         case "test":
             slot.injectTestSequence()
         case "state":
-            for s in slots where s.index == 0 || s.serviceReady || s.controller != nil { log("control: \(s.stateLine)") }
-            let steam = hid.devices.filter(HIDPassthrough.isSteamController).count
-            let generic = hid.devices.filter(\.generic).count
-            log("control: HID DualSenses \(hid.devices.count - steam - generic), Steam Controllers \(steam), generic controllers \(generic)")
-            for d in hid.devices where d.generic {
-                let player = rawPlayers[d.registryID].map { String($0 + 1) } ?? "none (no usable free player)"
-                log(String(format: "control: generic HID %04x:%04x", d.identity.vendor, d.identity.product)
-                    + " \(d.identity.name), registry \(d.registryID), player \(player)")
-            }
+            for line in diagnosticLines() { log("control: \(line)") }
         default:
             log(usage)
         }
