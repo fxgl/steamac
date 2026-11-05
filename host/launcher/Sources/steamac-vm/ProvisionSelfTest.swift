@@ -239,7 +239,44 @@ enum ProvisionSelfTest {
         }
         check(CrashReporting.diskCreationReport(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotParseResponse)) != nil,
               "unexpected URLSession protocol failure remains reportable")
-        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, ENXIO, ENODEV, EIO, ENOENT] {
+        for type in ["apfs", "hfs", "exfat"] {
+            attempt("supported \(type) filesystem") {
+                let dense = try DiskCreationFilesystem.preflight(directory: "/Volumes/Jeux#/StreamOS", type: type,
+                    flags: 0, free: 200 << 30, diskBytes: 92746547200, rootfsBytes: 10737418240)
+                check(dense == (type == "exfat"), "supported \(type) preserves sparse/dense allocation policy")
+            }
+        }
+        for (type, flags, free, advice) in [
+            ("msdos", UInt32(0), UInt64(200 << 30), "FAT32/MS-DOS"),
+            ("apfs", UInt32(MNT_RDONLY), UInt64(200 << 30), "read-only"),
+            ("exfat", UInt32(0), UInt64(87936708608), "not enough free space"),
+        ] {
+            do {
+                _ = try DiskCreationFilesystem.preflight(directory: "/Volumes/Jeux#/StreamOS", type: type,
+                    flags: flags, free: free, diskBytes: 92746547200, rootfsBytes: 10737418240)
+                check(false, "\(type) preflight rejects \(advice)")
+            } catch {
+                check("\(error)".contains(advice) && CrashReporting.diskCreationReport(error) == nil,
+                      "\(type) preflight retains \(advice) guidance and log-only policy")
+            }
+        }
+        for type in ["ufsd_NTFS", "ntfs", "smbfs", "webdav", "unknown"] {
+            do {
+                _ = try DiskCreationFilesystem.preflight(directory: "/Volumes/Jeux#/StreamOS", type: type,
+                    flags: 0x201218, free: 87936708608, diskBytes: 92746547200, rootfsBytes: 10737418240)
+                check(false, "unsupported \(type) rejected before downloading (STEAMAC-8S)")
+            } catch {
+                check(error is DiskCreationFilesystem.Rejection
+                      && "\(error)".contains(type) && "\(error)".contains("APFS")
+                      && CrashReporting.diskCreationReport(error) == nil,
+                      "unsupported \(type) has filesystem guidance and is log-only (STEAMAC-8S)")
+            }
+        }
+        let tooLarge = OptionError("ftruncate /Volumes/Jeux#/StreamOS/steamos.img.partial: \(String(cString: strerror(EFBIG)))")
+        check(DiskCreationFilesystem.rejection(tooLarge)?.description.contains("APFS") == true
+              && CrashReporting.diskCreationReport(tooLarge) == nil,
+              "late file-size limit has guidance and is log-only (STEAMAC-8S)")
+        for code in [EROFS, EACCES, EPERM, ENOSPC, EDQUOT, EFBIG, ENXIO, ENODEV, EIO, ENOENT] {
             let detail = "write /Volumes/test/steamos.img: \(String(cString: strerror(code)))"
             let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(code))
             let cocoa = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,

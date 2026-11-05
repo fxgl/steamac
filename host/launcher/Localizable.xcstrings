@@ -251,6 +251,28 @@
         }
       }
     },
+    "%@ uses the unsupported filesystem %@. Choose an APFS, Mac OS Extended, or exFAT volume for the SteamOS disk; APFS is recommended." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ uses the unsupported filesystem %2$@. Choose an APFS, Mac OS Extended, or exFAT volume for the SteamOS disk; APFS is recommended."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ использует неподдерживаемую файловую систему %2$@. Выберите том APFS, Mac OS Extended или exFAT для диска SteamOS; рекомендуется APFS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 使用不受支持的文件系统 %2$@。请选择 APFS、Mac OS 扩展或 exFAT 卷来存储 SteamOS 磁盘；推荐使用 APFS。"
+          }
+        }
+      }
+    },
     "%@ · %@" : {
       "localizations" : {
         "en" : {
@@ -7421,6 +7443,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "磁盘已断开或报告 I/O 错误。请检查连接并运行“磁盘工具”的“急救”，然后重试；若错误持续，请使用其他磁盘。"
+          }
+        }
+      }
+    },
+    "The filesystem or its driver cannot create a file as large as the SteamOS disk. Choose an APFS, Mac OS Extended, or exFAT volume; APFS is recommended." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The filesystem or its driver cannot create a file as large as the SteamOS disk. Choose an APFS, Mac OS Extended, or exFAT volume; APFS is recommended."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файловая система или её драйвер не позволяет создать файл размером с диск SteamOS. Выберите том APFS, Mac OS Extended или exFAT; рекомендуется APFS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件系统或其驱动程序无法创建与 SteamOS 磁盘一样大的文件。请选择 APFS、Mac OS 扩展或 exFAT 卷；推荐使用 APFS。"
           }
         }
       }
