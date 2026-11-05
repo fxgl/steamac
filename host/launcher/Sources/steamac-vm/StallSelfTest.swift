@@ -195,6 +195,8 @@ enum StallSelfTest {
                         $0.idle >= StallMonitor.idleThreshold && $0.heartbeatAge > StallMonitor.heartbeatTimeout
                             && $0.history.contains("GPU activity samples")
                             && $0.history.contains("ctrl=") && $0.history.contains(" hb=")
+                            && $0.history.contains(" host-active=") && $0.history.contains(" host-key=")
+                            && $0.history.contains(" window=") && !$0.history.contains("window=detached")
                             && $0.memoryHistory.contains("VM memory snapshots")
                             && $0.memoryHistory.contains("malloc-in-use=")
                             && $0.memoryHistory.contains("malloc-allocated=")

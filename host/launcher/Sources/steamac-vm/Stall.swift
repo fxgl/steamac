@@ -46,6 +46,9 @@ final class StallMonitor {
         let pollGap: TimeInterval
         let game: Bool
         let gate: Bool
+        let hostActive: Bool
+        let hostKey: Bool
+        let hostWindow: String
     }
     // Independent of Settings > Performance statistics: reports otherwise had only the first
     // 2 s of GPU idleness and could not distinguish agent loss, host scheduling and GPU stalls.
@@ -309,9 +312,23 @@ final class StallMonitor {
         lastPoll = now
         guard now - lastReading >= 1 else { return }
         lastReading = now
+        // Guest game focus is not host application focus (STEAMAC-8N/8P).
+        // Keep presentation state in the same bounded timeline as GPU activity:
+        // otherwise a later foreground report cannot establish when occlusion began.
+        let window = view.window
+        let windowState: String
+        if let window {
+            windowState = window.isMiniaturized ? "miniaturized"
+                : !window.isVisible ? "hidden"
+                : window.occlusionState.contains(.visible) ? "visible" : "occluded"
+        } else {
+            windowState = "detached"
+        }
         let reading = Reading(at: now, counters: counters, heartbeatAge: heartbeatAge,
                               uptimeMs: guestUptimeMs, load: guestLoad, cpu: Self.cpuSeconds(),
-                              pollGap: gap, game: gameFocused, gate: gateOpen)
+                              pollGap: gap, game: gameFocused, gate: gateOpen,
+                              hostActive: NSApp.isActive, hostKey: window?.isKeyWindow ?? false,
+                              hostWindow: windowState)
         if readings.count < 32 {
             readings.append(reading)
         } else {
@@ -335,7 +352,8 @@ final class StallMonitor {
             lines.append(String(format: "ago=%.2f ", now - r.at) + Self.diagnosticCounterText(r.counters)
                          + " hb=\(heartbeat) up=\(r.uptimeMs)"
                          + String(format: " load=%.2f cpu=%.2f gap=%.2f", r.load, r.cpu, r.pollGap)
-                         + " game=\(r.game) gate=\(r.gate)")
+                         + " game=\(r.game) gate=\(r.gate)"
+                         + " host-active=\(r.hostActive) host-key=\(r.hostKey) window=\(r.hostWindow)")
         }
         return lines.joined(separator: "\n")
     }
