@@ -94,7 +94,7 @@ private struct GameProfileRow: View {
                     }
                 }
             }
-            TextField("Launch options", text: $env, prompt: Text(verbatim: "VKD3D_CONFIG=dxr"))
+            TextField("Launch options", text: $env)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: env) { _, value in
                     if GameProfile.validEnv(value) { change { $0.env = value } }

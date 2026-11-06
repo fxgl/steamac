@@ -223,6 +223,21 @@ class TitleDefaultsTests(unittest.TestCase):
         self.run_script()
         self.assertEqual(self.options(), WORDS + " %command%")
 
+    def test_forza_has_no_forced_launch_options(self):
+        self.assertNotIn("1293830", titles.TITLES)
+        self.run_script()
+        self.assertIsNone(self.app_options("1293830"))
+        self.profiles({"1293830": {"env": "VKD3D_CONFIG=dxr"}})
+        self.run_script()
+        self.assertEqual(self.app_options("1293830"), "VKD3D_CONFIG=dxr %command%")
+        self.profiles({})
+        self.run_script()
+        self.assertIsNone(self.app_options("1293830"))
+        key = (*titles.VDF_PATH, "1293830", "LaunchOptions")
+        self.config.write_text(titles.vdf_set(self.config.read_text(), key, "USER=1 %command%"))
+        self.run_script()
+        self.assertEqual(self.app_options("1293830"), "USER=1 %command%")
+
     def test_profile_values_are_shell_data(self):
         self.profiles({"570": {"env": "VKD3D_CONFIG=foo;bar PROTON_LOG="}})
         self.run_script()

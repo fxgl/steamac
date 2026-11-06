@@ -276,6 +276,55 @@ enum SettingsSelfTest {
             }
         }
 
+        /// Exercise the real SwiftUI field, including clearing and reopening it: an example
+        /// assignment in the empty-field prompt looked like a forced title default (STEAMAC-8X).
+        func profileLaunchOptions(then done: @escaping () -> Void) {
+            func fields(_ view: NSView) -> [NSTextField] {
+                (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(fields)
+            }
+            var values = ["", "VKD3D_CONFIG=dxr", "", "PROTON_LOG=1", ""]
+            func step() {
+                guard let field = sw.window.contentView.flatMap({ fields($0).first { $0.isEditable } }) else {
+                    failures.append("profiles: launch options field missing")
+                    return done()
+                }
+                if field.placeholderString?.contains("VKD3D_CONFIG=dxr") == true {
+                    failures.append("profiles: empty launch options look like a forced DXR assignment")
+                }
+                guard !values.isEmpty else {
+                    sw.show(tab: .general)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        sw.show(tab: .games)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            let reopened = sw.window.contentView.flatMap { fields($0).first { $0.isEditable } }
+                            if reopened?.stringValue != "" || settings.profile(for: profileID).env != "" {
+                                failures.append("profiles: cleared launch options changed after reopening Games")
+                            }
+                            done()
+                        }
+                    }
+                    return
+                }
+                let value = values.removeFirst()
+                field.selectText(nil)
+                guard let editor = field.currentEditor() as? NSTextView else {
+                    failures.append("profiles: launch options field editor missing")
+                    return done()
+                }
+                editor.selectAll(nil)
+                editor.insertText(value, replacementRange: editor.selectedRange())
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    let data = UserDefaults(suiteName: LauncherSettings.domain)?.data(forKey: "profile.\(profileID)")
+                    let stored = data.flatMap { try? JSONDecoder().decode(GameProfile.self, from: $0) }
+                    if settings.profile(for: profileID).env != value || stored?.env != value {
+                        failures.append("profiles: launch options edit did not persist: \(value)")
+                    }
+                    step()
+                }
+            }
+            step()
+        }
+
         func next() {
             guard let tab = tabs.popFirst() else {
                 CreateDiskWindowController.show(settings: settings)
@@ -314,7 +363,8 @@ enum SettingsSelfTest {
                 if tab == .games && popups(in: sw.window.contentView).count < 3 {
                     failures.append("profiles: graphics/driver/rating pickers not rendered")
                 }
-                next()
+                if tab == .games { profileLaunchOptions(then: next) }
+                else { next() }
             }
         }
         DispatchQueue.main.async { app.activate(); next() }
