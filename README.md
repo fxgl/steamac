@@ -82,6 +82,14 @@ settings stays. Launcher 1.4 shipped both settings off (`"DisableShaderCache" "1
 `"EnableShaderBackgroundProcessing" "0"`); on the first Steam start after updating, the script turns
 both back on once, but only if both are still exactly those values.
 
+Gaming Mode defaults the Steam UI to the virtual display's native resolution, including Retina,
+instead of Steam's separate 1920 × 1080 UI cap. Before Steam starts,
+`/usr/lib/steamac/steam-native-resolution` supplies a missing
+`InstallConfigStore/Gamescope/EnableSteamNativeExternalResolution` value in `config.vdf`.
+An explicit on/off choice in Steam is preserved. The global game resolution setting controls
+games separately; choosing 5120 × 2880 there does not raise the Steam UI resolution. The
+launcher's existing 4094-pixel maximum display side still applies.
+
 Steam's idle screensaver (Settings → Display → Screensaver in Game Mode) is off in the VM. After a
 few minutes without input Steam puts its `Screensaver_uid<n>` window in front of a running game,
 gamescope moves focus to it and the next clicks land in Steam until Escape. The launcher's mouse,
