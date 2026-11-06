@@ -8,6 +8,7 @@
  * frame with magenta menu arrows. The loopback test did not see it (fake implementations, checks off). */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,6 +83,58 @@ static const char kernel_msl[] =
   "#include <metal_stdlib>\nusing namespace metal;\n"
   "kernel void fill(device uint *out [[buffer(0)]], uint i [[thread_position_in_grid]]) { out[i] = i * 3u + 7u; }\n";
 
+/* Real CAMetalLayer failures, not a nil injected into a fake implementation. DXMT presents the
+ * result of nextDrawable without checking it (STEAMAC-98/9B). The command buffer must still finish,
+ * and a later drawable must work on the same context. */
+static int captured_presents;
+static void capture_present(void *userdata, void *cb, void *drawable) {
+  CHECK(cb && drawable, "capture received a missing command buffer/drawable");
+  captured_presents++;
+}
+
+static void
+test_unavailable_drawable(obj_handle_t device, obj_handle_t queue, int timed) {
+  CAMetalLayer *layer = [CAMetalLayer layer];
+  layer.device = (id<MTLDevice>)HOST(device);
+  layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+  layer.maximumDrawableCount = 2;
+  layer.allowsNextDrawableTimeout = YES;
+  layer.drawableSize = CGSizeMake(0, 0);
+  obj_handle_t layer_handle = (obj_handle_t)(uintptr_t)layer;
+  obj_handle_t missing = MetalLayer_nextDrawable(layer_handle);
+  CHECK(!missing, "zero-size layer unexpectedly supplied a drawable");
+  CHECK(!MetalDrawable_texture(missing), "unavailable drawable has a texture");
+  wmtr_stream_capture_set(capture_present, NULL);
+  int captured_before = captured_presents;
+  for (int i = 0; i < 8; i++) { /* repeated skipped frames must not lose/fault the context */
+    missing = MetalLayer_nextDrawable(layer_handle);
+    CHECK(!missing, "zero-size layer supplied a drawable on a later frame");
+    obj_handle_t cb = MTLCommandQueue_commandBuffer(queue);
+    if (timed) MTLCommandBuffer_presentDrawableAfterMinimumDuration(cb, missing, 1.0 / 60.0);
+    else MTLCommandBuffer_presentDrawable(cb, missing);
+    MTLCommandBuffer_commit(cb);
+    MTLCommandBuffer_waitUntilCompleted(cb);
+    CHECK(MTLCommandBuffer_status(cb) == WMTCommandBufferStatusCompleted, "skipped frame did not complete");
+  }
+  CHECK(captured_presents == captured_before, "unavailable frames reached the stream capture hook");
+
+  layer.drawableSize = CGSizeMake(16, 16);
+
+  obj_handle_t pool = NSAutoreleasePool_alloc_init();
+  obj_handle_t recovered = MetalLayer_nextDrawable(layer_handle);
+  CHECK(recovered, "layer did not recover after restoring its size");
+  if (recovered) {
+    obj_handle_t cb = MTLCommandQueue_commandBuffer(queue);
+    if (timed) MTLCommandBuffer_presentDrawableAfterMinimumDuration(cb, recovered, 1.0 / 60.0);
+    else MTLCommandBuffer_presentDrawable(cb, recovered);
+    MTLCommandBuffer_commit(cb);
+    MTLCommandBuffer_waitUntilCompleted(cb);
+    CHECK(MTLCommandBuffer_status(cb) == WMTCommandBufferStatusCompleted, "recovered frame did not complete");
+    CHECK(captured_presents == captured_before + 1, "valid frame did not reach the stream capture hook");
+  }
+  wmtr_stream_capture_set(NULL, NULL);
+  NSObject_release(pool);
+}
 int
 main(int argc, char **argv) { @autoreleasepool {
   obj_handle_t devices = WMTCopyAllDevices();
@@ -89,6 +142,16 @@ main(int argc, char **argv) { @autoreleasepool {
   if (!devices) return 1;
   obj_handle_t device = NSArray_object(devices, 0);
   obj_handle_t queue = MTLDevice_newCommandQueue(device, 16);
+  int nil_only = argc > 1 && (!strcmp(argv[1], "--nil-drawable") || !strcmp(argv[1], "--nil-drawable-timed"));
+  if (!nil_only || !strcmp(argv[1], "--nil-drawable")) test_unavailable_drawable(device, queue, 0);
+  if (!nil_only || !strcmp(argv[1], "--nil-drawable-timed")) test_unavailable_drawable(device, queue, 1);
+  if (nil_only) {
+    NSObject_release(queue);
+    NSObject_release(devices);
+    wmtr_host_destroy(H);
+    printf("wmtr_dxmt_test: nil drawable %s\n", failures ? "FAILED" : "all passed");
+    return failures != 0;
+  }
 
   struct WMTBufferInfo info = {.length = 256, .options = WMTResourceStorageModeShared};
   obj_handle_t src = MTLDevice_newBuffer(device, &info);
@@ -161,14 +224,14 @@ main(int argc, char **argv) { @autoreleasepool {
   CHECK(status == WMTCommandBufferStatusCompleted, "command buffer status %llu, error %s", (unsigned long long)status,
         [[(id<MTLCommandBuffer>)HOST(cmdbuf) error] description].UTF8String ?: "none");
 
-  const uint8_t *s = [HOST(src) contents], *d = [HOST(dst) contents];
+  const uint8_t *s = [(id<MTLBuffer>)HOST(src) contents], *d = [(id<MTLBuffer>)HOST(dst) contents];
   int bad = 0;
   for (int i = 0; i < 256; i++) bad += s[i] != 0xab;
   CHECK(!bad, "blit FillBuffer: %d of 256 bytes not 0xab (first %#x)", bad, s[0]);
   bad = 0;
   for (int i = 0; i < 256; i++) bad += d[i] != (i < 128 ? 0xab : 0);
   CHECK(!bad, "blit CopyFromBufferToBuffer: %d of 256 bytes wrong (first %#x)", bad, d[0]);
-  const uint32_t *o = [HOST(out) contents];
+  const uint32_t *o = [(id<MTLBuffer>)HOST(out) contents];
   bad = 0;
   for (uint32_t i = 0; i < 64; i++) bad += o[i] != i * 3u + 7u;
   CHECK(!bad, "compute dispatch: %d of 64 values wrong (out[1] = %u, want 10)", bad, o[1]);

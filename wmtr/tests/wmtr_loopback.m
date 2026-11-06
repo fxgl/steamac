@@ -941,10 +941,14 @@ int main(void) {
       remote(39, &pf4);
       CHECK(!err_alive, "out-error still alive after its owner released it (kept by wmtr)");
     }
-    { /* WMTR_FRAMES: a presenting command buffer adds one line when it completes */
+    { /* WMTR_FRAMES: count a presenting command buffer, not a skipped nil-drawable frame. */
       id<MTLCommandQueue> q = [MTLCreateSystemDefaultDevice() newCommandQueue];
-      id<MTLCommandBuffer> cb = [q commandBuffer];
-      struct unixcall_generic_obj_obj_noret pd = {.handle = (obj_handle_t)cb, .arg = 0};
+      id<MTLCommandBuffer> skipped = [q commandBuffer], cb = [q commandBuffer];
+      struct unixcall_generic_obj_obj_noret pd = {.handle = (obj_handle_t)skipped, .arg = 0};
+      remote(47, &pd);
+      [skipped commit]; [skipped waitUntilCompleted];
+      NSObject *drawable = [[NSObject alloc] init]; /* the loopback present implementation is a no-op */
+      pd.handle = (obj_handle_t)cb; pd.arg = (obj_handle_t)drawable;
       remote(47, &pd);
       struct unixcall_generic_obj_uint64_ret pf2 = {0}; remote(39, &pf2); /* the async present is done */
       [cb commit]; [cb waitUntilCompleted];
@@ -953,6 +957,7 @@ int main(void) {
       while (f && fgets(line, sizeof line, f)) { n++; sscanf(line, "%llu,", &t); }
       if (f) fclose(f);
       CHECK(n == 1 && t > 0 && strstr(line, ",0,0,0,0,0"), "WMTR_FRAMES: %d lines, last '%s'", n, line);
+      [drawable release];
       unlink(frames_path);
     }
     { /* views: ReleaseMetalView releases once; views the client never released go on destroy */

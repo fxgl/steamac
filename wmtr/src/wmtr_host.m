@@ -154,6 +154,8 @@ struct wmtr_host {
   uint64_t *views;
   uint32_t n_views, cap_views;
   _Atomic uint64_t n_req, n_sync, n_bytes, n_worker, n_sleep;
+  _Atomic uint32_t missing_drawable_logs; /* nextDrawable runs on the blocking worker */
+  uint32_t nil_present_logs; /* present calls run only on the executor */
   /* client-assigned encoder handles (WMTR_F_CLIENT_HANDLE): entry (handle % WMTR_HANDLE_SLOTS) */
   struct wmtr_handle { _Atomic uint64_t id; _Atomic uint64_t obj; } *handles;
   pthread_mutex_t object_lock;
@@ -891,6 +893,18 @@ host_call(struct wmtr_host *h, uint16_t call, uint8_t *params, const struct wmtr
     (void)mem_field;
     return host_new_buffer(h, p, arena_ref);
   }
+  case 47: case 48: /* nextDrawable may return nil (timeout, zero size or unavailable layer). */
+    if (!((struct unixcall_generic_obj_obj_noret *)params)->arg) {
+      /* DXMT does not check acquisition failure. Skip presentation, not the command buffer's
+       * remaining work/commit, and do not count/capture a frame that cannot reach the screen. */
+      if (h->nil_present_logs < 4) {
+        h->nil_present_logs++;
+        LOG(0, "call %u slot %u: nil drawable; skipping presentation%s\n", call, r->h.slot,
+            h->nil_present_logs == 4 ? " (further nil presentations suppressed for this context)" : "");
+      }
+      return STATUS_SUCCESS;
+    }
+    break;
   case 72: { /* CreateMetalViewFromHWND */
     struct unixcall_create_metal_view_from_hwnd *p = (void *)params;
     uint64_t layer = 0;
@@ -958,6 +972,15 @@ host_call(struct wmtr_host *h, uint16_t call, uint8_t *params, const struct wmtr
     trace_drawable_present((id)((struct unixcall_generic_obj_obj_noret *)params)->arg, duration);
   }
   NTSTATUS st = f(params);
+  if (st == STATUS_SUCCESS && call == 67 && !((struct unixcall_generic_obj_obj_ret *)params)->ret &&
+      atomic_load_explicit(&h->missing_drawable_logs, memory_order_relaxed) < 4 &&
+      atomic_fetch_add_explicit(&h->missing_drawable_logs, 1, memory_order_relaxed) < 4) {
+    CAMetalLayer *layer = (CAMetalLayer *)((struct unixcall_generic_obj_obj_ret *)params)->handle;
+    CGSize size = layer.drawableSize;
+    LOG(0, "nextDrawable returned nil: layer=%llx size=%.0fx%.0f hidden=%d attached=%d timeout=%d"
+        " (logged at most 4 times per context)\n", (unsigned long long)(uintptr_t)layer,
+        size.width, size.height, layer.hidden, layer.superlayer != nil, layer.allowsNextDrawableTimeout);
+  }
   if (st == STATUS_SUCCESS && (call == 70 || call == 93)) stream_capture_layer_changed(call, params);
   keep_autoreleased(h, r->h.slot, call, params);
   return st;
