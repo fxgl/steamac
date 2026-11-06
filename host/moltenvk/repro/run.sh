@@ -181,11 +181,12 @@
 #    R64_UINT storage images, with the CPU recomputing every texel from the same mix() and the same
 #    coordinate mapping, plus a single-invocation pipeline that checks the returned (fetch) value
 #    exactly when uncontended.
-# 28. tess_components.c: a tessellation pipeline whose vertex shader writes POSITION (float3) one component at a
+# 28. tess_components.c: two tessellation pipelines whose vertex shader writes POSITION (float3) one component at a
 #    time next to TEXCOORD in the same location (dxil-spirv's packing, Ratchet & Clank: Rift Apart, #49). The
 #    pipeline must compile (component stores to the captured outputs, SPIRV-Cross 0042) and draw: the vertex stage
 #    packed both into one 16-byte vector while the control stage read them as two members (32 bytes), so patches
-#    took their corners from the wrong vertices and nothing was drawn (SPIRV-Cross 0056); every pixel checked.
+#    took their corners from the wrong vertices and nothing was drawn (SPIRV-Cross 0056). The second control
+#    shader reads only POSITION; dummy padding must retain the unused TEXCOORD's stride. Every pixel checked.
 # 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.

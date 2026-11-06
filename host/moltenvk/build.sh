@@ -74,6 +74,13 @@
 #   Both captured pipelines link after this substitution. sentry-mesh-payload.sh
 #   fails before and passes after with the actual emitted payload ABI; geometry's
 #   point-to-quad scalar-varying case checks rendered pixels after the change.
+#   SPIRV-Cross 0056 (#49): Rift Apart's tessellation vertex stage packed POSITION
+#   float3 and TEXCOORD at Component=3 into 16 bytes, while its control stage read
+#   separate members at a 32-byte stride, so pipelines compiled but drew nothing.
+#   Keep captured vertex outputs unpacked and add dummy interface members by
+#   component, including when TCS reads only POSITION. tess_components checks
+#   both signatures and every rendered pixel; device_address covers the game's
+#   uvec2-address atomic helper (already fixed by 0044).
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -455,7 +462,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         compiler crash (STEAMAC-41/R); point-to-quad scalar varying checks pipeline and GPU pixels"
 	echo "  0056 = steamac: vertex outputs for tessellation are not packed by component, like the tessellation control"
 	echo "         shader's inputs (Rift Apart's POSITION/TEXCOORD in one location: 16-byte packed vertices were read"
-	echo "         as 32-byte ones, so the pipelines drew nothing, #49)"
+	echo "         as 32-byte ones, so the pipelines drew nothing, #49); component-aware dummy members preserve"
+	echo "         the buffer stride even when the next stage reads only POSITION (both tess_components pipelines)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

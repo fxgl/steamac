@@ -1,9 +1,9 @@
 #version 450
 // tess_components.c: dxil-spirv's output signature of Ratchet & Clank: Rift Apart's tessellation vertex shaders
 // (steamac #49): POSITION (float3) and TEXCOORD (float) share location 0, written one component at a time.
-// Under tessellation the vertex stage captures its outputs to a buffer, and the MSL cast the thread-local
-// POSITION to a device pointer: 'C-style cast from 'float3 *' to 'device float *' converts between mismatching
-// address spaces'.
+// Under tessellation the vertex stage captures its outputs to a buffer. SPIRV-Cross 0042 already fixes the
+// address space of component stores, but packing these outputs into a 16-byte float4 disagrees with the
+// control stage's separate float3 + float members (32 bytes): wrong control points produce an empty draw.
 layout(location = 0) out vec3 POSITION;
 layout(location = 0, component = 3) out float TEXCOORD;
 

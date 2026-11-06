@@ -1,6 +1,8 @@
-From: steamac <steamac@localhost>
+From b5adf059e0b058ab4ad3824d26341cae6a368ffc Mon Sep 17 00:00:00 2001
+From: JDot <11019479+jayvee6@users.noreply.github.com>
 Date: Sun, 1 Nov 2026 01:00:00 -0700
-Subject: [PATCH] MSL: Vertex outputs for tessellation are not packed by component
+Subject: [PATCH] MSL: Vertex outputs for tessellation are not packed by
+ component
 
 Outputs sharing a location (Component decorations) were packed into one m_location_N vector when the
 vertex shader captures them to a buffer, also for tessellation, where that buffer is the tessellation
@@ -11,15 +13,19 @@ location 0) and TEXCOORD (float, location 0 component 3) of Ratchet & Clank: Rif
 pipelines (steamac #49) were written as 'float4 m_location_0' (16 bytes a vertex) and read as
 'float3 POSITION; float TEXCOORD;' (32 bytes), so control points came from the wrong vertices and nothing
 was drawn. Vertex outputs for tessellation are declared like the control shader's inputs now.
+
+Add dummy interface members by both location and component for raw-buffer TCS/TESE inputs and captured vertex outputs. A stage using POSITION alone must retain the unused TEXCOORD member at component 3 so its stride still matches the previous stage; preserve the existing handling of packed locations.
+
+Co-authored-by: georgii pl <gp@fx.gl>
 ---
- spirv_msl.cpp | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
+ spirv_msl.cpp | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
 
 diff --git a/spirv_msl.cpp b/spirv_msl.cpp
-index dcaf1866..1511e6b4 100644
+index 379a63a..0ff6b41 100644
 --- a/spirv_msl.cpp
 +++ b/spirv_msl.cpp
-@@ -5702,10 +5702,13 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
+@@ -5794,10 +5794,13 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
  	// Varying interfaces between stages which use "user()" attribute can be dealt with
  	// without explicit packing and unpacking of components. For any variables which link against the runtime
  	// in some way (vertex attributes, fragment output, etc), we'll need to deal with it somehow.
@@ -34,3 +40,52 @@ index dcaf1866..1511e6b4 100644
  
  	ir.for_each_typed_id<SPIRVariable>([&](uint32_t var_id, SPIRVariable &var) {
  		if (var.storage != storage)
+@@ -6176,6 +6179,27 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
+ 		add_variable_to_interface_block(storage, ib_var_ref, ib_type, *p_var, meta);
+ 	}
+ 
++	// A location may contain separate variables at different components. Keep dummy
++	// members for components missing from this stage so captured buffer strides agree.
++	auto component_in_use = [&](const std::unordered_set<uint32_t> &in_use, uint32_t loc, uint32_t comp) {
++		if (in_use.count(loc) == 0)
++			return false;
++		bool member_at_loc = false;
++		for (uint32_t i = 0; i < uint32_t(ib_type.member_types.size()); i++)
++		{
++			if (!has_member_decoration(ib_type.self, i, DecorationLocation) ||
++			    get_member_decoration(ib_type.self, i, DecorationLocation) != loc)
++				continue;
++			member_at_loc = true;
++			auto &mt = get<SPIRType>(ib_type.member_types[i]);
++			uint32_t c = get_member_decoration(ib_type.self, i, DecorationComponent);
++			if (comp >= c && comp < c + mt.vecsize)
++				return true;
++		}
++		// Packed locations are materialized later from meta.location_meta.
++		return !member_at_loc;
++	};
++
+ 	if (((is_tesc_shader() && msl_options.multi_patch_workgroup) ||
+ 	     (is_tese_shader() && msl_options.raw_buffer_tese_input)) &&
+ 	    storage == StorageClassInput)
+@@ -6184,7 +6208,7 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
+ 		// the struct containing them is the correct size and layout.
+ 		for (auto &input : inputs_by_location)
+ 		{
+-			if (location_inputs_in_use.count(input.first.location) != 0)
++			if (component_in_use(location_inputs_in_use, input.first.location, input.first.component))
+ 				continue;
+ 
+ 			if (patch != (input.second.rate == MSL_SHADER_VARIABLE_RATE_PER_PATCH))
+@@ -6260,7 +6284,7 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage, bool patch, bool
+ 		// even when they aren't written.
+ 		for (auto &output : outputs_by_location)
+ 		{
+-			if (location_outputs_in_use.count(output.first.location) != 0)
++			if (component_in_use(location_outputs_in_use, output.first.location, output.first.component))
+ 				continue;
+ 
+ 			// Create a fake variable to put at the location.
+-- 
+2.54.0 (Apple Git-157)
+
