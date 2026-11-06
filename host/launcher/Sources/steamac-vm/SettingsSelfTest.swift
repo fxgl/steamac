@@ -17,11 +17,12 @@ enum SettingsSelfTest {
     static func run(_ o: Options, overrides: [LauncherSettings.Key: String]) -> Never {
         let settings = LauncherSettings.shared
         let profileID = 2147483646
+        let profileTestEnv = "STEAMAC_SELFTEST=\(profileID)"
         let savedProfile = settings.profile(for: profileID)
         let savedName = settings.gameName(profileID)
         settings.setGameName("A Profile self-test", for: profileID)
         settings.setProfile(GameProfile(gfx: "dxmt", driver: LauncherSettings.VulkanDriver.preferred.rawValue,
-                                        env: "DXVK_HUD=fps"), for: profileID)
+                                        env: profileTestEnv), for: profileID)
         settings.noteBoot(overrides: overrides, autoCapture: o.autoCapture)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
@@ -282,9 +283,19 @@ enum SettingsSelfTest {
             func fields(_ view: NSView) -> [NSTextField] {
                 (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(fields)
             }
+            // Find the fixture by its unique initial value, not by the user's game-name order.
+            let initialFields = sw.window.contentView.map { fields($0).filter(\.isEditable) } ?? []
+            guard let fieldIndex = initialFields.firstIndex(where: { $0.stringValue == profileTestEnv }) else {
+                failures.append("profiles: launch options fixture field missing")
+                return done()
+            }
+            func launchField() -> NSTextField? {
+                let current = sw.window.contentView.map { fields($0).filter(\.isEditable) } ?? []
+                return current.indices.contains(fieldIndex) ? current[fieldIndex] : nil
+            }
             var values = ["", "VKD3D_CONFIG=dxr", "", "PROTON_LOG=1", ""]
             func step() {
-                guard let field = sw.window.contentView.flatMap({ fields($0).first { $0.isEditable } }) else {
+                guard let field = launchField() else {
                     failures.append("profiles: launch options field missing")
                     return done()
                 }
@@ -296,7 +307,7 @@ enum SettingsSelfTest {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         sw.show(tab: .games)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            let reopened = sw.window.contentView.flatMap { fields($0).first { $0.isEditable } }
+                            let reopened = launchField()
                             if reopened?.stringValue != "" || settings.profile(for: profileID).env != "" {
                                 failures.append("profiles: cleared launch options changed after reopening Games")
                             }
@@ -314,10 +325,12 @@ enum SettingsSelfTest {
                 editor.selectAll(nil)
                 editor.insertText(value, replacementRange: editor.selectedRange())
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    let data = UserDefaults(suiteName: LauncherSettings.domain)?.data(forKey: "profile.\(profileID)")
+                    // The normal domain is Bundle.main's identifier and uses .standard;
+                    // reopening it as a suite is rejected by UserDefaults.
+                    let data = settings.defaults.data(forKey: "profile.\(profileID)")
                     let stored = data.flatMap { try? JSONDecoder().decode(GameProfile.self, from: $0) }
                     if settings.profile(for: profileID).env != value || stored?.env != value {
-                        failures.append("profiles: launch options edit did not persist: \(value)")
+                        failures.append("profiles: launch options edit did not persist: \(value) (model=\(settings.profile(for: profileID).env), stored=\(stored?.env ?? "<missing>"))")
                     }
                     step()
                 }
