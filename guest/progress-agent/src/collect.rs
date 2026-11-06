@@ -61,6 +61,11 @@ const VR_LOGS: &[&str] = &[
     "streaming_log.txt",
 ];
 const VR_LOG_TAIL: usize = 256 * 1024;
+// Startup failures may never reach Proton's exception log (STEAMAC-8Y/96/97).
+// Only text logs in these games' own prefixes, never saves or arbitrary AppData.
+const GAME_LOG_TAIL: usize = 256 * 1024;
+const GAME_LOG_FILES: usize = 4;
+const GAME_LOG_ENTRIES: usize = 128;
 
 type Done = (String, Result<Vec<u8>, String>);
 
@@ -347,14 +352,79 @@ fn gather(dir: &Path, steam: &Path, home: &Path) -> Result<(), String> {
     let note = copy_tail(&home.join(".local/state/steamac/fault-report.txt"), &fex_dir.join("fault-report.txt"), 256 << 10, &s);
     notes.push(format!("fex/fault-report.txt: {note}"));
     notes.push("To record where an emulated x86 game faults, create ~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<executable>.json with {\"Config\":{\"Env\":\"LD_PRELOAD=/usr/lib/steamac/x86_64/fault-report.so\"}} (Steam launch options cannot set LD_PRELOAD: FEX's compat tool removes it)".into());
-    let game_dir = dir.join("games");
-    let _ = std::fs::create_dir_all(&game_dir);
-    let game_log = home.join(".local/share/American Truck Simulator/game.log.txt");
-    let note = copy_tail(&game_log, &game_dir.join("amtrucks-game.log.txt"), STEAM_LOG_TAIL, &s);
-    notes.push(format!("games/amtrucks-game.log.txt: {note}"));
+    collect_game_logs(dir, &compat, home, &s, &mut notes);
 
     notes.push(String::new());
     std::fs::write(dir.join("collect-notes.txt"), notes.join("\n")).map_err(|e| format!("write notes: {e}"))
+}
+
+fn collect_game_logs(dir: &Path, compat: &Path, home: &Path, s: &Scrubber, notes: &mut Vec<String>) {
+    let game_dir = dir.join("games");
+    let _ = std::fs::create_dir_all(&game_dir);
+    let game_log = home.join(".local/share/American Truck Simulator/game.log.txt");
+    let note = copy_tail(&game_log, &game_dir.join("amtrucks-game.log.txt"), STEAM_LOG_TAIL, s);
+    notes.push(format!("games/amtrucks-game.log.txt: {note}"));
+    for (appid, kind, relative) in [
+        ("960170", "unity", "drive_c/users/steamuser/AppData/LocalLow"),
+        ("2878980", "eac", "drive_c/users/steamuser/AppData/Roaming/EasyAntiCheat"),
+        ("381210", "eac", "drive_c/users/steamuser/AppData/Roaming/EasyAntiCheat"),
+    ] {
+        let label = format!("{appid}-{kind}");
+        let prefix = compat.join(appid).join("pfx");
+        let files = startup_log_files(&prefix, relative, kind == "unity");
+        if files.is_empty() {
+            notes.push(format!("games/{label}: no startup logs found inside the game prefix"));
+        }
+        for (i, src) in files.iter().enumerate() {
+            // Directory and file names may include user names or product/account IDs.
+            // Stable, anonymous attachment names keep them out of bundle paths/notes.
+            let name = format!("{label}-{i}.log");
+            let note = copy_tail(src, &game_dir.join(&name), GAME_LOG_TAIL, s);
+            notes.push(format!("games/{name}: {note}"));
+        }
+    }
+}
+
+fn startup_log_files(prefix: &Path, relative: &str, unity: bool) -> Vec<PathBuf> {
+    let Ok(prefix) = prefix.canonicalize() else { return Vec::new() };
+    let Ok(root) = prefix.join(relative).canonicalize() else { return Vec::new() };
+    if !root.starts_with(&prefix) {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    let mut remaining = GAME_LOG_ENTRIES;
+    find_startup_logs(&root, 2, unity, &mut remaining, &mut files);
+    files.sort_by(|a, b| {
+        // Unity's current log before Player-prev.log, then deterministic paths.
+        let previous = |p: &Path| p.file_name().is_none_or(|n| n != "Player.log");
+        previous(a).cmp(&previous(b)).then_with(|| a.cmp(b))
+    });
+    files.truncate(GAME_LOG_FILES);
+    files
+}
+
+fn find_startup_logs(dir: &Path, depth: usize, unity: bool, remaining: &mut usize, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        if *remaining == 0 {
+            break;
+        }
+        *remaining -= 1;
+        // Never follow symlinks (Wine user folders can point outside the prefix),
+        // or open sockets, pipes, device nodes, saves or binary anti-cheat modules.
+        let Ok(ty) = entry.file_type() else { continue };
+        if ty.is_dir() && depth > 0 {
+            find_startup_logs(&entry.path(), depth - 1, unity, remaining, files);
+        } else if ty.is_file() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if (unity && matches!(name, "Player.log" | "Player-prev.log"))
+                || (!unity && name.ends_with(".log"))
+            {
+                files.push(entry.path());
+            }
+        }
+    }
 }
 
 /// Run a command (10 s limit) and keep the tail of its scrubbed output.
@@ -785,6 +855,73 @@ mod tests {
         let text = std::fs::read_to_string(&dst).unwrap();
         assert!(text.len() <= VR_LOG_TAIL);
         assert!(text.ends_with("headset <ip>:27031\n"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_logs_are_collected_without_leaving_game_prefixes() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("fx-startup-test-{}", std::process::id()));
+        let home = dir.join("home");
+        let compat = dir.join("compatdata");
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let player = compat.join("960170/pfx/drive_c/users/steamuser/AppData/LocalLow/NEOWIZ/DJMAX RESPECT V");
+        let dbd = compat.join("381210/pfx/drive_c/users/steamuser/AppData/Roaming/EasyAntiCheat/product");
+        let nba = compat.join("2878980/pfx/drive_c/users/steamuser/AppData/Roaming/EasyAntiCheat");
+        for p in [&player, &dbd, &nba] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::write(player.join("Player.log"), "bob@example.com bob 192.168.1.20\n").unwrap();
+        std::fs::write(player.join("Player-prev.log"), "previous run\n").unwrap();
+        std::fs::write(player.join("save.dat"), "private save\n").unwrap();
+        std::fs::write(dbd.join("loader.log"), "Failed to load the anti-cheat module\n").unwrap();
+        std::fs::write(nba.join("service.log"), format!("{}\nstartup failure\n", "old\n".repeat(100_000))).unwrap();
+        std::fs::write(dir.join("private.log"), "outside prefix\n").unwrap();
+        symlink(dir.join("private.log"), player.join("linked.log")).unwrap();
+        symlink(dir.join("private.log"), nba.join("linked.log")).unwrap();
+        symlink(&home, dbd.join("outside")).unwrap();
+        let s = Scrubber::with_names(&[("bob", "<account>")]);
+        let mut notes = Vec::new();
+        collect_game_logs(&out, &compat, &home, &s, &mut notes);
+        assert_eq!(std::fs::read_to_string(out.join("games/960170-unity-0.log")).unwrap(),
+                   "<email> <account> <ip>\n");
+        assert_eq!(std::fs::read_to_string(out.join("games/960170-unity-1.log")).unwrap(), "previous run\n");
+        assert_eq!(std::fs::read_to_string(out.join("games/381210-eac-0.log")).unwrap(),
+                   "Failed to load the anti-cheat module\n");
+        let nba_log = std::fs::read_to_string(out.join("games/2878980-eac-0.log")).unwrap();
+        assert!(nba_log.len() <= 256 * 1024);
+        assert!(nba_log.ends_with("startup failure\n"));
+        assert_eq!(std::fs::read_dir(out.join("games")).unwrap().count(), 4);
+        assert!(notes.iter().all(|n| !n.contains("bob") && !n.contains("NEOWIZ")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_log_discovery_limits_files_and_rejects_redirected_roots() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("fx-startup-bounds-{}", std::process::id()));
+        let prefix = dir.join("pfx");
+        let eac = prefix.join("eac");
+        std::fs::create_dir_all(&eac).unwrap();
+        for i in 0..GAME_LOG_FILES + 3 {
+            std::fs::write(eac.join(format!("{i}.log")), "log\n").unwrap();
+        }
+        std::fs::create_dir_all(eac.join("one/two/three")).unwrap();
+        std::fs::write(eac.join("one/two/three/too-deep.log"), "not collected\n").unwrap();
+        let files = startup_log_files(&prefix, "eac", false);
+        assert_eq!(files.len(), GAME_LOG_FILES);
+        assert!(files.iter().all(|p| p.parent() == Some(eac.as_path())));
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("private.log"), "not collected\n").unwrap();
+        symlink(&outside, prefix.join("redirect")).unwrap();
+        assert!(startup_log_files(&prefix, "redirect", false).is_empty());
+        let mut remaining = 1;
+        let mut bounded = Vec::new();
+        find_startup_logs(&eac, 2, false, &mut remaining, &mut bounded);
+        assert_eq!(remaining, 0);
+        assert!(bounded.len() <= 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
