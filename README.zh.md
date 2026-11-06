@@ -298,7 +298,7 @@ KosmicKrisp / MoltenVK（仅提供可用的驱动）；**启动选项**——放
 `NAME=value`，不接受任意 shell 命令。整串不超过 256 个字符。变量名以 `VKD3D_`、`DXVK_`、
 `PROTON_`、`WINE_`、`MESA_`、`RADV_`、`VK_`、`DXMT_`、`MTL_`、`STEAMAC_` 开头，
 后接零个或多个 `[A-Z0-9_]` 字符；值匹配 `[A-Za-z0-9_.,:;+-]*`（允许空值）。
-赋值按变量名排序，同名时最后一个生效。无效输入会保留并显示错误，不会保存或发送。
+赋值按变量名排序，同名时最后一个生效。无效输入会保留并显示错误，不会保存或发送。字段为空表示该配置不添加任何覆盖（字段中不再显示看似强制值的 `VKD3D_CONFIG=dxr` 示例，STEAMAC-8X）。Metal Performance HUD 显示的是 Mac 的 drawable 尺寸，可能与游戏的渲染分辨率不同。
 
 **推荐：… — 应用**从统计服务获取配置，使用本机的**我的 Mac**限制（GPU 核心数、内存及性能核心数
 均不高于本机）。按 `(运行良好 + 0.5 × 可玩但有问题) / 全部评价` 排名，再比较更高的启动成功率、
@@ -549,7 +549,7 @@ work/out/steamac-vm --create-disk ~/steamos.img [--branch stable] [--home-gib 64
 （临时 rootfs 就 10 GiB）。只读卷和没有写入权限的文件夹同样会被拒绝。与 APFS 不同，exFAT 无稀疏文件：即使游戏还没装，也需要所选磁盘全尺寸加临时 rootfs 的空间。下载缓存在 exFAT 上也远超其约 4.4 GB 的数据：macOS 把每个分块文件的来源（provenance）属性存进额外的 `._` 文件，且每个文件和文件夹都占用整簇（2 TB 盘上为 128 KiB），合计约 28 GB。启动器先检查空间再重建 rootfs；在 exFAT 上，若卷空间不足，会在分配磁盘前删除分块缓存（`--keep-cache` 保留缓存，需要两者的空间）。
 预期存储错误（目标已存在、缓存正被使用、只读卷、没有写入权限、空间耗尽、磁盘断开、创建过程中磁盘或缓存文件夹消失或文件系统 I/O 错误）
 会显示处理建议并只记日志，不作为错误发送到 Sentry；创建开始后的错误也遵循此规则。元数据/包下载的网络错误
-（离线、DNS、超时、连接中断和系统 TLS 验证拒绝）与 desync 重试耗尽一样处理，绝不绕过 HTTPS 证书验证。
+（离线、DNS、超时、连接中断和系统 TLS 验证拒绝）与 desync 重试耗尽一样处理，包括读取分块 HTTP 响应正文时超时（STEAMAC-92），绝不绕过 HTTPS 证书验证。若 desync 无法把分块存入缓存（exFAT 缓存上的 `invalid argument`，STEAMAC-90/91），日志会记录出错缓存分片的状态（模式、条目与临时文件数、读取错误）以便诊断。
 非预期创建错误和包签名错误仍会上报，事件详情保留原始诊断。若内置的 desync 缺失、不可读或不可执行（STEAMAC-8K），窗口会说明安装不完整：请从官方 DMG 重新安装到“应用程序”，并检查安全软件。每次安装只发送一条警告，记录 translocation、desync 的存在与权限、代码签名结果以及 Resources 中相对于包的文件名与大小；包的绝对路径只留在本地日志中，不打开崩溃报告对话框。
 启动器记录目标和缓存的文件系统类型。缓存分块重命名冲突时，以单工作线程、不使用缓存重试一次。
 rootfs 哈希不符时再顺序读取，以区分错误的稀疏区段元数据和文件字节损坏；若字节损坏，则删除临时 rootfs 与分块缓存，
@@ -634,12 +634,12 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 切换改变 Venus 驱动身份（管线缓存 UUID），Steam 与游戏重建着色器缓存。宿主驱动建不出的管线在 virglrenderer 中是占位：其绘制与派发被丢弃，驱动永远见不到 `VK_NULL_HANDLE`。
 
-宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
+宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。嵌套超过 128 层的分支改为带已保存条件的并列块输出，因为 Metal 拒绝括号嵌套超过 256 层的源码（STEAMAC-G 报告；`sentry-g-brackets.sh` 在 GPU 上校验 320 路发散分支阶梯）。对可复现的 KosmicKrisp 卡顿，启动 macOS 启动器时（而不是作为游戏参数）设置 `MESA_KK_DEBUG=syncs,cbs`，会追踪队列同步以及每次超过一秒的 CPU 等待（STEAMAC-94）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
 应用捆绑 `libwmtr_host.dylib`；客户机层包含 DXMT 的
-`{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。开启时，启动器提供 libkrun 的
+`{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。若 macOS 无法提供 Metal drawable（例如图层尺寸为零或 drawable 超时），DXMT 会跳过该帧，而不是提交 `nil`（Metal 会因此断言并终止虚拟机，STEAMAC-98）；日志中有限次记录此事，渲染从下一个 drawable 继续。开启时，启动器提供 libkrun 的
 wmtr virtio-gpu 上下文（补丁 0018，capset 30），并以 `steamac.gfx=dxmt` 启动虚拟机。
 客户机的 `steam-gfx-path` 将每个已安装的 x86-64 Proton 的库替换为 DXMT，并监视 Proton
 的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。DXMT 的 dll 是带 Wine unixlib 的
@@ -986,7 +986,7 @@ Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs
   Simulator `game.log.txt` 最近 512 KiB。ATS 模拟器崩溃请将其 Steam 启动选项设为
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`，复现后报告；
   收集器收录该日志最近 512 KiB。事后移除启动选项。
-  没有 Proton 日志时，归档会提示：要看到 Windows 游戏本身的失败，需设置启动选项 `PROTON_LOG=1 %command%`、复现一次并重新报告。
+  没有 Proton 日志时，归档会提示：要看到 Windows 游戏本身的失败，需设置启动选项 `PROTON_LOG=1 %command%`、复现一次并重新报告。DJMAX RESPECT V 的 Unity Player 日志以及 NBA 2K25 和 Dead by Daylight 的 Easy Anti-Cheat 文本日志从这些游戏自己的 Proton 前缀中收集（每款游戏最多 4 × 256 KiB，不跟随指向前缀之外的链接，不含存档和二进制文件，经过脱敏）；这并不表示这些游戏或其反作弊可以运行。
   FEX 从 JIT 代码重抛模拟游戏的崩溃，core 堆栈只有匿名 AArch64 地址。要记录 x86_64 代码 fault 位置，创建
   `~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<可执行文件>.json`（ATS：
   `270880/fex-emu/AppConfig/amtrucks.json`），内容为

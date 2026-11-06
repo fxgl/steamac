@@ -354,7 +354,10 @@ KosmicKrisp / MoltenVK (only available drivers are offered); **Launch options** 
 limited to 256 characters. Names use the prefixes `VKD3D_`, `DXVK_`, `PROTON_`, `WINE_`, `MESA_`,
 `RADV_`, `VK_`, `DXMT_`, `MTL_`, `STEAMAC_`, followed by zero or more `[A-Z0-9_]` characters;
 values match `[A-Za-z0-9_.,:;+-]*` (empty is allowed). Assignments are sorted by name; the last
-duplicate name wins. Invalid input stays visible with an error and is not saved or sent.
+duplicate name wins. Invalid input stays visible with an error and is not saved or sent. An empty field
+means the profile adds no overrides (the field no longer shows a `VKD3D_CONFIG=dxr` example that looked
+like a forced value, STEAMAC-8X). The Metal Performance HUD shows the Mac's drawable size, which can
+differ from the game's rendering resolution.
 
 **Recommended: … — Apply** fetches a profile from the statistics service using this Mac's **My Mac**
 limits (GPU cores, RAM and performance cores no greater than this Mac's). Configurations are ranked
@@ -802,7 +805,10 @@ Expected location failures (an existing destination, busy cache, read-only volum
 full volume, disconnected drive, a destination or cache folder that disappears during creation, or
 filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
-connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries.
+connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries,
+including a timeout while reading a chunk's HTTP response body (STEAMAC-92). If desync cannot store a
+chunk in the cache (`invalid argument` on an exFAT cache, STEAMAC-90/91), the log records the failing
+cache shard's state (mode, entry and temporary-file counts, read errors) for diagnosis.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
 with the original technical diagnostic in event details. If the bundled desync is missing, unreadable or
 not executable (STEAMAC-8K), the window explains that the installation is incomplete: reinstall from the
@@ -946,7 +952,11 @@ checked before it is deserialized, so a damaged entry is a cache miss instead of
 STEAMAC-6M/6K/7J/7H/7P crashes in `vkCreateComputePipelines` had another cause: Mesa's NIR serializer
 stored source indices in 20 bits, so shaders with more than 2^20 objects came back with sources pointing at
 unrelated objects; larger indices now follow in a separate word (`host/kosmickrisp/test/nir_object_ids.c`
-round-trips a shader with over a million defs in the KosmicKrisp build).
+round-trips a shader with over a million defs in the KosmicKrisp build). Selections nested deeper than 128
+are emitted as guarded sibling blocks, because Metal rejects source nested past 256 brackets (a
+STEAMAC-G report; `sentry-g-brackets.sh` checks a 320-case divergent ladder on the GPU). For a repeatable
+KosmicKrisp stall, `MESA_KK_DEBUG=syncs,cbs` set when starting the macOS launcher (not as a game
+argument) traces queue synchronization and every CPU wait longer than one second (STEAMAC-94).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -981,7 +991,10 @@ MoltenVK's host `OPTIMAL` case skips its known row-pitch limitation rather than 
 **Allow DXMT (D3D11 on the Mac's Metal), experimental.** Settings → Advanced → **Allow DXMT (D3D11 on
 the Mac's Metal)** is off by default and applies on next start (`--wmtr-lib PATH` or `--no-wmtr` for one launch).
 The app bundles `libwmtr_host.dylib`; the guest layer carries DXMT's
-`{d3d11,dxgi,d3d10core,winemetal}.dll` and `winemetal.so`. With the toggle on, the launcher offers
+`{d3d11,dxgi,d3d10core,winemetal}.dll` and `winemetal.so`. If macOS cannot supply a Metal drawable (for
+example a zero-size layer or a drawable timeout), DXMT skips that frame instead of presenting `nil`, which
+Metal turns into an assertion that ended the VM (STEAMAC-98); a bounded log line records it and rendering
+continues with the next drawable. With the toggle on, the launcher offers
 libkrun's wmtr virtio-gpu context (patch 0018, capset 30) and boots with `steamac.gfx=dxmt`.
 The guest's `steam-gfx-path` swaps DXMT into every installed x86-64 Proton and watches for Proton
 installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and restores Proton's
@@ -1438,7 +1451,10 @@ what you expected, what happened), and checkboxes for attachments:
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`, reproduce, and report;
   the collector includes the last 512 KiB of that log. Remove the launch options afterwards.
   Without Proton logs the archive notes that `PROTON_LOG=1 %command%` as a game's launch options,
-  one reproduction and a new report are needed to see a Windows game's own failure.
+  one reproduction and a new report are needed to see a Windows game's own failure. Unity Player logs of
+  DJMAX RESPECT V and Easy Anti-Cheat text logs of NBA 2K25 and Dead by Daylight are collected from those
+  games' own Proton prefixes (at most 4 × 256 KiB per game, no links out of the prefix, no saves or
+  binaries, scrubbed); they do not imply that these games or their anti-cheat work.
   FEX re-raises a crash of the emulated game from its JIT code, so the core's stack shows only an
   anonymous AArch64 address. To record where the x86_64 code faulted, create
   `~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<executable>.json` (ATS:
