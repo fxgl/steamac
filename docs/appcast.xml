@@ -6,6 +6,68 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>FX Steam Launcher</title>
         <item>
+            <title>1.9.13</title>
+            <pubDate>Fri, 06 Nov 2026 20:28:47 +0300</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.13</sparkle:version>
+            <sparkle:shortVersionString>1.9.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.12.
+
+- **Reclaim Disk Space.** After uninstalling games, **Settings → Advanced → Reclaim Disk Space…** (SteamOS running) gives the freed blocks back to your Mac. The disk keeps its capacity; the file shrinks only when it is on an APFS volume. Closes #73.
+- **Steam Controller and Input Monitoring.** Settings → Controller now warns when a Steam Controller needs macOS Input Monitoring and offers to enable it (#74).
+- **DXMT no longer stops the VM when macOS can't provide a frame to draw into.** That frame is skipped, and rendering continues with the next one.
+- **MoltenVK:** games whose mesh-shader pipelines crashed Apple's shader compiler (reported as an internal error or an interrupted connection) now compile. Ratchet & Clank: Rift Apart's tessellated geometry draws again (#49, contributed by JDot).
+- **KosmicKrisp:** shaders with very deeply nested branches no longer fail to compile ("bracket nesting level exceeded").
+- **Microphone:** if the microphone is unavailable, permission is denied or CoreAudio starts slowly, recording in SteamOS now fails quickly instead of blocking the VM's sound. Speaker playback is unaffected.
+- **Creating a SteamOS disk:** NTFS, network and other unsupported volumes are rejected before the download starts, not after an hour of downloading. Download timeouts can be resumed and are no longer sent as crash reports.
+- **Settings → Games:** the empty Launch options field no longer shows `VKD3D_CONFIG=dxr`, which looked like a forced setting.
+- **Better problem reports:** controller inventory and DualSense input, window focus during freezes, why a macOS crash report is missing, KosmicKrisp synchronization tracing (`MESA_KK_DEBUG=syncs`), and startup logs for DJMAX RESPECT V, NBA 2K25 and Dead by Daylight.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. If you run 1.9.11 or later, this version also arrives through **FX Steam Launcher → Check for Updates…**. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.13-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.12.
+
+- **Освобождение места на диске.** После удаления игр **Настройки → Дополнительно → Освободить место на диске…** (при запущенной SteamOS) возвращает освободившиеся блоки на ваш Mac. Ёмкость диска не меняется; файл уменьшается, только если он лежит на томе APFS. Закрывает #73.
+- **Steam Controller и «Мониторинг ввода».** В Настройки → Контроллер появилось предупреждение, если Steam Controller нужен «Мониторинг ввода» macOS, и кнопка, чтобы его включить (#74).
+- **DXMT больше не останавливает ВМ, если macOS не может дать кадр для отрисовки.** Такой кадр пропускается, отрисовка продолжается со следующего.
+- **MoltenVK:** игры, у которых mesh-шейдерные конвейеры роняли компилятор шейдеров Apple (внутренняя ошибка или прерванное соединение), теперь компилируются. В Ratchet & Clank: Rift Apart снова рисуется тесселированная геометрия (#49, автор исправления — JDot).
+- **KosmicKrisp:** шейдеры с очень глубоко вложенными ветвлениями больше не падают при компиляции («bracket nesting level exceeded»).
+- **Микрофон:** если микрофон недоступен, доступ запрещён или CoreAudio запускается медленно, запись в SteamOS сразу завершается ошибкой и не блокирует звук ВМ. На воспроизведение через динамики это не влияет.
+- **Создание диска SteamOS:** тома NTFS, сетевые и другие неподдерживаемые отклоняются до начала скачивания, а не через час загрузки. Скачивание после таймаута можно продолжить, и такие сбои больше не уходят как отчёты о сбоях.
+- **Настройки → Игры:** в пустом поле «Параметры запуска» больше не показывается `VKD3D_CONFIG=dxr`, похожий на принудительную настройку.
+- **Более полные отчёты о проблемах:** список контроллеров и ввод DualSense, фокус окна во время зависаний, причина отсутствия отчёта macOS о сбое, трассировка синхронизации KosmicKrisp (`MESA_KK_DEBUG=syncs`), журналы запуска DJMAX RESPECT V, NBA 2K25 и Dead by Daylight.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Если у вас 1.9.11 или новее, эта версия приходит и через **FX Steam Launcher → Проверить обновления…**. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.13-gpl-sources.tar`.
+
+---
+
+1.9.12 以来的新内容。
+
+- **回收磁盘空间。** 卸载游戏后，**设置 → 高级 → 回收磁盘空间…**（需 SteamOS 运行中）会把已释放的块还给 Mac。磁盘容量不变；只有映像位于 APFS 卷上时文件才会变小。关闭 #73。
+- **Steam Controller 与输入监控。** 当 Steam Controller 需要 macOS“输入监控”权限时，设置 → 控制器会给出提示，并提供启用按钮（#74）。
+- **macOS 无法提供用于绘制的帧时，DXMT 不再停止虚拟机。** 该帧会被跳过，渲染从下一帧继续。
+- **MoltenVK：** 网格着色器管线曾使 Apple 着色器编译器崩溃（显示为内部错误或连接中断）的游戏，现在可以正常编译。《瑞奇与叮当：时空跳转》的曲面细分几何体重新正常绘制（#49，修复由 JDot 贡献）。
+- **KosmicKrisp：** 分支嵌套极深的着色器不再编译失败（“bracket nesting level exceeded”）。
+- **麦克风：** 若麦克风不可用、权限被拒或 CoreAudio 启动缓慢，SteamOS 中的录音会立即报错，不再阻塞虚拟机的声音；扬声器播放不受影响。
+- **创建 SteamOS 磁盘：** NTFS、网络卷及其他不受支持的卷会在开始下载前被拒绝，而不是下载一小时后才失败。下载超时后可以继续，且不再作为崩溃报告发送。
+- **设置 → 游戏：** “启动选项”为空时不再显示看似强制设置的 `VKD3D_CONFIG=dxr`。
+- **更完整的问题报告：** 控制器清单与 DualSense 输入、卡顿时的窗口焦点、缺少 macOS 崩溃报告的原因、KosmicKrisp 同步追踪（`MESA_KK_DEBUG=syncs`），以及 DJMAX RESPECT V、NBA 2K25 和 Dead by Daylight 的启动日志。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。若你在用 1.9.11 或更新版本，也可通过 **FX Steam Launcher → 检查更新…** 获得此版本。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.13-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.13/FX-Steam-Launcher-1.9.13.dmg" length="95837308" type="application/octet-stream" sparkle:edSignature="HIj9zYz/jruzvb6CbFZTtgtx6F7YRANkDBfYM8OeNo1k5zn27J+p8kTOeYRSzKY9ID5nKf/TnlwSiaJR+LZKDw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.13/FX.Steam.Launcher1.9.13-1.9.12.delta" sparkle:deltaFrom="1.9.12" length="2033090" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="CyKIbYxs5ZVm0UchEkZABqhcLBkT1HITqTDMrbReQcyZg1KwRioogxKYLxuvexAzmd70HQpMB/Wak5KstxX9DA=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.13/FX.Steam.Launcher1.9.13-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="2700050" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="St6HY1XNGEuZRLb9SWn0u/5FThoS66NfcNW38QN6cnzgAmCGK2TuvyHbyyGve7cvFGaVmBsT3E+SVzIL5tkCCw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.9.12</title>
             <pubDate>Wed, 04 Nov 2026 23:44:41 +0300</pubDate>
             <link>https://fxgl.github.io/steamac/</link>
@@ -97,6 +159,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: IFSop53P1rzaRHGxuwVQtl3VeN4wj1Tvltu9Pd3UeTXkkVXpQCGsZc2QyQOkboiR+hRzTYa+8YR3ilCzVfS6BA==
-length: 12541
+edSignature: gm/SmFJUREZ/wsIGuq2J7hugZ1XHOvNFo1q665LDPc9E9oO6NLy1a8paVDI8E4w588NguCz+NjCbWhbqBwQ5DA==
+length: 22324
 -->
