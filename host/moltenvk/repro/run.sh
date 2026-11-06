@@ -12,6 +12,7 @@
 #                                                       (known Metal row-pitch validation abort);
 #                                                       LINEAR remains a sharing control.
 #   REPRO_CASE=sentry-94-uploads ...                    compressed mip upload + sync stress only
+#   REPRO_CASE=sentry-g-brackets ...                    deep KK control flow + ALU control only
 # 1. gamescope_cs.c: fetches gamescope 3.16.28 (pinned), compiles src/shaders/cs_*.comp with
 #    glslang like gamescope's meson build (glslangValidator -V) and creates every pipeline
 #    variant; cs_composite_blit must write the expected pixels from s_samplers[0] and from
@@ -267,6 +268,10 @@ if [ "${REPRO_CASE:-}" = sentry-94-uploads ]; then
 	build sentry-94-uploads
 	"$work/sentry-94-uploads"
 	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-g-brackets ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-g-brackets requires KosmicKrisp" >&2; exit 2; }
+	exec "$here/sentry-g-brackets.sh" "$kk"
 fi
 
 src=$work/gamescope
@@ -537,6 +542,9 @@ if [ "$driver" = kosmickrisp ]; then
 	# STEAMAC-94: compressed asset upload patterns and completion ordering.
 	build sentry-94-uploads
 	"$work/sentry-94-uploads"
+
+	# STEAMAC-G: Metal's 256-level parser limit, deep divergent control flow and jumps.
+	"$here/sentry-g-brackets.sh" "$kk"
 
 	# STEAMAC-6H/6G: unused NULL sets and missing descriptor declarations.
 	build sentry_descriptors
