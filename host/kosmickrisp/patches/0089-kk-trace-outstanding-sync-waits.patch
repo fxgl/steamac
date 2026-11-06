@@ -1,0 +1,245 @@
+From: steamac <steamac@fxgam.es>
+Date: Fri, 6 Nov 2026 18:30:00 +0000
+Subject: [PATCH] kosmickrisp: trace outstanding CPU and GPU synchronization (STEAMAC-94)
+
+Ori's report retains BC3 mip uploads but no Metal failure, while its guest
+DXVK queue waits in drm_syncobj_array_wait_timeout. Every retained copy has
+a ready marker; the 256-shape cap is not a GPU progress marker. The same
+64..512 mip upload pattern, replayed 128 times per format, completes with
+byte-identical BC3/ASTC data on M1 Max. This does not reproduce the M4 hang.
+
+MESA_KK_DEBUG=syncs traces shared-event lifetimes, queue submit entry/exit,
+commit workload records, GPU waits/signals and CPU signals. After a CPU
+wait exceeds one second, log its target/current values and the device's
+pending command buffers and GPU waits without requiring an error callback.
+Report overwritten records and a busy mutex explicitly. Diagnostic waits
+retain their original absolute deadline; with tracing off nothing changes.
+
+The source-extracted sync-diagnostics.py fails on the pre-patch source and
+passes with finite/infinite deadlines, early completion, zero polling and
+tracing off. sentry-94-uploads.c checks actual fence/timeline completion,
+finite timeout and a delayed CPU signal under Metal API validation.
+No runtime hang fix is claimed.
+
+---
+diff --git a/src/kosmickrisp/vulkan/kk_debug.h b/src/kosmickrisp/vulkan/kk_debug.h
+--- a/src/kosmickrisp/vulkan/kk_debug.h
++++ b/src/kosmickrisp/vulkan/kk_debug.h
+@@ -39,6 +39,8 @@
+    /* Log each new copy/render encoder descriptor shape once per thread on any
+     * GPU (by default only Apple9+ logs them) */
+    KK_DEBUG_SHAPES = 1ull << 10,
++   /* Trace queue waits/signals/commits and CPU waits exceeding one second */
++   KK_DEBUG_SYNCS = 1ull << 11,
+ };
+ 
+ extern enum kk_debug kk_mesa_debug_flags;
+diff --git a/src/kosmickrisp/vulkan/kk_debug.c b/src/kosmickrisp/vulkan/kk_debug.c
+--- a/src/kosmickrisp/vulkan/kk_debug.c
++++ b/src/kosmickrisp/vulkan/kk_debug.c
+@@ -23,6 +23,7 @@
+    {"novertexsubgroups", KK_DEBUG_NO_VERTEX_SUBGROUPS},
+    {"noimageint64atomics", KK_DEBUG_NO_IMAGE_INT64_ATOMICS},
+    {"shapes", KK_DEBUG_SHAPES},
++   {"syncs", KK_DEBUG_SYNCS},
+    {NULL, 0},
+ };
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
+--- a/src/kosmickrisp/vulkan/kk_queue.h
++++ b/src/kosmickrisp/vulkan/kk_queue.h
+@@ -104,4 +104,6 @@
+ 
+ void kk_queue_finish(struct kk_device *dev, struct kk_queue *queue);
+ 
++void kk_queue_log_sync_wait(struct kk_queue *queue);
++
+ #endif
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -303,6 +303,47 @@
+       kk_cb_record_log_excerpts(&cb, 3u - excerpts);
+ }
+ 
++/* A CPU sync wait can stall the guest without a Metal error callback. */
++void
++kk_queue_log_sync_wait(struct kk_queue *queue)
++{
++   if (mtx_trylock(&queue->mutex) != thrd_success) {
++      mesa_logi("kk: sync queue=%p snapshot unavailable: queue mutex busy",
++                (void *)queue);
++      return;
++   }
++   const int64_t now = os_time_get_nano();
++   mesa_logi("kk: sync queue=%p committed=%" PRIu64 " awaiting=%u",
++             (void *)queue, queue->commit_seq, queue->feedbacks_pending);
++   unsigned retained = 0;
++   for (uint32_t i = 0; i < KK_QUEUE_RECORDS; i++) {
++      const struct kk_queue_record *r = &queue->records[i];
++      if (!r->seq || r->done)
++         continue;
++      retained++;
++      char text[448];
++      kk_cb_record_format(&r->cb, text, sizeof(text));
++      mesa_logi("kk: sync queue=%p pending=%" PRIu64 " age-ms=%.1f %s",
++                (void *)queue, r->seq, (now - r->commit_ns) / 1e6, text);
++   }
++   if (queue->feedbacks_pending > retained)
++      mesa_logi("kk: sync queue=%p pending records overwritten=%u",
++                (void *)queue, queue->feedbacks_pending - retained);
++   for (uint32_t i = 0; i < KK_QUEUE_PENDING_WAITS; i++) {
++      if (!queue->pending_waits[i].event)
++         continue;
++      const uint64_t current =
++         mtl_shared_event_get_signaled_value(queue->pending_waits[i].event);
++      if (current < queue->pending_waits[i].value)
++         mesa_logi("kk: sync queue=%p GPU wait event=%p target=%" PRIu64
++                   " current=%" PRIu64 " age-ms=%.1f",
++                   (void *)queue, (void *)queue->pending_waits[i].event,
++                   queue->pending_waits[i].value, current,
++                   (now - queue->pending_waits[i].submitted_ns) / 1e6);
++   }
++   mtx_unlock(&queue->mutex);
++}
++
+ /* MESA_KK_DEBUG=commits */
+ static void
+ kk_queue_log_slow_commit(struct kk_queue *queue,
+@@ -466,6 +507,12 @@
+    record->gpu_start = record->gpu_end = 0.0;
+    record->cb = cmd->record;
+    mtx_unlock(&queue->mutex);
++   if (KK_DEBUG(SYNCS)) {
++      char text[448];
++      kk_cb_record_format(&cmd->record, text, sizeof(text));
++      mesa_logi("kk: sync queue=%p commit=%" PRIu64 " %s",
++                (void *)queue, seq, text);
++   }
+ 
+    mtl_commit_options *options = mtl_new_commit_options();
+    mtl_commit_options_add_feedback_handler(options, callback, user_data, seq);
+@@ -558,11 +605,23 @@
+    if (vk_queue_is_lost(&queue->vk))
+       return VK_ERROR_DEVICE_LOST;
+ 
++   if (KK_DEBUG(SYNCS)) {
++      char app[64];
++      kk_device_app_name(dev, app, sizeof(app));
++      mesa_logi("kk: sync queue=%p submit of %s begin waits=%u commands=%u signals=%u",
++                (void *)queue, app, submit->wait_count,
++                submit->command_buffer_count, submit->signal_count);
++   }
+    for (struct vk_sync_wait *wait = submit->waits,
+                             *end = submit->waits + submit->wait_count;
+         wait != end; ++wait) {
+       struct kk_sync_timeline *sync =
+          container_of(wait->sync, struct kk_sync_timeline, base);
++      if (KK_DEBUG(SYNCS))
++         mesa_logi("kk: sync queue=%p GPU wait event=%p target=%" PRIu64
++                   " current=%" PRIu64,
++                   (void *)queue, (void *)sync->mtl_handle, wait->wait_value,
++                   mtl_shared_event_get_signaled_value(sync->mtl_handle));
+       if (mtl_shared_event_get_signaled_value(sync->mtl_handle) <
+           wait->wait_value) {
+          mtx_lock(&queue->mutex);
+@@ -623,9 +682,15 @@
+       struct vk_sync_signal *signal = &submit->signals[i];
+       struct kk_sync_timeline *sync =
+          container_of(signal->sync, struct kk_sync_timeline, base);
++      if (KK_DEBUG(SYNCS))
++         mesa_logi("kk: sync queue=%p GPU signal event=%p value=%" PRIu64,
++                   (void *)queue, (void *)sync->mtl_handle,
++                   signal->signal_value);
+       mtl_signal_event(queue->mtl_handle, sync->mtl_handle,
+                        signal->signal_value);
+    }
++   if (KK_DEBUG(SYNCS))
++      mesa_logi("kk: sync queue=%p submit end", (void *)queue);
+ 
+    return VK_SUCCESS;
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
+--- a/src/kosmickrisp/vulkan/kk_sync.c
++++ b/src/kosmickrisp/vulkan/kk_sync.c
+@@ -7,8 +7,10 @@
+ #include "kk_sync.h"
+ 
+ #include "kk_device.h"
++#include "kk_debug.h"
+ 
+ #include "kosmickrisp/bridge/mtl_bridge.h"
++#include "util/log.h"
+ 
+ static VkResult
+ kk_timeline_init(struct vk_device *device, struct vk_sync *sync,
+@@ -20,6 +22,9 @@
+    struct kk_device *dev = container_of(device, struct kk_device, vk);
+    timeline->mtl_handle = mtl_new_shared_event(dev->mtl_handle);
+    mtl_shared_event_set_signaled_value(timeline->mtl_handle, initial_value);
++   if (KK_DEBUG(SYNCS))
++      mesa_logi("kk: sync create event=%p initial=%" PRIu64,
++                (void *)timeline->mtl_handle, initial_value);
+ 
+    return VK_SUCCESS;
+ }
+@@ -29,6 +34,8 @@
+ {
+    struct kk_sync_timeline *timeline =
+       container_of(sync, struct kk_sync_timeline, base);
++   if (KK_DEBUG(SYNCS))
++      mesa_logi("kk: sync destroy event=%p", (void *)timeline->mtl_handle);
+    mtl_release(timeline->mtl_handle);
+ }
+ 
+@@ -39,6 +46,9 @@
+    struct kk_sync_timeline *timeline =
+       container_of(sync, struct kk_sync_timeline, base);
+    mtl_shared_event_set_signaled_value(timeline->mtl_handle, value);
++   if (KK_DEBUG(SYNCS))
++      mesa_logi("kk: sync CPU signal event=%p value=%" PRIu64,
++                (void *)timeline->mtl_handle, value);
+    return VK_SUCCESS;
+ }
+ 
+@@ -76,8 +86,38 @@
+       timeout_ms =
+          (rel_timeout_ns / 1000000) + (rel_timeout_ns % 1000000 ? 1 : 0);
+    }
++   /* Opt-in only: report an outstanding CPU wait before it can block forever.
++    * Keep the original absolute deadline, including finite waits. */
++   const bool trace = KK_DEBUG(SYNCS) && timeout_ms > 1000;
++   const uint64_t started = trace ? os_time_get_nano() : 0;
++   if (trace) {
++      if (mtl_shared_event_wait_until_signaled_value(
++             timeline->mtl_handle, wait_value, 1000))
++         return VK_SUCCESS;
++      char app[64];
++      struct kk_device *dev = container_of(device, struct kk_device, vk);
++      kk_device_app_name(dev, app, sizeof(app));
++      mesa_logi("kk: sync CPU wait of %s event=%p target=%" PRIu64
++                " current=%" PRIu64 " flags=0x%x deadline=%" PRIu64,
++                app, (void *)timeline->mtl_handle, wait_value,
++                mtl_shared_event_get_signaled_value(timeline->mtl_handle),
++                wait_flags, abs_timeout_ns);
++      if (dev->has_queue)
++         kk_queue_log_sync_wait(&dev->queue);
++      if (abs_timeout_ns != OS_TIMEOUT_INFINITE) {
++         const uint64_t now = os_time_get_nano();
++         const uint64_t remaining = abs_timeout_ns > now ? abs_timeout_ns - now : 0;
++         timeout_ms = remaining / 1000000 + (remaining % 1000000 != 0);
++      }
++   }
+    int completed = mtl_shared_event_wait_until_signaled_value(
+       timeline->mtl_handle, wait_value, timeout_ms);
++   if (trace)
++      mesa_logi("kk: sync CPU wait ended event=%p target=%" PRIu64
++                " current=%" PRIu64 " completed=%d elapsed-ms=%.1f",
++                (void *)timeline->mtl_handle, wait_value,
++                mtl_shared_event_get_signaled_value(timeline->mtl_handle),
++                completed, (os_time_get_nano() - started) / 1e6);
+ 
+    return completed != 0 ? VK_SUCCESS : VK_TIMEOUT;
+ }
+-- 
+2.50.1

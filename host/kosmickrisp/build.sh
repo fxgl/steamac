@@ -383,6 +383,22 @@
 #              host-visible imports keep 0016's private heap. Queries advertise the linear limits.
 #              Temporary workaround while Willie Abrams tracks mesa!44929 upstream; drop on upstream fix.
 #              virglrenderer must preserve the host external-image marker. Repro: shared_image.c.
+#   0089       steamac: opt-in MESA_KK_DEBUG=syncs traces shared-event lifetimes, CPU/GPU signals, queue
+#              submits/commits and waits. CPU waits past one second retain target/current values,
+#              pending workloads and unsignalled GPU waits before any Metal failure callback
+#              (STEAMAC-94). Original absolute deadlines remain; tracing off leaves the wait path
+#              unchanged. Diagnostic, not an Ori hang fix: BC3/ASTC 64..512 mip upload stress completes
+#              on M1 Max. Regressions: test/sync-diagnostics.py <Mesa src> and
+#              REPRO_CASE=sentry-94-uploads REPRO_DRIVER=kosmickrisp host/moltenvk/repro/run.sh <dylib>.
+#   0090       steamac: materialize deep MSL selection predicates instead of nesting braces past depth
+#              128; SSA/ALU results already use temporaries. STEAMAC-G event 949d5c67 (1.9.12, M4 Pro)
+#              reports Metal's "bracket nesting level exceeded maximum of 256" at column 1025 before
+#              SetReply's invalid res_id. A 320-case divergent selection ladder and a deep then-tree
+#              reproduce that exact error/column on M1 Max. Descendant blocks become guarded siblings
+#              with snapshotted then/else predicates; real loops and jump targets stay intact.
+#              Repro: sentry-g-brackets.sh (384 divergent invocations, all 387 output words checked;
+#              nested loops, break/continue/return, post-if merges, a 2048-operation ALU control).
+#              The event's MSL was not retained, so its exact shader shape is not claimed.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -607,6 +623,8 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0086 = steamac: retain largest direct and last indirect dispatch for GPU-failure logs (STEAMAC-G)"
 	echo "  0087 = steamac: validate the in-flight fault window against commit/feedback clocks (STEAMAC-G)"
 	echo "  0088 = steamac: explicitly shared host-memory images use imported pages (temporary mesa!44929 workaround, #58)"
+	echo "  0089 = steamac: opt-in MESA_KK_DEBUG=syncs traces queue synchronization and CPU waits past 1 s (STEAMAC-94)"
+	echo "  0090 = steamac: materialize deep MSL selection predicates past depth 128 (Metal's 256 bracket limit, STEAMAC-G)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
