@@ -186,6 +186,18 @@ enum ProvisionSelfTest {
         let network = DiskCreator.desyncFailure(status: 1, output: lines.filter { DiskCreator.percent(in: $0) == nil && !$0.hasPrefix("Attempt ") })
         check(network is DiskCreationFilesystem.Rejection && "\(network)".contains("connection refused") && !"\(network)".contains(chunk),
               "desync download failure: log-only rejection with desync's error, chunk ids left out")
+        for suffix in ["context deadline exceeded (Client.Timeout or context cancellation while reading body)",
+                       "context deadline exceeded", "unexpected EOF"] {
+            let download = "https://steamdeck-images.steamos.cloud/vr/chunks.castr/"
+            let detail = download + ": " + download + "0906/\(chunk).cacnk: " + suffix
+            let failure = DiskCreator.desyncFailure(status: 1, output: ["Error: " + detail])
+            check(failure is DiskCreationFilesystem.Rejection && CrashReporting.diskCreationReport(failure) == nil
+                  && "\(failure)".contains(suffix) && "\(failure)".contains("resumes"),
+                  "desync HTTP response-body failure is log-only and resumable: \(suffix) (STEAMAC-92)")
+        }
+        let localDeadline = DiskCreator.desyncFailure(status: 1, output: ["Error: local worker: context deadline exceeded"])
+        check(CrashReporting.diskCreationReport(localDeadline) != nil,
+              "a deadline without an HTTP chunk URL is not guessed to be a network failure")
         let full = DiskCreator.desyncFailure(status: 1, output: ["Error: write /Volumes/Untitled/steamos.img.rootfs-tmp: no space left on device"])
         check(full is DiskCreationFilesystem.Rejection && CrashReporting.diskCreationReport(full) == nil, "desync out of space is log-only")
         let other = [DiskCreator.desyncFailure(status: 1, output: ["Error: chunk \(chunk) missing from store"]),
@@ -193,6 +205,28 @@ enum ProvisionSelfTest {
         check(other.allSatisfy { $0 is OptionError && "\($0)" == "desync extract failed (exit 1): chunk <chunk> missing from store" }
               && CrashReporting.diskCreationReport(other[0])?.key == CrashReporting.diskCreationReport(other[1])?.key,
               "other desync failures are reported with desync's error, grouped across chunks")
+        attempt("failed cache directory diagnostics (STEAMAC-90/91)") {
+            let fm = FileManager.default
+            let cache = fm.temporaryDirectory.appendingPathComponent("steamac cache diagnostic-\(UUID().uuidString)")
+            let shard = cache.appendingPathComponent("6c37")
+            defer { try? fm.removeItem(at: cache) }
+            try fm.createDirectory(at: shard, withIntermediateDirectories: true)
+            try Data([1]).write(to: shard.appendingPathComponent(".tmp-cacnk.1637290881"))
+            try Data([2]).write(to: shard.appendingPathComponent(String(repeating: "6", count: 64) + ".cacnk"))
+            let detail = DiskCreationFilesystem.fileDiagnostic(shard.path)
+            check(detail.contains("entries=2") && detail.contains("temporary=1") && detail.contains("chunks=1"),
+                  "cache directory diagnostics retain entry counts without exposing unrelated names")
+            for operation in ["open", "rename"] {
+                let line = "Error: failed to store in local cache: \(operation) \(shard.path)/.tmp-cacnk.1637290881: invalid argument"
+                check(DiskCreator.failedCacheDirectory(output: [line], cache: cache.path) == shard.path,
+                      "failed cache \(operation) identifies the exact shard, including cache paths with spaces")
+                check(DiskCreator.failedCacheDirectory(output: [line], cache: cache.path + "-elsewhere") == nil,
+                      "failed cache diagnostics never inspect paths outside the creator's cache")
+            }
+            for i in 0..<70 { try Data().write(to: shard.appendingPathComponent("other-\(i)")) }
+            check(DiskCreationFilesystem.fileDiagnostic(shard.path).contains("truncated=true"),
+                  "cache directory diagnostic work is bounded")
+        }
         // SteamOS 20261007's index: 63188 unique chunks, 4402745357 bytes. On exFAT with 128 KiB
         // clusters (a 2 TB drive) the chunk cache took 28032630784 bytes (STEAMAC-30).
         check(DiskCreator.chunkCacheBytes(dataBytes: 4_402_745_357, chunks: 63188, blockSize: 128 << 10) >= 28_032_630_784,

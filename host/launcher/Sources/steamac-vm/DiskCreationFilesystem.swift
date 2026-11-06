@@ -79,7 +79,33 @@ enum DiskCreationFilesystem {
     static func fileDiagnostic(_ path: String) -> String {
         var st = stat()
         guard lstat(path, &st) == 0 else { return "\(path): lstat: \(String(cString: strerror(errno)))" }
-        return "\(path): dev=\(st.st_dev), inode=\(st.st_ino), size=\(st.st_size), allocated=\(st.st_blocks * 512), links=\(st.st_nlink)"
+        let identity = "\(path): dev=\(st.st_dev), inode=\(st.st_ino), mode=\(String(st.st_mode, radix: 8)), size=\(st.st_size), allocated=\(st.st_blocks * 512), links=\(st.st_nlink)"
+        guard st.st_mode & S_IFMT == S_IFDIR else { return identity }
+        return identity + ", name-max=\(pathconf(path, _PC_NAME_MAX)), " + directoryDiagnostic(path)
+    }
+
+    /// Bounded metadata only: a broken cache shard can fail while its parent volume is writable.
+    /// Do not read chunks, enumerate the whole cache, or include unrelated filenames.
+    private static func directoryDiagnostic(_ path: String) -> String {
+        guard let dir = opendir(path) else { return "opendir errno=\(errno)" }
+        defer { closedir(dir) }
+        var entries = 0, temporary = 0, chunks = 0
+        while true {
+            errno = 0
+            guard let entry = readdir(dir) else {
+                return "entries=\(entries), temporary=\(temporary), chunks=\(chunks), readdir errno=\(errno), truncated=false"
+            }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+            }
+            if name == "." || name == ".." { continue }
+            if entries == 64 {
+                return "entries=\(entries), temporary=\(temporary), chunks=\(chunks), truncated=true"
+            }
+            entries += 1
+            if name.hasPrefix(".tmp-cacnk.") { temporary += 1 }
+            if name.hasSuffix(".cacnk") { chunks += 1 }
+        }
     }
 
     /// Before downloading: reject volumes that cannot hold the disk. Returns whether files

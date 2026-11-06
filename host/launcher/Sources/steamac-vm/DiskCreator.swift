@@ -573,6 +573,9 @@ final class DiskCreator {
             log("create-disk: desync failed: exit \(p.terminationStatus), reason \(p.terminationReason.rawValue), received \(outputBytes) terminal bytes, last line: \(lastOutput.prefix(4096))")
             log("create-disk: desync failure target: \(DiskCreationFilesystem.diagnostic(directory: (out as NSString).deletingLastPathComponent))"
                 + (cache.map { "; cache: \(DiskCreationFilesystem.diagnostic(directory: $0))" } ?? ""))
+            if let cache, let shard = DiskCreator.failedCacheDirectory(output: recent, cache: cache) {
+                log("create-disk: desync failure cache shard: \(DiskCreationFilesystem.fileDiagnostic(shard)); \(DiskCreationFilesystem.diagnostic(directory: shard))")
+            }
             if cache != nil && DiskCreator.cacheRenameCollision(output: recent) {
                 log("create-disk: cache rename collision; retrying once with one worker and no cache")
                 try? FileManager.default.removeItem(atPath: out)
@@ -593,6 +596,17 @@ final class DiskCreator {
         var pieces = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         text = final ? "" : (pieces.popLast() ?? "")
         return pieces.map { BootProgress.stripANSI($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    /// Inspect only a desync-generated shard under our cache, even if an error mentions other paths.
+    static func failedCacheDirectory(output: [String], cache: String) -> String? {
+        let pattern = NSRegularExpression.escapedPattern(for: cache) + "/[0-9a-f]{4}/\\.tmp-cacnk\\.[0-9]+"
+        for line in output.reversed() where line.contains("failed to store in local cache: ") {
+            if let range = line.range(of: pattern, options: .regularExpression) {
+                return (String(line[range]) as NSString).deletingLastPathComponent
+            }
+        }
+        return nil
     }
 
     static func cacheRenameCollision(output: [String]) -> Bool {
@@ -616,9 +630,11 @@ final class DiskCreator {
             return DiskCreationFilesystem.Rejection("the volume ran out of space while downloading SteamOS (\(detail)): free some space and try again; the download resumes where it stopped",
                 localized: String(localized: "the volume ran out of space while downloading SteamOS (\(detail)): free some space and try again; the download resumes where it stopped"))
         }
-        // Go's url.Error ("Get \"https://…\": dial tcp …", timeouts, resets) and server errors
-        // that outlasted --error-retry.
-        if detail.contains("Get \"http") || detail.contains("unexpected status code 5") {
+        // Errors before HTTP headers retain Go's url.Error ("Get https://…"). Body reads return
+        // a bare deadline/EOF wrapped only with the store/chunk URLs (STEAMAC-92).
+        let bodyDownloadFailure = (detail.hasPrefix("http://") || detail.hasPrefix("https://"))
+            && (detail.contains(": context deadline exceeded") || detail.hasSuffix(": unexpected EOF"))
+        if detail.contains("Get \"http") || detail.contains("unexpected status code 5") || bodyDownloadFailure {
             return DiskCreationFilesystem.Rejection("downloading SteamOS failed (\(detail)): check the internet connection and try again; the download resumes where it stopped",
                 localized: String(localized: "downloading SteamOS failed (\(detail)): check the internet connection and try again; the download resumes where it stopped"))
         }
