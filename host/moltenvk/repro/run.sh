@@ -11,6 +11,7 @@
 #                                                       MoltenVK OPTIMAL imports skip automatically
 #                                                       (known Metal row-pitch validation abort);
 #                                                       LINEAR remains a sharing control.
+#   REPRO_CASE=sentry-94-uploads ...                    compressed mip upload + sync stress only
 # 1. gamescope_cs.c: fetches gamescope 3.16.28 (pinned), compiles src/shaders/cs_*.comp with
 #    glslang like gamescope's meson build (glslangValidator -V) and creates every pipeline
 #    variant; cs_composite_blit must write the expected pixels from s_samplers[0] and from
@@ -260,6 +261,11 @@ build() {
 if [ "${REPRO_CASE:-}" = shared_image ]; then
 	build shared_image
 	"$work/shared_image"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-94-uploads ]; then
+	build sentry-94-uploads
+	"$work/sentry-94-uploads"
 	exit
 fi
 
@@ -527,6 +533,10 @@ if [ "$driver" = kosmickrisp ]; then
 	build sentry-image-copy
 	"$work/sentry-image-copy" compressed
 	"$work/sentry-image-copy" color
+
+	# STEAMAC-94: compressed asset upload patterns and completion ordering.
+	build sentry-94-uploads
+	"$work/sentry-94-uploads"
 
 	# STEAMAC-6H/6G: unused NULL sets and missing descriptor declarations.
 	build sentry_descriptors
