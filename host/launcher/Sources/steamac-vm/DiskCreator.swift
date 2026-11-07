@@ -287,9 +287,11 @@ final class DiskCreator {
             try copyRootfs(tmp, size: rootBytes, into: fd, offsets: [a.firstLBA * 512, b.firstLBA * 512],
                            sha256: manifest.rootfsSHA256)
         } catch let failure as IntegrityFailure {
-            // Distinguish bad extent metadata from actual bad bytes before discarding evidence.
-            let sequential = try rootfsDigest(tmp)
-            log("create-disk: integrity: extent sha256=\(failure.got), sequential sha256=\(sequential), expected=\(manifest.rootfsSHA256); \(DiskCreationFilesystem.diagnostic(directory: dir))")
+            // Compare the bytes consumed by the failed copy with a buffered sequential reread.
+            // Different hashes alone cannot locate unstable reads or incorrect sparse extents.
+            let sequential = failure.readback.sha256
+            log("create-disk: integrity: \(failure), expected=\(manifest.rootfsSHA256); \(DiskCreationFilesystem.diagnostic(directory: dir))")
+            log("create-disk: integrity source: \(DiskCreationFilesystem.fileDiagnostic(tmp)); destination: \(DiskCreationFilesystem.fileDiagnostic(partial))")
             if sequential != manifest.rootfsSHA256 {
                 // A fresh serial, uncached extraction cannot reuse corrupt cache chunks or the
                 // previous output's self-seed, and avoids concurrent filesystem write races.
@@ -309,8 +311,9 @@ final class DiskCreator {
                 try copyRootfs(tmp, size: rootBytes, into: fd, offsets: [a.firstLBA * 512, b.firstLBA * 512],
                                sha256: manifest.rootfsSHA256, sparse: false)
             } catch let retry as IntegrityFailure {
+                log("create-disk: integrity retry: \(retry); source: \(DiskCreationFilesystem.fileDiagnostic(tmp))")
                 try? fm.removeItem(atPath: tmp)
-                throw OptionError("rootfs integrity failed after a serial uncached retry: sha256 \(retry.got) != manifest \(manifest.rootfsSHA256); check the drive with Disk Utility or choose another drive (temporary rootfs and chunk cache deleted)")
+                throw OptionError("rootfs integrity failed after a serial uncached retry: sha256 \(retry.got) != manifest \(manifest.rootfsSHA256); \(retry.readback); check the drive with Disk Utility or choose another drive (temporary rootfs and chunk cache deleted)")
             }
         }
         log("create-disk: rootfs sha256 OK: \(manifest.rootfsSHA256) == manifest; written to rootfs-A (LBA \(a.firstLBA)) and rootfs-B (LBA \(b.firstLBA))")
@@ -741,22 +744,87 @@ final class DiskCreator {
         }
         let got = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         guard got == expected else {
-            throw IntegrityFailure(got: got)
+            let readback = try rootfsReadback(path, size: size, comparing: offsets.first.map { (fd: fd, offset: $0) })
+            throw IntegrityFailure(got: got, readback: readback)
         }
     }
 
-    struct IntegrityFailure: Error { let got: String }
+    struct IntegrityFailure: Error, CustomStringConvertible {
+        let got: String
+        let readback: RootfsReadback
+        var description: String { "copy sha256=\(got), \(readback)" }
+    }
 
-    /// Only used after an integrity failure: read all bytes, independently of sparse extents.
-    private func rootfsDigest(_ path: String) throws -> String {
-        let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-        defer { try? file.close() }
-        var hash = SHA256()
-        while let data = try file.read(upToCount: 8 << 20), !data.isEmpty {
-            try checkCancel()
-            hash.update(data: data)
+    struct RootfsBlockMismatch {
+        /// Rootfs-relative offsets, not absolute offsets in the destination disk.
+        let blockOffset: UInt64
+        let byteOffset: UInt64
+        let sourceSHA256: String
+        let copiedSHA256: String
+    }
+
+    struct RootfsReadback: CustomStringConvertible {
+        let sha256: String
+        let compared: Bool
+        let mismatch: RootfsBlockMismatch?
+        var description: String {
+            let detail: String
+            if let mismatch {
+                detail = "first mismatch: 1 MiB block offset=\(mismatch.blockOffset), byte offset=\(mismatch.byteOffset), source block sha256=\(mismatch.sourceSHA256), copied block sha256=\(mismatch.copiedSHA256)"
+            } else {
+                detail = compared ? "first mismatch=none (source vs rootfs-A)" : "copy not compared"
+            }
+            return "sequential sha256=\(sha256), \(detail)"
         }
-        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Failure-only diagnostics: hash every source byte without SEEK_DATA/SEEK_HOLE or
+    /// F_NOCACHE, and locate the first changed 1 MiB block against the copy just written.
+    /// Only the first destination slot is read, and only until a mismatch is found.
+    func rootfsReadback(_ path: String, size: UInt64, comparing copy: (fd: Int32, offset: UInt64)?) throws -> RootfsReadback {
+        let src = open(path, O_RDONLY | O_CLOEXEC)
+        guard src >= 0 else { throw OptionError("readback \(path): \(String(cString: strerror(errno)))") }
+        defer { close(src) }
+        let block = 1 << 20
+        let source = UnsafeMutableRawPointer.allocate(byteCount: block, alignment: 4096)
+        let copied = copy.map { _ in UnsafeMutableRawPointer.allocate(byteCount: block, alignment: 4096) }
+        defer { source.deallocate(); copied?.deallocate() }
+        func readBlock(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, count: Int, offset: UInt64, name: String) throws {
+            var got = 0
+            while got < count {
+                let n = pread(fd, buffer + got, count - got, off_t(offset) + off_t(got))
+                if n < 0 && errno == EINTR { continue }
+                guard n > 0 else {
+                    throw OptionError("readback \(name) at \(offset + UInt64(got)): \(n < 0 ? String(cString: strerror(errno)) : "EOF")")
+                }
+                got += n
+            }
+        }
+        var hash = SHA256()
+        var mismatch: RootfsBlockMismatch?
+        var offset: UInt64 = 0
+        while offset < size {
+            try checkCancel()
+            let n = Int(min(UInt64(block), size - offset))
+            try readBlock(src, source, count: n, offset: offset, name: path)
+            hash.update(bufferPointer: UnsafeRawBufferPointer(start: source, count: n))
+            if mismatch == nil, let copy, let copied {
+                try readBlock(copy.fd, copied, count: n, offset: copy.offset + offset, name: "rootfs-A")
+                if memcmp(source, copied, n) != 0 {
+                    var byte = 0
+                    while source.load(fromByteOffset: byte, as: UInt8.self) == copied.load(fromByteOffset: byte, as: UInt8.self) { byte += 1 }
+                    var sourceHash = SHA256(), copiedHash = SHA256()
+                    sourceHash.update(bufferPointer: UnsafeRawBufferPointer(start: source, count: n))
+                    copiedHash.update(bufferPointer: UnsafeRawBufferPointer(start: copied, count: n))
+                    mismatch = RootfsBlockMismatch(blockOffset: offset, byteOffset: offset + UInt64(byte),
+                        sourceSHA256: sourceHash.finalize().map { String(format: "%02x", $0) }.joined(),
+                        copiedSHA256: copiedHash.finalize().map { String(format: "%02x", $0) }.joined())
+                }
+            }
+            offset += UInt64(n)
+        }
+        return RootfsReadback(sha256: hash.finalize().map { String(format: "%02x", $0) }.joined(),
+                              compared: copy != nil, mismatch: mismatch)
     }
 
     // MARK: disk space

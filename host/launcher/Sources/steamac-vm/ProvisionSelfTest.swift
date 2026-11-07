@@ -471,7 +471,7 @@ enum ProvisionSelfTest {
             let dir = NSTemporaryDirectory() + "steamac-rootfs-\(UUID().uuidString)"
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             defer { try? fm.removeItem(atPath: dir) }
-            let size = 2 << 20
+            let size = (2 << 20) + 123
             var data = Data(count: size)
             data.replaceSubrange(123..<40000, with: repeatElement(UInt8(0x5a), count: 40000 - 123))
             data.replaceSubrange((size - 40000)..<(size - 123), with: repeatElement(UInt8(0xa5), count: 40000 - 123))
@@ -497,10 +497,35 @@ enum ProvisionSelfTest {
                       "rootfs hash and both slots match with sparse=\(sparse)")
                 do {
                     try DiskCreator().copyRootfs(source, size: UInt64(size), into: output,
-                                                 offsets: [], sha256: String(repeating: "0", count: 64), sparse: sparse)
+                                                 offsets: [0, UInt64(size)], sha256: String(repeating: "0", count: 64), sparse: sparse)
                     check(false, "incorrect rootfs hash must fail")
-                } catch is DiskCreator.IntegrityFailure {
+                } catch let failure as DiskCreator.IntegrityFailure {
                     check(fm.fileExists(atPath: source), "failed rootfs kept until recovery can diagnose its bytes")
+                    check("\(failure)".contains("sequential sha256=\(expected)")
+                          && "\(failure)".contains("first mismatch=none"),
+                          "integrity failures compare copied bytes with a sequential reread (STEAMAC-9F/9H)")
+                }
+                for byte in [0, (1 << 20) + 17, size - 1] {
+                    let blockStart = byte / (1 << 20) * (1 << 20)
+                    let blockEnd = min(size, blockStart + (1 << 20))
+                    let original = data.subdata(in: blockStart..<blockEnd)
+                    var changed = original
+                    changed[byte - blockStart] ^= 0xff
+                    try changed.withUnsafeBytes {
+                        try GPT.pwriteAll(output, $0, at: UInt64(size + blockStart))
+                    }
+                    let diagnostic = try DiskCreator().rootfsReadback(source, size: UInt64(size),
+                        comparing: (fd: output, offset: UInt64(size)))
+                    check(diagnostic.sha256 == expected && diagnostic.compared
+                          && diagnostic.mismatch?.blockOffset == UInt64(blockStart)
+                          && diagnostic.mismatch?.byteOffset == UInt64(byte),
+                          "readback locates changed byte \(byte) at a rootfs-relative 1 MiB block, sparse=\(sparse)")
+                    check(diagnostic.mismatch?.sourceSHA256 == SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
+                          && diagnostic.mismatch?.copiedSHA256 == SHA256.hash(data: changed).map { String(format: "%02x", $0) }.joined(),
+                          "readback records both block digests, including a partial final block")
+                    try original.withUnsafeBytes {
+                        try GPT.pwriteAll(output, $0, at: UInt64(size + blockStart))
+                    }
                 }
             }
             if let desync = DiskCreator.desyncPath {
