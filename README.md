@@ -172,7 +172,7 @@ start over.
 |---|---|
 | Ctrl+Cmd+F | full screen (macOS turns on Game Mode: Info.plist declares a game — `LSApplicationCategoryType` `public.app-category.games`, `GCSupportsGameMode`, `LSSupportsGameMode`; `gamepolicyd` logs “Game mode status is now on”) |
 | Ctrl+Cmd+G | manually capture / release the mouse |
-| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display |
+| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display. The HUD library is loaded only if the HUD is on when the VM boots: turning it on takes effect after a restart, turning it off hides it at once and unloads it at the next restart. Apple's HUD has crashed the VM on macOS 26 (26.5.2, 26.6.2; STEAMAC-59/9J), so leave it off there if that happens |
 | Ctrl+Option | release the captured mouse |
 | close window | shut down the guest (power button) |
 
@@ -231,7 +231,10 @@ enabling it exposes Steam's Remote Play services to other machines, independentl
 Allow macOS's **Local Network** permission and incoming traffic in the Mac/SteamOS firewall.
 Steam Link and the Mac must be on the **same IPv4 subnet** (Wi-Fi client isolation, guest
 networks, VLANs, routed discovery and IPv6-only LANs are not supported). Enable Remote Play
-in guest Steam; use the Mac's LAN address for manual pairing, not `192.168.127.2`.
+in guest Steam; use the Mac's LAN address for manual pairing, not `192.168.127.2`. Steam Link cannot
+wake a sleeping SteamOS: wake it from the Mac window, Dock icon or a controller before reconnecting.
+Reports with launcher logs include the relay's state and counters, gvproxy's live forwards and log, and
+the guest's addresses, routes and listening sockets (STEAMAC-9G).
 Quit the Mac's own Steam client if it owns these ports: the launcher never shares or steals
 UDP 27036, logs conflicts as `remote-play: disabled for this boot`, and rolls back its forwards.
 The Mac Steam client's own UDP 27036 broadcasts are not relayed back into the guest.
@@ -820,6 +823,8 @@ single worker and no cache. A rootfs hash mismatch is checked again with a seque
 sparse-extent metadata from bad file bytes. If the bytes are bad, the temporary rootfs and chunk cache are
 deleted and downloaded again once, serially without a cache; both disk slots are cleared before retrying.
 A second integrity failure remains reportable; no disk is published without matching the signed manifest.
+It records the sequential SHA-256 and the first 1 MiB block where a source reread differs from rootfs-A
+(offset and both block digests), so unstable reads can be told from copy errors (STEAMAC-9F/9H).
 Disk creation compares the partition table read back with what it wrote, both in the private file and
 after publishing the disk. A difference (STEAMAC-6J, exFAT), or a reconstructed rootfs that disappears
 before the disk is allocated (STEAMAC-68), stays reportable with file identities and the differing GPT
@@ -973,6 +978,10 @@ interface-block member Locations with gaps (Locations 0 and 2 became `locn0`/`lo
 object shader's payload `locations` as `uint[32][4]` (same layout): Apple's compiler crashed on partial
 stores into `uint4 locations[32]`, reported as an internal error or an interrupted XPC connection
 (STEAMAC-41/R); interrupted compiler-service reports carry host memory pressure and swap (STEAMAC-3X).
+`vec3` members of Workgroup (shared) arrays are stored packed, as Vulkan's padding rule sizes them, so a
+968-element `{float; vec3; float}` array needs 19360 bytes instead of Metal's 46464 > 32768 (STEAMAC-57).
+A vertex output narrower than the fragment input at the same Location (float3 → float4) is widened to
+the input's width; missing varyings and different numeric types remain unsupported (STEAMAC-2M/88).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
@@ -1451,10 +1460,11 @@ what you expected, what happened), and checkboxes for attachments:
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`, reproduce, and report;
   the collector includes the last 512 KiB of that log. Remove the launch options afterwards.
   Without Proton logs the archive notes that `PROTON_LOG=1 %command%` as a game's launch options,
-  one reproduction and a new report are needed to see a Windows game's own failure. Unity Player logs of
-  DJMAX RESPECT V and Easy Anti-Cheat text logs of NBA 2K25 and Dead by Daylight are collected from those
-  games' own Proton prefixes (at most 4 × 256 KiB per game, no links out of the prefix, no saves or
-  binaries, scrubbed); they do not imply that these games or their anti-cheat work.
+  one reproduction and a new report are needed to see a Windows game's own failure. Unity Player and
+  Easy Anti-Cheat text logs are collected from the running or last-launched game's Proton prefix and the
+  three most recently modified prefixes across Steam libraries (at most four logs of 256 KiB per prefix,
+  no links out of the prefix, no saves or binaries, scrubbed); they do not imply that a game or its
+  anti-cheat works.
   FEX re-raises a crash of the emulated game from its JIT code, so the core's stack shows only an
   anonymous AArch64 address. To record where the x86_64 code faulted, create
   `~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<executable>.json` (ATS:
@@ -1598,7 +1608,9 @@ a format-compatible type and its bits are reinterpreted (`repro/vertex_input.c`)
 through a helper function with an immutable YCbCr sampler no longer fails to compile
 (`is_null_texture`, STEAMAC-3W; `repro/texture_helpers.c`). A texel buffer view of a format Metal has
 no pixel format for fails with `VK_ERROR_FORMAT_NOT_SUPPORTED` instead of aborting the VM process
-(Uncharted, STEAMAC-3Q; `repro/texel_buffer.c`). A failed graphics pipeline logs each stage's entry
+(Uncharted, STEAMAC-3Q; `repro/texel_buffer.c`); a texel buffer view wider than Metal's 2^28 texels fails
+with `VK_ERROR_OUT_OF_DEVICE_MEMORY` instead of aborting in Metal's descriptor validation (STEAMAC-9E/79).
+A failed graphics pipeline logs each stage's entry
 point, shader hash and reflected interface, for link failures and compiler errors that carry no MSL.
 
 The SteamOS root filesystem is not modified: all changes come from initramfs and the layer. Thus
