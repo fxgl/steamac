@@ -343,7 +343,7 @@ struct Options {
                            stats dump PNG (game statistics question window)
 
     Window keys: Ctrl+Cmd+F fullscreen, Ctrl+Cmd+G capture/release the mouse, Ctrl+Option release,
-    Ctrl+Cmd+P Metal Performance HUD on/off (Settings > Display).
+    Ctrl+Cmd+P Metal Performance HUD on/off (Settings > Display; enabling requires a VM restart).
     Closing the window (or SIGINT/SIGTERM) presses the guest power key; a second request force-quits.
     Console: hvc0 <-> this terminal (raw mode when stdin is a TTY; Ctrl+] twice force-quits).
     """

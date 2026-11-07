@@ -215,7 +215,7 @@ final class VMView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .never
         renderer.onFirstOnScreen = { [weak self] in
-            guard let self else { return }
+            guard let self, MetalHUD.loaded else { return }
             self.hudAttached = true
             // "default" first, so that "off" is a change.
             self.metalLayer.developerHUDProperties = ["mode": "default"]
@@ -451,7 +451,9 @@ final class VMView: NSView {
 
     /// Keep the HUD on the game layers while shown, otherwise on the guest picture. Game layers
     /// get "default" first so "off" is a change even when libMTLHud attached with its HUD showing.
-    static func applyHUD(_ on: Bool, gameVisible: Bool, main: CAMetalLayer, mainAttached: Bool) {
+    static func applyHUD(_ on: Bool, gameVisible: Bool, main: CAMetalLayer, mainAttached: Bool,
+                         injected: Bool = MetalHUD.loaded) {
+        guard injected else { return }
         let game = (main.sublayers ?? []).compactMap { $0 as? CAMetalLayer }
         let onGame = on && gameVisible && !game.isEmpty
         if mainAttached { main.developerHUDProperties = ["mode": on && !onGame ? "default" : "off"] }

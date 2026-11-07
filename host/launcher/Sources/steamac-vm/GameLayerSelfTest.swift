@@ -1,4 +1,5 @@
 import AppKit
+import MachO
 import QuartzCore
 
 /// --selftest-game-layers: game layers cover the guest picture only while a game has focus.
@@ -13,6 +14,7 @@ enum GameLayerSelfTest {
         func check(_ ok: Bool, _ what: String) {
             if !ok { failures += 1; log("selftest-game-layers: FAIL \(what)") }
         }
+        for failure in MetalHUD.selfCheck() { check(false, failure) }
         VMView.applyGameLayers(visible: false, in: parent)
         check(game.isHidden, "game layer visible while the guest shows Steam")
         check(!other.isHidden && !parent.isHidden, "non-game layers hidden")
@@ -20,18 +22,23 @@ enum GameLayerSelfTest {
         VMView.applyGameLayers(visible: true, in: parent)
         check(!game.isHidden, "game layer hidden while the game has focus")
         func mode(_ layer: CAMetalLayer) -> String? { layer.developerHUDProperties?["mode"] as? String }
-        VMView.applyHUD(true, gameVisible: true, main: parent, mainAttached: true)
+        VMView.applyHUD(true, gameVisible: true, main: parent, mainAttached: true, injected: true)
         check(mode(game) == "default" && mode(parent) == "off", "HUD on with a game: not on the game layer only")
-        VMView.applyHUD(true, gameVisible: false, main: parent, mainAttached: true)
+        VMView.applyHUD(true, gameVisible: false, main: parent, mainAttached: true, injected: true)
         check(mode(game) == "off" && mode(parent) == "default", "HUD on without a game: not on the guest picture only")
-        VMView.applyHUD(false, gameVisible: true, main: parent, mainAttached: true)
+        VMView.applyHUD(false, gameVisible: true, main: parent, mainAttached: true, injected: true)
         check(mode(game) == "off" && mode(parent) == "off", "HUD off: still shown")
         let bare = CAMetalLayer()
-        VMView.applyHUD(true, gameVisible: true, main: bare, mainAttached: true)
+        VMView.applyHUD(true, gameVisible: true, main: bare, mainAttached: true, injected: true)
         check(mode(bare) == "default", "HUD on without game layers: not on the guest picture")
         let unattached = CAMetalLayer()
-        VMView.applyHUD(false, gameVisible: false, main: unattached, mainAttached: false)
+        VMView.applyHUD(false, gameVisible: false, main: unattached, mainAttached: false, injected: true)
         check(mode(unattached) == nil, "picture HUD configured before its first on-screen drawable")
+        let uninjected = CAMetalLayer(), uninjectedGame = CAMetalLayer()
+        uninjected.addSublayer(uninjectedGame)
+        VMView.applyHUD(true, gameVisible: true, main: uninjected, mainAttached: true, injected: false)
+        check(mode(uninjected) == nil && mode(uninjectedGame) == nil,
+              "HUD enabled after an off boot: configured layers without loading the library")
         // Bitmap size and hotspot follow gamescope before mapping into view points.
         func frame(window: CGSize, image: CGSize, hotspot: CGPoint = .zero,
                    shown: CGRect, flipped: Bool = false) -> CGRect {
@@ -86,6 +93,12 @@ enum GameLayerSelfTest {
         view.setValue(true, forKey: "gameLayersVisible")
         check(!view.cursorOverlayVisible && tracking == [true, false], "wmtr release leaves stale overlay/tracking")
         check(overlay != nil && (overlay?.animationKeys()?.isEmpty ?? true), "cursor hiding implicitly animated")
+        if !MetalHUD.loaded {
+            let hudLoaded = (0..<_dyld_image_count()).contains { index in
+                _dyld_get_image_name(index).map { String(cString: $0).hasSuffix("/libMTLHud.dylib") } ?? false
+            }
+            check(!hudLoaded, "off boot loaded libMTLHud despite MTL_HUD_ENABLED=0")
+        }
 
         let progress = BootProgress()
         var images = 0, positions = 0, visible: [Bool] = [], ready = 0

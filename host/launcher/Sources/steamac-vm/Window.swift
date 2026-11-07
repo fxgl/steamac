@@ -170,8 +170,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             if self.captured && self.mouseMode == .auto && !self.clickCaptures { self.releasePointer() }
             self.updateTitle()
         })
-        // Metal Performance HUD (libMTLHud, loaded by MTL_HUD_ENABLED=1, see main.swift), shown and
-        // hidden at runtime through the layer (VMView.metalHUD).
+        // Only injected when enabled at boot; hiding an injected HUD cannot unload its handlers.
         applyMetalHUD(settings.metalHUD)
         subscriptions.append(settings.$metalHUD.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in
             self?.applyMetalHUD(on)
@@ -511,8 +510,11 @@ final class WindowController: NSObject, NSWindowDelegate {
     }
 
     private func applyMetalHUD(_ on: Bool) {
-        view.metalHUD = on
-        log("display: Metal Performance HUD \(on ? "on" : "off")")
+        let shown = MetalHUD.visible(requested: on)
+        view.metalHUD = shown
+        CrashReporting.metalHUDChanged(shown)
+        log("display: Metal Performance HUD \(shown ? "on" : "off") (library \(MetalHUD.loaded ? "loaded" : "not loaded"))")
+        if on && !shown { log("display: enabling the Metal Performance HUD requires a VM restart") }
         view.redraw()   // the HUD changes with the next present; an idle guest sends none
     }
 

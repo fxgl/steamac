@@ -26,6 +26,10 @@ if Supervisor.isChild, let driver = Supervisor.profileDriver { options.vulkanDri
 settings.bootedDriver = Supervisor.isChild ? options.vulkanDriver : nil
 settings.bootedDXMT = Supervisor.isChild ? options.wmtrLibrary != nil : nil
 
+// Decide before anything can initialise Metal: off means no Apple HUD completion handlers,
+// not just a hidden overlay. Enabling the HUD later takes effect on the next VM boot.
+MetalHUD.configure(isChild: Supervisor.isChild, headless: options.headless, requested: settings.metalHUD)
+
 if options.selftestMetalCache { MetalCompilerCache.selfTest() }
 // Before CrashReporting's GPU tags, the window or either Vulkan driver can initialise Metal.
 MetalCompilerCache.prepare()
@@ -33,11 +37,6 @@ MetalCompilerCache.prepare()
 // MoltenVK (loaded by virglrenderer in this process) logs every instance/device creation at info
 // level, which buries the guest console. Errors only, unless the user asks for more.
 setenv("MVK_CONFIG_LOG_LEVEL", "1", 0)
-// Metal Performance HUD (Settings > Display, View menu, Ctrl+Cmd+P): loads libMTLHud for this VM
-// process before Metal is first used; the window's layer then shows or hides it at runtime
-// (developerHUDProperties `mode`, default "off" in WindowController). Without this variable
-// macOS 15 ignores those properties. Command buffers that present nothing (MoltenVK's) get no HUD.
-if Supervisor.isChild && !options.headless { setenv("MTL_HUD_ENABLED", "1", 1) }
 
 // Crash reporting (Settings > General; both the supervisor and each VM process).
 CrashReporting.setUp(options: options, settings: settings)

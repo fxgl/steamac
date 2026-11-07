@@ -361,6 +361,8 @@ enum CrashReporting {
             "network": options.network ? "on" : "off",
             "sound": options.sound ? "on" : "off",
             "metal_cache": MetalCompilerCache.outcome,
+            "metal_hud": MetalHUD.visible(requested: LauncherSettings.shared.metalHUD) ? "on" : "off",
+            "metal_hud_injected": MetalHUD.loaded ? "on" : "off",
         ])
         let kernel = options.kernel
         guard !kernel.isEmpty else { return }
@@ -377,11 +379,19 @@ enum CrashReporting {
             if had && locked({ running }) { SentrySDK.configureScope { $0.removeTag(key: key) } }
         }
         guard role == .vm, let dir = Supervisor.runDir else { return }
-        let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache"]
+        let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache",
+                    "metal_hud", "metal_hud_injected"]
         let snapshot = locked { tags.filter { keys.contains($0.key) } }
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) {
             try? data.write(to: URL(fileURLWithPath: dir + "/sentry-tags.json"), options: .atomic)
         }
+    }
+
+    /// Persist independently of the breadcrumb ring: shader/encoder logs can evict the HUD
+    /// toggle long before a crash (STEAMAC-3). The supervisor copies these tags at report time.
+    static func metalHUDChanged(_ shown: Bool) {
+        guard configured, role == .vm else { return }
+        vmContext(["metal_hud": shown ? "on" : "off", "metal_hud_injected": MetalHUD.loaded ? "on" : "off"])
     }
 
     /// VM process: the game that has the guest's focus (`appid` tag of both processes' events

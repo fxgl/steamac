@@ -636,8 +636,10 @@ private struct DisplayTab: View {
             Section {
                 Toggle(isOn: $settings.metalHUD) {
                     Label2(title: "Metal Performance HUD",
-                           detail: String(localized: "Apple's frame-rate overlay in the top-right corner of the window: FPS, frame interval, GPU time, memory (Ctrl+Cmd+P, View menu)."),
-                           now: true)
+                           detail: String(localized: "Apple's frame-rate overlay in the top-right corner of the window: FPS, frame interval, GPU time, memory (Ctrl+Cmd+P, View menu).")
+                               + " " + MetalHUD.restartNote
+                               + (ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26 ? " " + MetalHUD.macOS26Warning : ""),
+                           now: false, key: .metalHUD)
                 }
                 Toggle(isOn: $settings.superResolution) {
                     Label2(title: "MetalFX super resolution",

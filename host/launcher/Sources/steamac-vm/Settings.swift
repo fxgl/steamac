@@ -40,7 +40,7 @@ final class LauncherSettings: ObservableObject {
         var nextStart: Bool {
             switch self {
             case .openFullscreen, .dpiSource, .fixedDPI, .fixedWidthMM, .fixedHeightMM, .refreshRate,
-                 .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .soundEnabled, .cpus, .memMiB, .sshEnabled,
+                 .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .metalHUD, .soundEnabled, .cpus, .memMiB, .sshEnabled,
                  .sshPort, .network, .lanRemotePlay,
                  .diskImage, .sharedFolder, .sharedMount, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
                 return true
@@ -345,7 +345,7 @@ final class LauncherSettings: ObservableObject {
     /// The guest display gets the screen's pixel density (backing scale guest pixels per window
     /// point, Options.pixelScale) instead of one pixel per point; next start.
     @Published var retinaResolution = false { didSet { save(.retinaResolution, retinaResolution) } }
-    /// Apple's Metal Performance HUD on the VM window (FPS, frame interval, GPU time, memory); applies now.
+    /// Apple's Metal HUD: enabling loads libMTLHud on the next boot; off hides it now, unloads next boot.
     @Published var metalHUD = false { didSet { save(.metalHUD, metalHUD) } }
     /// MetalFX spatial upscaling of the guest picture to the window's pixel size (Renderer); applies now.
     @Published var superResolution = false { didSet { save(.superResolution, superResolution) } }
@@ -633,7 +633,7 @@ final class LauncherSettings: ObservableObject {
             .fixedDPI: dpiSource == .dpi ? fixedDPI : 0,
             .fixedWidthMM: dpiSource == .mm ? fixedWidthMM : 0, .fixedHeightMM: dpiSource == .mm ? fixedHeightMM : 0,
             .refreshRate: refreshRate, .windowWidth: windowWidth, .windowHeight: windowHeight,
-            .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution,
+            .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution, .metalHUD: metalHUD,
             .soundEnabled: soundEnabled, .cpus: cpus, .memMiB: memMiB, .sshEnabled: sshEnabled, .sshPort: sshPort,
             .network: network, .lanRemotePlay: lanRemotePlay,
             .diskImage: diskImage, .sharedFolder: sharedFolder, .sharedMount: sharedMount, .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
