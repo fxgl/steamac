@@ -109,6 +109,21 @@ final class Gvproxy {
         }
     }
 
+    /// Read-only, on-demand report probe: distinguish lost forwards/API from an idle Steam.
+    static func forwardingDiagnostics(runDir: String) -> String {
+        let p = Process(), output = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        p.arguments = ["--silent", "--show-error", "--fail-with-body", "--max-time", "2",
+                       "--unix-socket", runDir + "/api.sock", "http://localhost/services/forwarder/all"]
+        p.standardOutput = output; p.standardError = output
+        do { try p.run() }
+        catch { return "gvproxy forward API unavailable: \(error)\n" }
+        let response = output.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(decoding: response.prefix(64 << 10), as: UTF8.self)
+        return "gvproxy forward API exit: \(p.terminationStatus)\n" + text + "\n"
+    }
+
     static func attach(ctx: UInt32, socket: String) throws {
         var mac = Gvproxy.guestMAC
         let r = socket.withCString { path in

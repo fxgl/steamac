@@ -232,6 +232,13 @@ fn gather(dir: &Path, steam: &Path, home: &Path, game: Option<u32>) -> Result<()
     out("process-tree.txt", &["ps", "--forest", "-eo", "pid,ppid,stat,etime,wchan:32,comm"], 256 << 10);
     out("podman-version.txt", &["podman", "--version"], 4096);
     out("podman-containers.txt", &["podman", "ps", "--all", "--format", "{{.ID}} {{.Image}} {{.Status}}"], 64 << 10);
+    // Remote Play after guest sleep (STEAMAC-9G): pair the supervisor's forward
+    // table/relay counters with the guest's real addresses, routes and listeners.
+    // No connection names/SSIDs, process arguments, packet payloads or saves.
+    out("network-addresses.txt", &["ip", "-brief", "address"], 16 << 10);
+    out("network-routes.txt", &["ip", "route"], 16 << 10);
+    out("network-devices.txt", &["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"], 16 << 10);
+    out("network-listeners.txt", &["ss", "-lntu"], 64 << 10);
     for (name, path) in [
         ("os-release.txt", "/etc/os-release"),
         ("layer-release.txt", "/usr/lib/steamac/layer-release"),

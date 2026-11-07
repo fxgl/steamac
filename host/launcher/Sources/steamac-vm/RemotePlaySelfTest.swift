@@ -52,6 +52,48 @@ enum RemotePlaySelfTest {
         check(RemotePlayPacket.fields(Data([0x22, 0xff, 0xff, 0x7f])) == nil,
               "reject oversized protobuf string")
         check(RemotePlayPacket.fields(Data([0])) == nil, "reject protobuf field zero")
+        let now = Date(timeIntervalSince1970: 100)
+        var health = RemotePlayRelay.Health()
+        check(health.text(now: now).contains("guest Steam statuses received: 0; last never"),
+              "do not invent guest discovery health before a reply")
+        health.guestPackets = 3; health.lastGuestPacket = now.addingTimeInterval(-5)
+        health.guestStatuses = 1; health.lastGuestStatus = now.addingTimeInterval(-30)
+        health.sendFailures = 1; health.lastSendError = "Network is down"
+        let status = health.text(now: now)
+        check(status.contains("guest packets received: 3; last 5.0 s ago")
+              && status.contains("guest Steam statuses received: 1; last 30.0 s ago"),
+              "distinguish recent transport replies from stale Steam discovery status")
+        check(status.contains("send failures: 1; last Network is down"),
+              "retain relay send failure diagnostics")
+        // Hold the production discovery port so startup fails before any gvproxy API call.
+        // An existing Steam/launcher listener is already a valid conflict; never share it.
+        let reservation = socket(AF_INET, SOCK_DGRAM, 0)
+        var occupied = sockaddr_in()
+        occupied.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        occupied.sin_family = sa_family_t(AF_INET)
+        occupied.sin_port = UInt16(27036).bigEndian
+        let bindResult = withUnsafePointer(to: &occupied) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(reservation, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        let conflictReady = bindResult == 0 || errno == EADDRINUSE
+        check(conflictReady, "reserve discovery port without sharing another listener")
+        if conflictReady {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("steamac-relay-\(UUID().uuidString)")
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+                let relay = RemotePlayRelay(proxy: Gvproxy(runDir: dir.path))
+                var rejected = false
+                do { try relay.start(); relay.stop() } catch { rejected = true }
+                check(rejected, "reject discovery port conflict before exposing forwards")
+                let snapshot = (try? String(contentsOf: dir.appendingPathComponent("remote-play-status.txt"), encoding: .utf8)) ?? ""
+                check(snapshot.contains("relay: disabled:") && snapshot.contains("discovery listener open: false"),
+                      "retain a diagnostic snapshot when discovery cannot start")
+                try? FileManager.default.removeItem(at: dir)
+            } catch { check(false, "create diagnostic regression directory: \(error)") }
+        }
+        if reservation >= 0 { close(reservation) }
         print("remote-play selftest: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

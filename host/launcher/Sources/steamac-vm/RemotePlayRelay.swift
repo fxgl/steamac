@@ -6,6 +6,29 @@ import Foundation
 /// Periodic discovery queries turn guest status replies into LAN announcements: gvproxy's
 /// user-mode NAT cannot deliver unsolicited guest subnet broadcasts to the physical LAN.
 final class RemotePlayRelay {
+    /// Supervisor-owned snapshots survive guest sleep and are opt-in report attachments.
+    struct Health {
+        var lanPackets: UInt64 = 0
+        var guestPackets: UInt64 = 0
+        var guestStatuses: UInt64 = 0
+        var lastLANPacket: Date?
+        var lastGuestPacket: Date?
+        var lastGuestStatus: Date?
+        var sendFailures: UInt64 = 0
+        var lastSendError = "none"
+
+        func text(now: Date) -> String {
+            func age(_ date: Date?) -> String {
+                date.map { String(format: "%.1f s ago", max(0, now.timeIntervalSince($0))) } ?? "never"
+            }
+            return """
+            LAN packet forward attempts: \(lanPackets); last \(age(lastLANPacket))
+            guest packets received: \(guestPackets); last \(age(lastGuestPacket))
+            guest Steam statuses received: \(guestStatuses); last \(age(lastGuestStatus))
+            send failures: \(sendFailures); last \(lastSendError)
+            """
+        }
+    }
     private struct Interface {
         let address: UInt32
         let mask: UInt32
@@ -42,14 +65,15 @@ final class RemotePlayRelay {
     private var sequence: UInt64 = 0
     private var loggedRequest = false
     private var loggedReply = false
+    private var health = Health()
 
     init(proxy: Gvproxy) { self.proxy = proxy }
 
     func start() throws {
         // Reserve before exposing anything. A running Mac Steam client normally owns this
         // socket; fail closed, log the conflict, and leave that client's ports alone.
-        listener = try Self.socket(address: INADDR_ANY, port: 27036)
         do {
+            listener = try Self.socket(address: INADDR_ANY, port: 27036)
             var yes: Int32 = 1
             guard setsockopt(listener, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout.size(ofValue: yes))) == 0 else {
                 throw Self.error("enable LAN broadcast")
@@ -84,6 +108,7 @@ final class RemotePlayRelay {
             log("remote-play: LAN relay on, UDP 27031–27036 / TCP 27036–27037 → 192.168.127.2; allow Local Network access")
         } catch {
             stop()
+            writeStatus(state: "disabled: \(error)")
             throw error
         }
     }
@@ -102,11 +127,35 @@ final class RemotePlayRelay {
             if let source = readSource { source.cancel(); readSource = nil }
             else if listener >= 0 { close(listener) }
             listener = -1
+            writeStatus(state: "stopped")
         }
         for (proto, local) in forwards.reversed() {
             try? proxy.forward(protocol: proto, local: local, remote: nil)
         }
         forwards.removeAll()
+    }
+
+    private func writeStatus(state: String) {
+        let now = Date()
+        let text = """
+        checked at: \(ISO8601DateFormatter.string(from: now, timeZone: .gmt, formatOptions: [.withInternetDateTime]))
+        relay: \(state)
+        discovery listener open: \(listener >= 0)
+        configured forwards: \(forwards.count) (see gvproxy-forwards.txt for the live API table)
+        LAN IPv4 interfaces: \(interfaces.count)
+        client sessions: \(sessions.count)
+        guest discovery query attempts: \(sequence)
+        \(health.text(now: now))
+
+        """
+        try? text.write(toFile: proxy.runDir + "/remote-play-status.txt", atomically: true, encoding: .utf8)
+    }
+
+    private func sent(_ result: Int) {
+        if result < 0 {
+            health.sendFailures &+= 1
+            health.lastSendError = String(cString: strerror(errno))
+        }
     }
 
     private func tick() {
@@ -118,6 +167,7 @@ final class RemotePlayRelay {
         if let poll {
             sendConnected(RemotePlayPacket.discovery(clientID: clientID, sequence: sequence), fd: poll.fd)
         }
+        writeStatus(state: "running")
     }
 
     private func receiveLAN() {
@@ -149,7 +199,9 @@ final class RemotePlayRelay {
                 }
                 session.touched = Date()
                 // Streaming traffic takes the allocation-free path through the shared buffer.
-                buffer.withUnsafeBytes { bytes in _ = send(session.fd, bytes.baseAddress, count, 0) }
+                health.lanPackets &+= 1
+                health.lastLANPacket = Date()
+                buffer.withUnsafeBytes { bytes in sent(send(session.fd, bytes.baseAddress, count, 0)) }
                 if !loggedRequest, packet?.type == 0 {
                     loggedRequest = true
                     log("remote-play: LAN discovery from \(Self.text(ip)):\(UInt16(bigEndian: peer.sin_port)) forwarded to guest via \(network.text)")
@@ -179,9 +231,15 @@ final class RemotePlayRelay {
         while true {
             let count = recv(session.fd, &buffer, buffer.count, 0)
             guard count >= 0 else { return }
+            health.guestPackets &+= 1
+            health.lastGuestPacket = Date()
             let isDiscovery = count >= 8 && buffer.prefix(8).elementsEqual(RemotePlayPacket.magic)
             let packet = isDiscovery ? RemotePlayPacket(Data(buffer.prefix(count))) : nil
             if isDiscovery && packet == nil { continue }
+            if packet?.type == 1 {
+                health.guestStatuses &+= 1
+                health.lastGuestStatus = Date()
+            }
             if let peer = session.peer {
                 guard let network = interfaces.first(where: {
                     peer.sin_addr.s_addr & $0.mask == $0.address & $0.mask
@@ -206,7 +264,7 @@ final class RemotePlayRelay {
     }
 
     private func sendConnected(_ data: Data, fd: Int32) {
-        data.withUnsafeBytes { bytes in _ = send(fd, bytes.baseAddress, bytes.count, 0) }
+        data.withUnsafeBytes { bytes in sent(send(fd, bytes.baseAddress, bytes.count, 0)) }
     }
 
     private func sendLAN(_ data: Data, to peer: sockaddr_in) {
@@ -217,7 +275,7 @@ final class RemotePlayRelay {
         var peer = peer
         withUnsafePointer(to: &peer) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                _ = sendto(listener, bytes, count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                sent(sendto(listener, bytes, count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)))
             }
         }
     }

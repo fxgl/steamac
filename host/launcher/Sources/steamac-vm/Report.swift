@@ -303,6 +303,17 @@ final class ReportBundle: @unchecked Sendable {
             return
         }
         if choices.launcherLogs {
+            if let data = RollingLog.tail(dir: runDir, name: "remote-play-status.txt", maxBytes: 16 << 10) {
+                write("remote-play-status.txt", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
+            }
+            if FileManager.default.fileExists(atPath: runDir + "/api.sock") {
+                write("gvproxy-forwards.txt", ReportBundle.scrub(Gvproxy.forwardingDiagnostics(runDir: runDir)))
+            } else {
+                notes.append("gvproxy forward API: no socket (network disabled or supervisor exited)")
+            }
+            if let data = RollingLog.tail(dir: runDir, name: "gvproxy.log", maxBytes: 64 << 10) {
+                write("gvproxy.log", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
+            }
             if let data = RollingLog.tail(dir: runDir, name: RollingLog.launcher.name, maxBytes: ReportBundle.logTail) {
                 write("launcher.log", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
             } else {
@@ -585,8 +596,8 @@ enum FeedbackSender {
     }
 
     private static func loadItems(_ dir: String) -> [Item] {
-        let order = ["system-info.txt", "settings.txt", "controllers.txt", "launcher.log", "perf-stall.log", "console.log",
-                     "steamos-logs.tar.gz", "screenshot.png"]
+        let order = ["system-info.txt", "settings.txt", "controllers.txt", "remote-play-status.txt", "gvproxy-forwards.txt",
+                     "gvproxy.log", "launcher.log", "perf-stall.log", "console.log", "steamos-logs.tar.gz", "screenshot.png"]
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
             .filter { $0 != "report.json" && !$0.hasPrefix(".") }
             .sorted { (order.firstIndex(of: $0) ?? 99, $0) < (order.firstIndex(of: $1) ?? 99, $1) }
