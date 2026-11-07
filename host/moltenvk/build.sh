@@ -81,6 +81,26 @@
 #   component, including when TCS reads only POSITION. tess_components checks
 #   both signatures and every rendered pixel; device_address covers the game's
 #   uvec2-address atomic helper (already fixed by 0044).
+#   Local 1.9.13 follow-up:
+#   MoltenVK 0052 (STEAMAC-9E/79): an oversized texel-buffer view became a
+#   536346624-wide Metal texture (limit 268435456), despite Vulkan advertising
+#   67108864 elements. Reject excessive resolved counts before uint32 narrowing
+#   and lazy Metal construction. texel_limits reproduces the abort and checks
+#   explicit/WHOLE_SIZE rejection plus legal maximum and partial-texel controls.
+#   SPIRV-Cross 0057 (STEAMAC-57): the fully captured SSAO shared struct's Vulkan
+#   std430 upper bound is 30976 bytes (limit 32768), but MSL float3 padding made
+#   it 46464. Pack non-array vec3 members of non-block Workgroup structs using
+#   existing physical conversions (19360 bytes). Preserve buffer and variable
+#   pointer ABIs; shared-memory regressions exercise all 968 invocations,
+#   helpers, component/whole-struct stores, nested/zeroed arrays and SSBO layouts.
+#   Optimized aggregate conversions into padded SSBO structs initialize physical
+#   padding slots too, preserving both the external offsets and logical fields.
+#   Original SPIR-V was not retained; fixtures reconstruct the captured declaration.
+#   MoltenVK 0053 / SPIRV-Cross 0058 (historical STEAMAC-2M/88, mgsvtpp.exe):
+#   same-type raster float3/float4 mismatches use matching physical widths without
+#   losing written lanes or changing logical types. Cache keys include the adapter.
+#   stage_widths checks pixels and serialized-cache reuse. Current 11-07 events
+#   instead have missing locations or float/uint mismatches and remain unresolved.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -362,6 +382,10 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "  0047 = steamac: failed render/mesh pipelines include their Metal descriptors; shaders up to"
 	echo "         32 KiB/512 lines are complete, including helpers and the middle lost by 0043"
 	echo "         (STEAMAC-41: no proven compiler workaround; diagnostic capture regression)"
+	echo "  0052 = steamac: reject texel-buffer counts above maxTexelBufferElements before"
+	echo "         lazy Metal descriptor creation (STEAMAC-9E/79: width 536346624 > 268435456)"
+	echo "  0053 = steamac: link same-type ordinary vertex/fragment vector widths without losing"
+	echo "         producer lanes, and key/cache the interface adapter (historical STEAMAC-2M/88)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"
@@ -464,6 +488,10 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         shader's inputs (Rift Apart's POSITION/TEXCOORD in one location: 16-byte packed vertices were read"
 	echo "         as 32-byte ones, so the pipelines drew nothing, #49); component-aware dummy members preserve"
 	echo "         the buffer stride even when the next stage reads only POSITION (both tess_components pipelines)"
+	echo "  0057 = steamac: pack non-block Workgroup vec3 fields through physical conversions"
+	echo "         (STEAMAC-57: 30976-byte std430 upper bound became 46464 in Metal; now 19360)"
+	echo "  0058 = steamac: preserve logical shader types while adapting ordinary raster varying"
+	echo "         widths, including arrays/blocks/components (historical STEAMAC-2M/88)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

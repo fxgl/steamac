@@ -1,0 +1,259 @@
+From: Steamac maintainers <steamac@fxgam.es>
+Subject: [PATCH] SPIRV-Cross: adapt physical raster vector widths without truncation
+
+Honor caller-proven ordinary vertex/fragment vector widths with an opt-in pad_stage_interface_components option. Keep the shader logical type intact and widen only the Metal interface member. Copy every producer-written lane, zero only absent lanes, and swizzle the physical fragment input back to the logical width.
+
+Handle plain, array/matrix-flattened and interface-block members while retaining location/component and interpolation decorations. Exact location/component lookup only; no vertex-fetch fallback and no tessellation/geometry buffer ABI changes.
+
+Historical STEAMAC-2M/88 float3/float4 signatures motivated this change. Verification delegated to the integrating parent; no builds or tests run here.
+
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index 0ff6b41..96edbd5 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -4362,6 +4362,7 @@ void CompilerMSL::add_plain_variable_to_interface_block(StorageClass storage, co
+ 
+ 	bool padded_output = false;
+ 	bool padded_input = false;
++	bool stage_padded_output = false;
+ 	uint32_t start_component = 0;
+ 
+ 	auto &entry_func = get<SPIRFunction>(ir.default_entry_point);
+@@ -4385,6 +4386,19 @@ void CompilerMSL::add_plain_variable_to_interface_block(StorageClass storage, co
+ 		}
+ 	}
+ 
++	if (!is_builtin && has_decoration(var.self, DecorationLocation) && !meta.strip_array)
++	{
++		auto physical_type_id = ensure_stage_interface_type(storage, type_id,
++		    get_decoration(var.self, DecorationLocation), get_decoration(var.self, DecorationComponent));
++		if (physical_type_id != type_id)
++		{
++			type_id = physical_type_id;
++			stage_padded_output = storage == StorageClassOutput;
++			padded_output = padded_output || stage_padded_output;
++			padded_input = storage == StorageClassInput;
++		}
++	}
++
+ 	// The color attachment may need another numeric type: the member gets it, the shader writes a local.
+ 	SPIRType::BaseType out_basetype = SPIRType::Unknown;
+ 	if (has_decoration(var.self, DecorationLocation) && !meta.strip_array)
+@@ -4416,9 +4430,13 @@ void CompilerMSL::add_plain_variable_to_interface_block(StorageClass storage, co
+ 		if (padded_output || converted_output)
+ 		{
+ 			entry_func.fixup_hooks_out.push_back([=, &var]() {
+-				statement(qual_var_name, vector_swizzle(type_components, start_component), " = ",
+-				          to_fragment_output_value(this->get<SPIRType>(value_type_id), out_basetype, to_name(var.self)),
+-				          ";");
++				if (stage_padded_output)
++					statement(qual_var_name, " = ",
++					          to_stage_output_value(type_id, this->get<SPIRType>(value_type_id), to_name(var.self)), ";");
++				else
++					statement(qual_var_name, vector_swizzle(type_components, start_component), " = ",
++					          to_fragment_output_value(this->get<SPIRType>(value_type_id), out_basetype, to_name(var.self)),
++					          ";");
+ 			});
+ 		}
+ 		else
+@@ -4466,7 +4484,8 @@ void CompilerMSL::add_plain_variable_to_interface_block(StorageClass storage, co
+ 	{
+ 		uint32_t locn = get_decoration(var.self, DecorationLocation);
+ 		uint32_t comp = get_decoration(var.self, DecorationComponent);
+-		if (storage == StorageClassInput)
++		if (storage == StorageClassInput &&
++		    !(msl_options.pad_stage_interface_components && get_execution_model() == ExecutionModelFragment))
+ 		{
+ 			type_id = ensure_correct_input_type(var.basetype, locn, comp, 0, meta.strip_array);
+ 			var.basetype = type_id;
+@@ -4631,6 +4650,10 @@ void CompilerMSL::add_composite_variable_to_interface_block(StorageClass storage
+ 			}
+ 		}
+ 
++		if (!is_builtin && has_decoration(var.self, DecorationLocation) && !meta.strip_array)
++			type_id = ensure_stage_interface_type(storage, type_id,
++			    get_decoration(var.self, DecorationLocation) + i, get_decoration(var.self, DecorationComponent));
++
+ 		// The color attachment may need another numeric type (see add_plain_variable_to_interface_block()).
+ 		SPIRType::BaseType out_basetype = usable_type->basetype;
+ 		if (get_decoration_bitset(var.self).get(DecorationLocation) && !meta.strip_array)
+@@ -4710,7 +4733,12 @@ void CompilerMSL::add_composite_variable_to_interface_block(StorageClass storage
+ 		// Only flatten/unflatten IO composites for non-tessellation cases where arrays are not stripped.
+ 		if (!meta.strip_array)
+ 		{
+-			auto input_basetype = get<SPIRType>(ib_type.member_types[ib_mbr_idx]).basetype;
++			auto physical_type_id = ib_type.member_types[ib_mbr_idx];
++			auto input_basetype = get<SPIRType>(physical_type_id).basetype;
++			auto input_swizzle = msl_options.pad_stage_interface_components &&
++			                    get_execution_model() == ExecutionModelFragment &&
++			                    get<SPIRType>(physical_type_id).vecsize > usable_type->vecsize ?
++			                    vector_swizzle(usable_type->vecsize, 0) : "";
+ 			switch (storage)
+ 			{
+ 			case StorageClassInput:
+@@ -4718,12 +4746,13 @@ void CompilerMSL::add_composite_variable_to_interface_block(StorageClass storage
+ 					if (uses_pull_model_interpolation(var.self, is_sample, is_flat))
+ 					{
+ 						string lerp_call = default_interpolation_method(is_centroid, is_sample);
+-						statement(to_name(var.self), "[", i, "] = ", ib_var_ref, ".", mbr_name, lerp_call, ";");
++						statement(to_name(var.self), "[", i, "] = ", ib_var_ref, ".", mbr_name, lerp_call, input_swizzle, ";");
+ 					}
+ 					else
+ 					{
+ 						statement(to_name(var.self), "[", i, "] = ",
+-						          to_vertex_input_value(*usable_type, input_basetype, join(ib_var_ref, ".", mbr_name)), ";");
++						          to_vertex_input_value(*usable_type, input_basetype,
++						              join(ib_var_ref, ".", mbr_name, input_swizzle)), ";");
+ 					}
+ 				});
+ 				break;
+@@ -4743,7 +4772,8 @@ void CompilerMSL::add_composite_variable_to_interface_block(StorageClass storage
+ 						statement(output_ref, ".", mbr_name, " = ", output_ref, ".", flatten_from_ib_mbr_name, "[", i,
+ 						          "];");
+ 					else
+-						statement(output_ref, ".", mbr_name, " = ", value, ";");
++						statement(output_ref, ".", mbr_name, " = ",
++						          to_stage_output_value(type_id, *usable_type, value), ";");
+ 				};
+ 				// A geometry shader's outputs go out with each emitted vertex.
+ 				if (get_execution_model() == ExecutionModelGeometry)
+@@ -4954,6 +4984,13 @@ void CompilerMSL::add_composite_member_variable_to_interface_block(StorageClass
+ 				ib_type.member_types[ib_mbr_idx] = mbr_type_id;
+ 		}
+ 
++		if (storage == StorageClassOutput && !is_builtin && location != UINT32_MAX && !meta.strip_array &&
++		    msl_options.pad_stage_interface_components)
++		{
++			mbr_type_id = ensure_stage_interface_type(storage, usable_type->self, location, 0);
++			ib_type.member_types[ib_mbr_idx] = mbr_type_id;
++		}
++
+ 		if ((!is_builtin && location != UINT32_MAX) || (is_builtin && ir_location != UINT32_MAX))
+ 		{
+ 			set_member_decoration(ib_type.self, ib_mbr_idx, DecorationLocation, location);
+@@ -5017,7 +5054,8 @@ void CompilerMSL::add_composite_member_variable_to_interface_block(StorageClass
+ 						if (flatten_from_ib_var)
+ 							statement(output_ref, ".", mbr_name, " = ", output_ref, ".", flatten_from_ib_mbr_name, "[", i, "];");
+ 						else
+-							statement(output_ref, ".", mbr_name, " = ", var_chain, ";");
++							statement(output_ref, ".", mbr_name, " = ",
++							          to_stage_output_value(mbr_type_id, *usable_type, var_chain), ";");
+ 					};
+ 					if (get_execution_model() == ExecutionModelGeometry)
+ 						geometry_vertex_output_hooks.push_back(hook);
+@@ -5123,6 +5161,14 @@ void CompilerMSL::add_plain_member_variable_to_interface_block(StorageClass stor
+ 			ib_type.member_types[ib_mbr_idx] = mbr_type_id;
+ 	}
+ 
++	if (!is_builtin && location != UINT32_MAX && !meta.strip_array && storage == StorageClassOutput)
++	{
++		uint32_t component = has_member_loc_decor ?
++		                     get_member_decoration(var_type.self, mbr_idx, DecorationComponent) : 0;
++		mbr_type_id = ensure_stage_interface_type(storage, mbr_type_id, location, component);
++		ib_type.member_types[ib_mbr_idx] = mbr_type_id;
++	}
++
+ 	bool flatten_stage_out = false;
+ 	string var_chain = var_chain_qual + "." + to_member_name(var_type, mbr_idx);
+ 	if (is_builtin && !meta.strip_array)
+@@ -5152,7 +5198,8 @@ void CompilerMSL::add_plain_member_variable_to_interface_block(StorageClass stor
+ 		case StorageClassOutput:
+ 			flatten_stage_out = true;
+ 			entry_func.fixup_hooks_out.push_back([=]() {
+-				statement(qual_var_name, " = ", var_chain, ";");
++				statement(qual_var_name, " = ",
++				          to_stage_output_value(mbr_type_id, this->get<SPIRType>(logical_type_id), var_chain), ";");
+ 			});
+ 			break;
+ 
+@@ -6543,6 +6590,44 @@ uint32_t CompilerMSL::ensure_correct_builtin_type(uint32_t type_id, BuiltIn buil
+ 	return type_id;
+ }
+ 
++// Width adaptation is opt-in and exact: never use the vertex-fetch location/component fallback,
++// change a logical type, or touch the tessellation/geometry buffer ABI.
++uint32_t CompilerMSL::ensure_stage_interface_type(StorageClass storage, uint32_t type_id,
++                                                 uint32_t location, uint32_t component)
++{
++	if (!msl_options.pad_stage_interface_components)
++		return type_id;
++	bool output = storage == StorageClassOutput && get_execution_model() == ExecutionModelVertex &&
++	              !capture_output_to_buffer && !msl_options.for_mesh_pipeline;
++	bool input = storage == StorageClassInput && get_execution_model() == ExecutionModelFragment;
++	if (!output && !input)
++		return type_id;
++	auto &type = get<SPIRType>(type_id);
++	if (type.basetype == SPIRType::Struct || type.pointer || !type.array.empty() || type.columns != 1 ||
++	    (type.width != 16 && type.width != 32))
++		return type_id;
++	auto &variables = output ? outputs_by_location : inputs_by_location;
++	auto itr = variables.find({location, component});
++	if (itr == variables.end())
++		return type_id;
++	uint32_t width = itr->second.vecsize;
++	if (width <= type.vecsize || width > 4 || component + width > 4)
++		return type_id;
++	return build_extended_vector_type(type_id, width);
++}
++
++std::string CompilerMSL::to_stage_output_value(uint32_t physical_type_id, const SPIRType &logical_type,
++                                              const std::string &value)
++{
++	auto &physical_type = get<SPIRType>(physical_type_id);
++	if (!msl_options.pad_stage_interface_components || physical_type.vecsize <= logical_type.vecsize)
++		return value;
++	string widened = join(type_to_glsl(physical_type), "(", value);
++	for (uint32_t i = logical_type.vecsize; i < physical_type.vecsize; i++)
++		widened += ", 0";
++	return widened + ")";
++}
++
+ // Ensure that the type is compatible with the shader input.
+ // If it is, simply return the given type ID.
+ // Otherwise, create a new type, and return its ID.
+@@ -6550,6 +6635,9 @@ uint32_t CompilerMSL::ensure_correct_input_type(uint32_t type_id, uint32_t locat
+ {
+ 	auto &type = get<SPIRType>(type_id);
+ 
++	if (msl_options.pad_stage_interface_components && get_execution_model() == ExecutionModelFragment)
++		return ensure_stage_interface_type(StorageClassInput, type_id, location, component);
++
+ 	// The object stage of a geometry pipeline fetches vertex attributes itself and converts them to
+ 	// the shader's types.
+ 	if (msl_options.for_mesh_pipeline && get_execution_model() == ExecutionModelVertex)
+diff --git a/spirv_msl.hpp b/spirv_msl.hpp
+index 1ba7446..266bf0d 100644
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -94,6 +94,8 @@ struct MSLShaderInterfaceVariable
+ 	uint32_t component = 0;
+ 	MSLShaderVariableFormat format = MSL_SHADER_VARIABLE_FORMAT_OTHER;
+ 	BuiltIn builtin = BuiltInMax;
++	// With pad_stage_interface_components, this is the physical raster-interface width.
++	// Logical shader types are retained; only absent producer lanes are zero-filled.
+ 	uint32_t vecsize = 0;
+ 	MSLShaderVariableRate rate = MSL_SHADER_VARIABLE_RATE_PER_VERTEX;
+ 	uint32_t offset = 0;
+@@ -413,6 +415,10 @@ public:
+ 		// Add support to explicit pad out components.
+ 		bool pad_fragment_output_components = false;
+ 
++		// Honor explicitly linked vector widths for ordinary vertex outputs and fragment inputs.
++		// The caller must match base types, locations and components and exclude overlapping variables.
++		bool pad_stage_interface_components = false;
++
+ 		// Specifies whether the iOS target version supports the [[base_vertex]] and [[base_instance]] attributes.
+ 		bool ios_support_base_vertex_instance = false;
+ 
+@@ -1180,6 +1186,10 @@ protected:
+ 	uint32_t ensure_correct_builtin_type(uint32_t type_id, BuiltIn builtin);
+ 	uint32_t ensure_correct_input_type(uint32_t type_id, uint32_t location, uint32_t component,
+ 	                                   uint32_t num_components, bool strip_array);
++	uint32_t ensure_stage_interface_type(StorageClass storage, uint32_t type_id,
++	                                     uint32_t location, uint32_t component);
++	std::string to_stage_output_value(uint32_t physical_type_id, const SPIRType &logical_type,
++	                                  const std::string &value);
+ 
+ 	void emit_custom_templates();
+ 	void emit_custom_functions();

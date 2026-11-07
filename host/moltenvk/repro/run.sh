@@ -77,6 +77,9 @@
 #    views of 12-byte structured buffers; KosmicKrisp crashed in vkCreateBufferView, STEAMAC-2Z: skipped where the formats
 #    have no uniform texel buffer feature, MoltenVK) and on KosmicKrisp a view of a format without texel buffer features
 #    reading as a null descriptor.
+#    texel_limits.c (MoltenVK, STEAMAC-9E/79): the captured 536346624-wide view and
+#    explicit/WHOLE_SIZE advertised-limit+1 views fail creation before Metal; legal
+#    maximum-width and partial-final-texel views still update descriptors.
 # 14. multi_entry.c: modules with vertex, fragment and compute entry points (shaders/multi_entry/ linked with
 #    spirv-link, SPIR-V 1.0 and 1.6) whose compute entry point has workgroup variables (one zero-initialized):
 #    the vertex/fragment pipeline draws, the compute pipeline counts in workgroup memory.
@@ -187,6 +190,9 @@
 #    packed both into one 16-byte vector while the control stage read them as two members (32 bytes), so patches
 #    took their corners from the wrong vertices and nothing was drawn (SPIRV-Cross 0056). The second control
 #    shader reads only POSITION; dummy padding must retain the unused TEXCOORD's stride. Every pixel checked.
+#    stage_widths.c (MoltenVK, historical STEAMAC-2M/88): ordinary raster vector
+#    widths retain written lanes, zero absent ones, and preserve logical shader
+#    values across plain/component/array/block interfaces and cache round trips.
 # 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
@@ -435,6 +441,12 @@ build queries
 
 build texel_buffer
 "$work/texel_buffer" "$gspv"
+if [ "$driver" = moltenvk ]; then
+	build texel_limits
+	for case_id in captured explicit whole boundary partial; do
+		"$work/texel_limits" "$case_id"
+	done
+fi
 
 mspv=$work/multi-entry-spv
 rm -rf "$mspv"
@@ -493,6 +505,8 @@ build frag_output
 "$work/frag_output" "$gspv"
 if [ "$driver" = moltenvk ]; then
 	"$work/frag_output" "$gspv" dual-source
+	sh "$here/stage-widths.sh" "$libdir" "$work/stage-widths"
+	sh "$here/sentry-57-shared.sh" "$libdir/libMoltenVK.dylib" - "$inc" "$work/shared-memory"
 fi
 
 if [ "$driver" = kosmickrisp ]; then

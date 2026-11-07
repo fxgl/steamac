@@ -1,0 +1,134 @@
+From: Steamac maintainers <steamac@fxgam.es>
+Subject: [PATCH] MoltenVK: link proven ordinary raster vector-width mismatches
+
+Historical STEAMAC-2M/88 mgsvtpp.exe shaders export float3 while the fragment shader declares float4 at the same user location. Link only same-base-type, same-location/component vector-width mismatches without aliases. Use the maximum width on both physical interfaces; preserve logical shader values and all written producer lanes. Explicitly exclude missing varyings, different base types, tessellation and geometry.
+
+The new option and vector metadata participate in shader cache comparison and serialization. Compare adapter maps exactly, including an empty map, so equal/wider/narrower consumers cannot reuse incompatible cached vertex functions.
+
+Current 2026-11-07 events additionally contain missing locations and float/uint mismatches; this accommodation intentionally does not claim to fix those.
+
+Requires SPIRV-Cross 0058. Includes Cereal padding accounting for the added boolean option.
+
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 45d7a1b..0922104 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -1409,6 +1409,46 @@ static void logFailedMetalPipelineDescriptor(id descriptor) {
+ 		return nil;
+ 	}
+ 
++	// Metal requires identical vector widths at a user varying. Vulkan permits absent producer
++	// components to be undefined, but never permits discarding components the producer did write.
++	// Link only real width mismatches: exact base type/location/component, no aliases or builtins.
++	SPIRVShaderInputs fragmentInputs, linkWidths;
++	if (_isRasterizing && pFragmentSS &&
++	    !getShaderInputs(_fragmentModule->getSPIRV(), spv::ExecutionModelFragment,
++	                     pFragmentSS->pName, fragmentInputs, errorLog)) {
++		setConfigurationResult(reportError(VK_ERROR_INITIALIZATION_FAILED, "Failed to get fragment inputs: %s", errorLog.c_str()));
++		return nil;
++	}
++	auto overlaps = [](const auto& variables, const auto& variable, uint32_t width) {
++		for (const auto& other : variables) {
++			if (&other != &variable && other.isUsed && other.builtin == spv::BuiltInMax &&
++			    other.location == variable.location && other.component < variable.component + width &&
++			    variable.component < other.component + other.vecWidth) { return true; }
++		}
++		return false;
++	};
++	for (const auto& output : vtxOutputs) {
++		if (!output.isUsed || output.builtin != spv::BuiltInMax || output.perPatch || output.index) { continue; }
++		switch (output.baseType) {
++			case SPIRType::Float: case SPIRType::Half: case SPIRType::Int:
++			case SPIRType::UInt: case SPIRType::Short: case SPIRType::UShort: break;
++			default: continue;
++		}
++		for (const auto& input : fragmentInputs) {
++			if (!input.isUsed || input.builtin != spv::BuiltInMax || input.perPatch || input.index ||
++			    input.location != output.location || input.component != output.component ||
++			    input.baseType != output.baseType || input.vecWidth == output.vecWidth) { continue; }
++			uint32_t width = std::max(input.vecWidth, output.vecWidth);
++			if (!input.vecWidth || !output.vecWidth || width > 4 || output.component + width > 4 ||
++			    overlaps(vtxOutputs, output, width) || overlaps(fragmentInputs, input, width)) { continue; }
++			auto linked = output;
++			linked.vecWidth = width;
++			linkWidths.push_back(linked);
++		}
++	}
++	shaderConfig.options.mslOptions.pad_stage_interface_components = true;
++	addNextStageInputToShaderConversionConfig(shaderConfig, linkWidths);
++
+ 	// Add shader stages. Compile vertex shader before others just in case conversion changes anything...like rasterizaion disable.
+ 	if (!addVertexShaderToPipeline(plDesc, pCreateInfo, shaderConfig, pVertexSS, pVertexFB, pFragmentSS)) { return nil; }
+ 
+@@ -2328,7 +2368,14 @@ static MSLVertexFormatInfo mvkMSLMeshVertexFormatInfo(MTLVertexFormat mtlFormat)
+ 		if (std::any_of(shaderOutputs.begin(), shaderOutputs.end(), [](const SPIRVShaderOutput& output) { return output.builtin == spv::BuiltInLayer; })) {
+ 			shaderConfig.options.mslOptions.arrayed_subpass_input = true;
+ 		}
+-		addPrevStageOutputToShaderConversionConfig(shaderConfig, shaderOutputs);
++		if (shaderConfig.options.mslOptions.pad_stage_interface_components) {
++			// The ordinary vertex path supplies only proven same-type width mismatches.
++			// Do not reinterpret mismatched base types or synthesize genuinely missing varyings.
++			shaderConfig.shaderInputs = std::move(shaderConfig.shaderOutputs);
++			shaderConfig.shaderOutputs.clear();
++		} else {
++			addPrevStageOutputToShaderConversionConfig(shaderConfig, shaderOutputs);
++		}
+ 
+ 		MVKMTLFunction func = getMTLFunction(shaderConfig, pFragmentSS, pFragmentFB, _fragmentModule, "Fragment");
+ 		id<MTLFunction> mtlFunc = func.getMTLFunction();
+@@ -3705,6 +3752,7 @@ void serialize(Archive & archive, CompilerMSL::Options& opt) {
+ 				opt.runtime_array_rich_descriptor,
+ 				opt.enable_base_index_zero,
+ 				opt.pad_fragment_output_components,
++				opt.pad_stage_interface_components,
+ 				opt.ios_support_base_vertex_instance,
+ 				opt.use_framebuffer_fetch_subpasses,
+ 				opt.invariant_float_math,
+@@ -4048,17 +4096,17 @@ static size_t mvkValidateCerealArchiveSize(size_t padByteCnt = 0) {
+ 
+ void mvkValidateCeralArchiveDefinitions() {
+ 	[[maybe_unused]] size_t missingBytes = 0;
+-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(7);
++	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>(3);
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLResourceBinding>();
+ 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLConstexprSampler>();
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
+-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(29);			// Contains string
++	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(28);			// Contains string
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(6);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
+-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(109);	// Contains collection
++	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(108);	// Contains collection
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(59);		// Contains collections
+ 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
+ 	missingBytes += mvkValidateCerealArchiveSize<MVKShaderModuleKey>();
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
+index f8c69f1..e09f60a 100644
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp
+@@ -192,6 +192,21 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::matches(const SPIRVToM
+ 
+     if ( !options.matches(other.options) ) { return false; }
+ 
++	// A cached shader with no width adapter must not satisfy a later pipeline that needs one.
++	// These lists are the exact linked interface, not optional resource-use hints.
++	if (options.mslOptions.pad_stage_interface_components) {
++		if (shaderOutputs.size() != other.shaderOutputs.size()) { return false; }
++		for (const auto& so : shaderOutputs) {
++			if (!containsMatching(other.shaderOutputs, so)) { return false; }
++		}
++		if (options.entryPointStage == spv::ExecutionModelFragment) {
++			if (shaderInputs.size() != other.shaderInputs.size()) { return false; }
++			for (const auto& si : shaderInputs) {
++				if (!containsMatching(other.shaderInputs, si)) { return false; }
++			}
++		}
++	}
++
+ 	for (const auto& si : shaderInputs) {
+ 		if (si.outIsUsedByShader && !containsMatching(other.shaderInputs, si)) { return false; }
+ 	}
