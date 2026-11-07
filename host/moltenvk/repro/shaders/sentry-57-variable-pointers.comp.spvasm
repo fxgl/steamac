@@ -1,0 +1,90 @@
+; STEAMAC-57 safety control: a Workgroup vector member escapes to a real pointer parameter.
+; Only one shared struct (48 bytes); packing must not silently change the pointer ABI.
+OpCapability Shader
+OpCapability VariablePointers
+OpExtension "SPV_KHR_variable_pointers"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %local_index
+OpExecutionMode %main LocalSize 968 1 1
+OpName %LDS "LDS_Layout"
+OpMemberName %LDS 0 "ao"
+OpMemberName %LDS 1 "normal"
+OpMemberName %LDS 2 "depth"
+OpName %shared "Blur_LDS"
+OpName %modify "modify"
+OpDecorate %local_index BuiltIn LocalInvocationIndex
+OpDecorate %result DescriptorSet 0
+OpDecorate %result Binding 0
+OpDecorate %output_array ArrayStride 16
+OpMemberDecorate %Output 0 Offset 0
+OpDecorate %Output Block
+%void = OpTypeVoid
+%bool = OpTypeBool
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%v3float = OpTypeVector %float 3
+%v4float = OpTypeVector %float 4
+%u0 = OpConstant %uint 0
+%u1 = OpConstant %uint 1
+%u2 = OpConstant %uint 2
+%count = OpConstant %uint 968
+%semantics = OpConstant %uint 264
+%f1 = OpConstant %float 1
+%f2 = OpConstant %float 2
+%f3 = OpConstant %float 3
+%f7 = OpConstant %float 7
+%f11 = OpConstant %float 11
+%f25 = OpConstant %float 25
+%f30 = OpConstant %float 30
+%initial_normal = OpConstantComposite %v3float %f1 %f2 %f3
+%delta = OpConstantComposite %v3float %f11 %f25 %f30
+%ones = OpConstantComposite %v3float %f1 %f1 %f1
+%LDS = OpTypeStruct %float %v3float %float
+%initial = OpConstantComposite %LDS %f2 %initial_normal %f7
+%ptr_wg_lds = OpTypePointer Workgroup %LDS
+%ptr_wg_float = OpTypePointer Workgroup %float
+%ptr_wg_vec = OpTypePointer Workgroup %v3float
+%ptr_input_uint = OpTypePointer Input %uint
+%output_array = OpTypeArray %v4float %count
+%Output = OpTypeStruct %output_array
+%ptr_output = OpTypePointer StorageBuffer %Output
+%ptr_output_vec = OpTypePointer StorageBuffer %v4float
+%function = OpTypeFunction %void
+%function_modify = OpTypeFunction %void %ptr_wg_vec
+%shared = OpVariable %ptr_wg_lds Workgroup
+%local_index = OpVariable %ptr_input_uint Input
+%result = OpVariable %ptr_output StorageBuffer
+%modify = OpFunction %void None %function_modify
+%parameter = OpFunctionParameter %ptr_wg_vec
+%modify_entry = OpLabel
+%before = OpLoad %v3float %parameter
+%after = OpFAdd %v3float %before %delta
+OpStore %parameter %after
+OpReturn
+OpFunctionEnd
+%main = OpFunction %void None %function
+%entry = OpLabel
+%index = OpLoad %uint %local_index
+%is_zero = OpIEqual %bool %index %u0
+OpSelectionMerge %merge None
+OpBranchConditional %is_zero %initialize %merge
+%initialize = OpLabel
+OpStore %shared %initial
+%parameter_pointer = OpAccessChain %ptr_wg_vec %shared %u1
+%call = OpFunctionCall %void %modify %parameter_pointer
+OpBranch %merge
+%merge = OpLabel
+OpControlBarrier %u2 %u2 %semantics
+%ao_pointer = OpAccessChain %ptr_wg_float %shared %u0
+%ao = OpLoad %float %ao_pointer
+%normal_pointer = OpAccessChain %ptr_wg_vec %shared %u1
+%normal = OpLoad %v3float %normal_pointer
+%sum = OpDot %float %normal %ones
+%normal_y = OpCompositeExtract %float %normal 1
+%depth_pointer = OpAccessChain %ptr_wg_float %shared %u2
+%depth = OpLoad %float %depth_pointer
+%value = OpCompositeConstruct %v4float %ao %sum %depth %normal_y
+%output_pointer = OpAccessChain %ptr_output_vec %result %u0 %index
+OpStore %output_pointer %value
+OpReturn
+OpFunctionEnd

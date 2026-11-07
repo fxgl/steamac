@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000057 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Sat, 7 Nov 2026 18:08:00 +0000
+Subject: [PATCH] Pack non-block Workgroup vector members (STEAMAC-57)
+
+The full captured 1.9.13 SSAO kernel allocates only an array of 968
+{ float ao; float3 normal; float depth; } elements. Vulkan's normative
+Workgroup padding limit is its std430 size: 30976 bytes <= the advertised
+32768. MSL float3 consumes 16 bytes, putting depth at offset 32 and the
+struct stride at 48: exactly the rejected 46464 bytes.
+
+Reuse packed physical vector conversions for non-array vec3 members of
+non-block Workgroup structs. Preserve explicitly laid-out buffer types,
+matrices/array wrappers, and escaped VariablePointers vector pointer ABIs.
+The captured declaration then consumes 19360 bytes without changing its
+logical values, workgroup dimensions or barriers. When optimized SPIR-V
+reconstructs that shared value into an explicitly laid-out buffer struct,
+include its physical padding slots in the aggregate initializer.
+
+sentry-57-shared.sh covers pipeline creation, every invocation's readback,
+helpers, component stores, nested/zero-initialized arrays, buffer layout
+controls and variable pointers. Original SPIR-V was not retained; fixtures
+reconstruct the complete captured typed declaration.
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index 0ff6b41..9df8ce7 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -3961,6 +3961,33 @@ void CompilerMSL::mark_packable_structs()
+ 		if (type.basetype == SPIRType::Struct && type.pointer && type.storage == StorageClassPhysicalStorageBuffer)
+ 			mark_as_packable(type);
+ 	});
++
++	// Variable pointers can expose a vector member through an ordinary vector pointer.
++	// Such pointers do not carry a packed physical type, so preserve their representation.
++	auto &caps = get_declared_capabilities();
++	if (std::find(caps.begin(), caps.end(), CapabilityVariablePointers) != caps.end())
++		return;
++
++	// Non-block workgroup storage must not consume more than its std430 size.
++	// MSL gives a three-component vector both size and alignment of four components:
++	// { float, float3, float } therefore occupies 48 bytes instead of at most 32.
++	// Reuse the physical packed-vector load/store path, without changing logical types.
++	// Do this after finding every buffer use, since a type can be shared by storage classes.
++	ir.for_each_typed_id<SPIRType>([&](uint32_t type_id, const SPIRType &type) {
++		if (!has_extended_decoration(type_id, SPIRVCrossDecorationWorkgroupStruct) ||
++		    has_extended_decoration(type_id, SPIRVCrossDecorationBufferBlockRepacked) ||
++		    type_is_block_like(type))
++			return;
++
++		for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
++		{
++			auto &member_type = get<SPIRType>(type.member_types[i]);
++			// Array wrappers and matrices have their own physical representation.
++			if (is_vector(member_type) && member_type.vecsize == 3 &&
++			    !is_array(member_type) && !is_pointer(member_type))
++				set_extended_member_decoration(type_id, i, SPIRVCrossDecorationPhysicalTypePacked);
++		}
++	});
+ }
+ 
+ // If the specified type is a struct, it and any nested structs
+@@ -11363,6 +11390,41 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
+ 
+ 	switch (opcode)
+ 	{
++	case OpCompositeConstruct:
++	{
++		auto &type = get<SPIRType>(ops[0]);
++		bool padded_struct = false;
++		if (type.basetype == SPIRType::Struct && type.array.empty())
++			for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
++				padded_struct = padded_struct ||
++				                has_extended_member_decoration(type.self, i, SPIRVCrossDecorationPaddingTarget);
++		if (!padded_struct)
++		{
++			CompilerGLSL::emit_instruction(instruction);
++			break;
++		}
++
++		// Reconstructing a shared value in an explicitly laid-out buffer type must
++		// initialize its physical padding slots too, not shift logical fields into them.
++		string value = type_to_glsl_constructor(type) + "{ ";
++		bool forward = true;
++		for (uint32_t i = 0; i < instruction.length - 2; i++)
++		{
++			if (i)
++				value += ", ";
++			if (has_extended_member_decoration(type.self, i, SPIRVCrossDecorationPaddingTarget))
++				value += "{}, ";
++			forward = forward && should_forward(ops[i + 2]);
++			value += to_composite_constructor_expression(type, ops[i + 2],
++			                                            has_member_decoration(type.self, i, DecorationOffset));
++		}
++		value += " }";
++		emit_op(ops[0], ops[1], value, forward);
++		for (uint32_t i = 2; i < instruction.length; i++)
++			inherit_expression_dependencies(ops[1], ops[i]);
++		break;
++	}
++
+ 	case OpLoad:
+ 	{
+ 		uint32_t result_type = ops[0];

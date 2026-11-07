@@ -1,0 +1,79 @@
+#version 450
+// STEAMAC-57: the captured SSAO shader has LDS_Layout[1][968].
+// std430: ao=0, normal=16 (12 bytes), depth=28, stride=32 => 30976 <= 32768.
+// Unpacked MSL: ao=0, normal=16 (16 bytes), depth=32, stride=48 => 46464.
+#ifndef SHAPE
+#define SHAPE 0
+#endif
+#ifndef ZERO_INIT
+#define ZERO_INIT 0
+#endif
+#if ZERO_INIT
+#extension GL_EXT_null_initializer : require
+#endif
+layout(local_size_x = 968) in;
+struct LDS_Layout
+{
+    float ao;
+    vec3 normal;
+    float depth;
+};
+#if SHAPE == 2
+struct Row { LDS_Layout elements[968]; };
+struct Rows { Row rows[1]; };
+#if ZERO_INIT
+shared Rows Blur_LDS = {};
+#else
+shared Rows Blur_LDS;
+#endif
+#define ITEM(i) Blur_LDS.rows[0].elements[i]
+#else
+struct Rows { LDS_Layout Item[1][968]; };
+#if ZERO_INIT
+shared Rows Blur_LDS = {};
+#else
+shared Rows Blur_LDS;
+#endif
+#define ITEM(i) Blur_LDS.Item[0][i]
+#endif
+layout(std430, binding = 0) buffer Result { vec4 result[968]; };
+#if SHAPE == 1
+// The same source type also has an externally visible std430 layout.
+layout(std430, binding = 1) buffer External { LDS_Layout external_data[968]; };
+#endif
+void modify(inout LDS_Layout value)
+{
+    value.ao += 2.0;
+    value.normal += vec3(10.0, 20.0, 30.0);
+    value.depth += 3.0;
+}
+void modify_vector(inout vec3 value)
+{
+    value.y += 5.0;
+}
+void main()
+{
+    uint i = gl_LocalInvocationID.x;
+#if ZERO_INIT
+    // Test packed whole-struct null initializers before any thread writes shared memory.
+    LDS_Layout zero = ITEM(i);
+    bool initialized = zero.ao == 0.0 && all(equal(zero.normal, vec3(0.0))) && zero.depth == 0.0;
+    barrier();
+#else
+    bool initialized = true;
+#endif
+    LDS_Layout local = LDS_Layout(float(i), vec3(i + 1u, i + 2u, i + 3u), float(i + 4u));
+    ITEM(i) = local;
+    modify(ITEM(i));
+    modify_vector(ITEM(i).normal);
+    // Dynamic component stores must remain valid after changing physical vector representation.
+    uint component = i % 3u;
+    ITEM(i).normal[component] += 1.0;
+    barrier();
+    uint neighbor = (i + 1u) % 968u;
+    local = ITEM(neighbor);
+#if SHAPE == 1
+    external_data[i] = local;
+#endif
+    result[i] = initialized ? vec4(local.ao, dot(local.normal, vec3(1.0)), local.depth, local.normal.y) : vec4(-1.0);
+}
