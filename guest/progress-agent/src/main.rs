@@ -332,7 +332,7 @@ fn ready_marker() -> String {
 /// Host -> guest requests on the port: `<command> [args]`, one per line,
 /// never blocking (each handler only starts work or answers right away).
 fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut freeze::Freezer, focus: &focus::Focus,
-              profiles: &profiles::Requests, compact: &compact::Compact, cursor: &mut cursor::Cursor) {
+              profiles: &profiles::Requests, compact: &compact::Compact, cursor: &mut cursor::Cursor, games: &games::Games) {
     for line in port.read_lines() {
         let line = line.trim();
         if let Some(enabled) = port::cursor_tracking(line) {
@@ -343,7 +343,7 @@ fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut
         }
         let (cmd, arg) = line.split_once(' ').map_or((line, ""), |(c, a)| (c, a.trim()));
         match cmd {
-            "collect-logs" => collector.request(arg, port),
+            "collect-logs" => collector.request(arg, port, games.diagnostic_appid()),
             "compact-disk" => compact.request(arg),
             "profiles" | "launch" | "restart-steam" => profiles.request(cmd, arg),
             "freeze-game" => match arg.parse::<u32>() {
@@ -434,7 +434,7 @@ fn report_boot(
             }
         }
         rep.port.flush();
-        serve_host(&mut rep.port, collector, freezer, focus, profiles, compact, cursor);
+        serve_host(&mut rep.port, collector, freezer, focus, profiles, compact, cursor, games);
         collector.pump(&mut rep.port);
         focus.pump(&mut rep.port, false, names);
         cursor.pump(&mut rep.port);
@@ -530,7 +530,7 @@ fn main() {
         let mut pfds = Vec::with_capacity(8);
         while !terminated() {
             rep.port.flush();
-            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &compact, &mut cursor_state);
+            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &compact, &mut cursor_state, &games);
             collector.pump(&mut rep.port);
             focus.pump(&mut rep.port, false, &mut names);
             cursor_state.pump(&mut rep.port);

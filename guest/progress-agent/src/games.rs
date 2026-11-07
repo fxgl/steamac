@@ -21,6 +21,7 @@ pub struct Games {
     meminfo: PathBuf,
     proc_root: PathBuf,
     running: BTreeMap<u32, Run>,
+    last_started: Option<u32>,
 }
 
 impl Games {
@@ -31,7 +32,15 @@ impl Games {
             meminfo: PathBuf::from("/proc/meminfo"),
             proc_root: PathBuf::from("/proc"),
             running: BTreeMap::new(),
+            last_started: None,
         }
+    }
+
+    /// Keep the last launch after its scope exits: startup failures often end before reporting.
+    pub fn diagnostic_appid(&self) -> Option<u32> {
+        self.last_started.filter(|id| self.running.contains_key(id))
+            .or_else(|| self.running.keys().next().copied())
+            .or(self.last_started)
     }
 
     /// Called only after a heartbeat timer expiration, in both main loops.
@@ -56,6 +65,7 @@ impl Games {
         let mut guest_used = None;
         for (appid, paths) in scopes {
             let run = self.running.entry(appid).or_insert_with(|| {
+                self.last_started = Some(appid);
                 port.send(&format!("game-start {appid}"));
                 names.report(appid, port);
                 Run { next_memory: now + MEMORY_INTERVAL, proton_sent: false }
@@ -183,7 +193,7 @@ mod tests {
             let port = Port::open(output.to_str().unwrap()).unwrap();
             Fixture {
                 names: appname::Names::new(steam.clone(), root.join("named")),
-                games: Games { cgroup_root: Some(cgroup), steam_root: steam, meminfo, proc_root: root.join("proc"), running: BTreeMap::new() },
+                games: Games { cgroup_root: Some(cgroup), steam_root: steam, meminfo, proc_root: root.join("proc"), running: BTreeMap::new(), last_started: None },
                 root, port, now: Instant::now(),
             }
         }
@@ -239,6 +249,24 @@ mod tests {
         f.tick(8);
         f.tick(9);
         assert_eq!(f.lines(), ["game-start 570", "game-mem 570 4 60000", "game-exit 570"]);
+    }
+
+    #[test]
+    fn diagnostics_prefer_running_then_last_launched_game() {
+        let mut f = Fixture::new();
+        assert_eq!(f.games.diagnostic_appid(), None);
+        let first = f.scope("app-steam-app570-1.scope", 1024);
+        f.tick(0);
+        assert_eq!(f.games.diagnostic_appid(), Some(570));
+        let second = f.scope("app-steam-app4356430-1.scope", 1024);
+        f.tick(1);
+        assert_eq!(f.games.diagnostic_appid(), Some(4356430));
+        std::fs::remove_dir_all(second).unwrap();
+        f.tick(2);
+        assert_eq!(f.games.diagnostic_appid(), Some(570));
+        std::fs::remove_dir_all(first).unwrap();
+        f.tick(3);
+        assert_eq!(f.games.diagnostic_appid(), Some(4356430));
     }
 
     #[test]
