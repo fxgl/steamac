@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000052 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Sat, 7 Nov 2026 17:55:00 +0000
+Subject: [PATCH] Reject oversized texel views before Metal (STEAMAC-9E/79)
+
+The captured Metal assertion names width 536346624, over its 268435456
+capacity. MoltenVK advertises only 67108864 texels, but both explicit and
+VK_WHOLE_SIZE views bypassed that limit and were narrowed to uint32_t
+before the lazy Metal constructor, which aborts instead of returning nil.
+
+Validate the resolved texel count before narrowing. Reject an oversized
+view at creation instead of aborting the VM during descriptor update.
+Keep legal maximum-size views and partial final texels with WHOLE_SIZE.
+
+texel_limits.c reproduces the assertion on M1 Max, using an R8 WHOLE_SIZE
+view over a 512 MiB buffer at offset 524288 (the original format/range was
+not captured). Explicit and WHOLE_SIZE limit+1 views must fail; boundary
+and partial controls must still update descriptors successfully.
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm b/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
+index 043ad07..1817ad0 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKBuffer.mm
+@@ -353,6 +353,17 @@ static VkDeviceSize getTextureBufferOffsetMask(const VkPhysicalDeviceTexelBuffer
+     VkDeviceSize byteCount = pCreateInfo->range;
+     if (byteCount == VK_WHOLE_SIZE) { byteCount = _buffer->getByteCount() - pCreateInfo->offset; }    // Remaining bytes in buffer
+     size_t blockCount = byteCount / bytesPerBlock;
++	// Validate in 64 bits, before narrowing the width or lazily constructing a Metal
++	// texture. VK_WHOLE_SIZE is subject to maxTexelBufferElements too (VUID 04059).
++	// Metal aborts, rather than returning nil, for unrepresentable texture widths.
++	uint32_t maxElements = getDeviceProperties().limits.maxTexelBufferElements;
++	if (blockCount > maxElements) {
++		setConfigurationResult(reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY,
++										   "vkCreateBufferView(): Format %d, offset %llu, range %llu resolves to %zu texels, exceeding maxTexelBufferElements %u.",
++										   pCreateInfo->format, pCreateInfo->offset, pCreateInfo->range,
++										   blockCount, maxElements));
++		return;
++	}
+ 
+ 	_textureSize.width = uint32_t(blockCount * fmtBlockSize.width);
+     _textureSize.height = 1;
