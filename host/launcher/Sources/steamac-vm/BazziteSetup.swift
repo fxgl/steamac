@@ -31,7 +31,8 @@ enum BazziteSetup {
         #!/bin/bash
         set -eu
         resize2fs /dev/vda3
-        # shellcheck disable=SC2016 -- the password hash must remain literal
+        # The password hash must remain literal.
+        # shellcheck disable=SC2016
         \(hash.isEmpty ? ":" : "printf '%s\\n' 'bazzite:\(hash)' | chpasswd -e")
         rm -f /etc/systemd/system/multi-user.target.wants/steamac-firstboot.service
         rm -f /etc/systemd/system/steamac-firstboot.service /etc/steamac-firstboot
