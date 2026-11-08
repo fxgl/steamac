@@ -173,7 +173,9 @@ final class WindowController: NSObject, NSWindowDelegate {
         // Only injected when enabled at boot; hiding an injected HUD cannot unload its handlers.
         applyMetalHUD(settings.metalHUD)
         subscriptions.append(settings.$metalHUD.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in
-            self?.applyMetalHUD(on)
+            guard let self else { return }
+            self.applyMetalHUD(on)
+            if on && !MetalHUD.loaded { self.explainHUDRestart() }
         })
         applySuperResolution(settings.superResolution)
         subscriptions.append(settings.$superResolution.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in
@@ -507,6 +509,15 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Menu "Show Metal Performance HUD" / Ctrl+Cmd+P: flips the setting (persisted, Settings > Display).
     func toggleMetalHUD() {
         settings.metalHUD.toggle()
+    }
+
+    private func explainHUDRestart() {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Metal HUD will appear after restarting the VM")
+        alert.informativeText = String(localized: "Your HUD preference has been saved. Shut down the guest normally, then start the VM again to show the HUD. The current session will keep running until you shut it down.")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: String(localized: "OK"))
+        alert.beginSheetModal(for: window)
     }
 
     private func applyMetalHUD(_ on: Bool) {
