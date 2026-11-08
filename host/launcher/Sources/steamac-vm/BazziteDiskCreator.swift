@@ -94,7 +94,7 @@ final class BazziteDiskCreator {
         report("Preparing Bazzite disk…", "Sparse disk; empty blocks use no storage", 0.75)
         let disk = stage.appendingPathComponent("disk.img")
         try extract(stage.appendingPathComponent(manifest.disk.name), to: disk, expectedBytes: manifest.diskBytes)
-        let gpt = try GPT.read(path: disk.path)
+        let gpt = try GPT.read(path: disk.path, allowAlignedUsableRange: true)
         guard gpt.sectors * 512 == UInt64(manifest.diskBytes) else { throw OptionError("Bazzite disk GPT size mismatch") }
         try checkCancel()
         let sidecar = stage.appendingPathComponent("boot")

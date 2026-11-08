@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Tests the release trust boundary, bounded sparse extraction and backend routing.
@@ -56,6 +57,35 @@ enum BazziteSelfTest {
         check("existing destination preserved") {
             rejects { try BazziteDiskCreator().extract(archive, to: blank, expectedBytes: 2 << 20) }
                 && (try? Data(contentsOf: blank)) == Data(count: 2 << 20)
+        }
+        check("Fedora aligned GPT and invalid ranges") {
+            let target = dir.appendingPathComponent("fedora.img")
+            let table = GPT(diskGUID: UUID(), sectors: 8192, entries: [
+                .init(type: DiskLayout.typeRoot, uuid: UUID(), firstLBA: 2048,
+                      lastLBA: 6143, attributes: 0, name: "root")])
+            let fd = open(target.path, O_RDWR | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { return false }
+            defer { close(fd) }
+            guard ftruncate(fd, off_t(table.sectors * 512)) == 0 else { return false }
+            func write(_ first: UInt64, _ last: UInt64) throws {
+                var primary = table.primaryBytes(), backup = table.backupBytes()
+                for (isPrimary, offset) in [(true, 512), (false, 32 * 512)] {
+                    var h = Array((isPrimary ? primary : backup)[offset..<(offset + 512)])
+                    GPT.put64(&h, 40, first); GPT.put64(&h, 48, last)
+                    GPT.put32(&h, 16, 0); GPT.put32(&h, 16, GPT.crc32(h[0..<92]))
+                    if isPrimary { primary.replaceSubrange(offset..<(offset + 512), with: h) }
+                    else { backup.replaceSubrange(offset..<(offset + 512), with: h) }
+                }
+                try GPT.pwriteAll(fd, primary, at: 0)
+                try GPT.pwriteAll(fd, backup, at: (table.sectors - 33) * 512)
+            }
+            try write(2048, 8158)
+            guard try GPT.read(path: target.path, allowAlignedUsableRange: true) == table,
+                  rejects({ _ = try GPT.read(path: target.path) }) else { return false }
+            try write(4096, 8158)
+            guard rejects({ _ = try GPT.read(path: target.path, allowAlignedUsableRange: true) }) else { return false }
+            try write(2048, 8191)
+            return rejects { _ = try GPT.read(path: target.path, allowAlignedUsableRange: true) }
         }
         let asset = BazziteGuest.Asset(name: "disk.gz", sha256: String(repeating: "a", count: 64), bytes: 100)
         let guest = BazziteGuest(schema: 1, build: "test", sourceRevision: "test", diskBytes: 40 << 30,

@@ -143,7 +143,7 @@ struct GPT: Equatable {
 
     /// Read and validate the table of a disk image (protective MBR, primary + backup header and
     /// entry CRCs, backup = primary). Never writes.
-    static func read(path: String) throws -> GPT {
+    static func read(path: String, allowAlignedUsableRange: Bool = false) throws -> GPT {
         let fd = open(path, O_RDONLY)
         guard fd >= 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
         defer { close(fd) }
@@ -152,14 +152,18 @@ struct GPT: Equatable {
         let sectors = UInt64(st.st_size) / 512
         let head = try preadAll(fd, 34 * 512, at: 0)
         guard head[510] == 0x55, head[511] == 0xAA, head[446 + 4] == 0xEE else { throw OptionError("\(path): no protective MBR") }
-        let primary = try parse(header: Array(head[512..<1024]), array: Array(head[1024...]), myLBA: 1, sectors: sectors)
+        let primary = try parse(header: Array(head[512..<1024]), array: Array(head[1024...]), myLBA: 1, sectors: sectors, allowAlignedUsableRange: allowAlignedUsableRange)
         let tail = try preadAll(fd, 33 * 512, at: (sectors - 33) * 512)
-        let backup = try parse(header: Array(tail[(32 * 512)...]), array: Array(tail[0..<(32 * 512)]), myLBA: sectors - 1, sectors: sectors)
+        let backup = try parse(header: Array(tail[(32 * 512)...]), array: Array(tail[0..<(32 * 512)]), myLBA: sectors - 1, sectors: sectors, allowAlignedUsableRange: allowAlignedUsableRange)
+        guard get64(head, 512 + 40) == get64(tail, 32 * 512 + 40),
+              get64(head, 512 + 48) == get64(tail, 32 * 512 + 48) else {
+            throw OptionError("GPT backup usable range differs")
+        }
         guard backup == primary else { throw OptionError("\(path): backup GPT differs from the primary") }
         return primary
     }
 
-    private static func parse(header h: [UInt8], array a: [UInt8], myLBA: UInt64, sectors: UInt64) throws -> GPT {
+    private static func parse(header h: [UInt8], array a: [UInt8], myLBA: UInt64, sectors: UInt64, allowAlignedUsableRange: Bool) throws -> GPT {
         guard Array(h[0..<8]) == Array("EFI PART".utf8), get32(h, 12) == 92 else { throw OptionError("GPT header signature") }
         var z = Array(h[0..<92])
         z[16] = 0; z[17] = 0; z[18] = 0; z[19] = 0
@@ -168,7 +172,10 @@ struct GPT: Equatable {
         guard get32(h, 80) == UInt32(entryCount), get32(h, 84) == UInt32(entrySize) else { throw OptionError("GPT entry geometry") }
         guard crc32(a[0..<(entryCount * entrySize)]) == get32(h, 88) else { throw OptionError("GPT entry array CRC") }
         var g = GPT(diskGUID: getGUID(h, 56), sectors: sectors, entries: [])
-        guard get64(h, 40) == g.firstUsableLBA, get64(h, 48) == g.lastUsableLBA else { throw OptionError("GPT usable range") }
+        let first = get64(h, 40), last = get64(h, 48)
+        guard first >= g.firstUsableLBA, last <= g.lastUsableLBA, first <= last,
+              allowAlignedUsableRange || (first == g.firstUsableLBA && last == g.lastUsableLBA),
+              get64(h, 72) == (myLBA == 1 ? 2 : sectors - 33) else { throw OptionError("GPT usable range") }
         for i in 0..<entryCount {
             let o = i * entrySize
             let type = getGUID(a, o)
@@ -181,6 +188,14 @@ struct GPT: Equatable {
             }
             g.entries.append(Entry(type: type, uuid: getGUID(a, o + 16), firstLBA: get64(a, o + 32), lastLBA: get64(a, o + 40),
                                    attributes: get64(a, o + 48), name: String(decoding: units, as: UTF16.self)))
+        }
+        var end = first - 1
+        for entry in g.entries.sorted(by: { $0.firstLBA < $1.firstLBA }) {
+            guard entry.firstLBA >= first, entry.lastLBA <= last,
+                  entry.firstLBA <= entry.lastLBA, entry.firstLBA > end else {
+                throw OptionError("GPT partition range")
+            }
+            end = entry.lastLBA
         }
         return g
     }
