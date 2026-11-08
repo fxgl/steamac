@@ -154,6 +154,7 @@ apply_dxmt() {
     # Wine finds the winemetal builtin only through a system32 entry: like Proton's own builtins, the prefix
     # template gets a link to it, which Proton puts into every prefix it creates or updates
     local T=$1/files/share/default_pfx/drive_c/windows/system32
+    [[ -d $1/dist ]] && T=$1/dist/share/default_pfx/drive_c/windows/system32
     [[ -d $T && ! -L $T/winemetal.dll ]] && ln -sfn ../../../../../lib/wine/x86_64-windows/winemetal.dll "$T/winemetal.dll"
     printf '%s\n' "$p" > "$B/path"
     vkey "$p" > "$B/version"
