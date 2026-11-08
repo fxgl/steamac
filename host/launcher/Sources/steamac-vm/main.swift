@@ -528,6 +528,10 @@ do {
     }, end: { [weak wc] in wc?.endStreamDisplay() })
     let streamEnvironment = StreamEnvironment(ctx: vm.ctx, capture: streamCapture, input: streamInput,
                                               sound: sound, display: streamDisplay)
+    if !settings.streamingHost, BazziteGuest.exists(options.disks.first?.path ?? ""),
+       let library = options.wmtrLibrary {
+        MetalFrameDiagnostics.shared.start(libraryPath: library)
+    }
     let streamHost = GameStreamHost(environment: streamEnvironment, hostName: StreamPairingPrompt.hostName)
     let streamPrompt = StreamPairingPrompt(host: streamHost)
     let streamStatusSubscription = streamHost.$status.sink { status in
@@ -554,6 +558,7 @@ do {
     }
     lifecycle.suspender = suspender
     let streamSubscription = settings.$streamingHost.receive(on: DispatchQueue.main).sink { on in
+        if on { MetalFrameDiagnostics.shared.stop() }
         streamHost.setEnabled(on && !suspender.paused)
     }
     sleepPort?.start { line in suspender.sleepPortLine(line, allowed: lifecycle.canPause) }
