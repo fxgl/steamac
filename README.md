@@ -305,7 +305,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Games | **Share game statistics** (off until you agree, see “Game statistics”); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
-| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS (`--share`, `--share-mount`, `--no-share`, see “Shared folder”) |
+| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-library`, `--no-share-library`, see “Shared folder”) |
 
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
@@ -535,6 +535,42 @@ virtio-fs device tagged `macshare`, mounted at **Mount point in SteamOS** (defau
 games stored on the Mac load at the Mac disk's speed, and what SteamOS writes there is on the Mac
 at once. Off by default (no folder chosen). Command line: `--share DIR`, `--share-mount PATH`,
 `--no-share` for one launch.
+
+**Use as a Steam library** is on by default when a folder is shared (next start).
+SteamOS creates **`<mount>/SteamLibrary/steamapps`** and registers `<mount>/SteamLibrary`
+before Steam starts; no Desktop Mode “Add Drive” dialog is needed. In Steam's Storage settings
+and install-location picker it is a second library named **Mac Share**, not a Deck-style
+removable drive to format. `--share-library` / `--no-share-library` overrides this for one launch;
+turning it off does not delete files or remove an already registered library.
+
+Registration is **once per guest library path**. Removing it later in Steam is respected, even
+after selecting another share and switching back. The marker is
+`~/.local/share/Steam/config/steamac-share-library.json` (next to `config.vdf`); to register a
+removed path automatically again, remove that path from the marker with Steam stopped.
+Changing only the Mac folder while keeping the same guest mount path does not register it again.
+
+**Filesystem: APFS recommended.** Proton stores Windows prefixes in each library's
+`steamapps/compatdata`; these need symbolic links, not just writable game files. The hook probes
+creating and following a symlink on the mounted share as `steamos`, and skips registration if
+that fails (including exFAT, which has no symlinks). Mac OS Extended/HFS+ supports symlinks and
+is not excluded by filesystem name. APFS virtio-fs read/write, chmod and a Proton 11 ARM64 prefix's
+`dosdevices/c:` / `z:` symlinks were checked in the VM. A normal case-insensitive APFS share remains
+case-insensitive in Linux: games that require distinct case-only filenames still need a
+case-sensitive volume or the VM's internal library. This does not convert a Mac/Windows Steam
+library into a Linux one; use a separate folder for SteamOS.
+
+Implementation: `steam-share-library` is a non-blocking `ExecStartPre` of `steam.service`,
+enabled by `steamac.share_library=1` alongside `steamac.share=PATH`. It checks the **exact
+mount point** with `findmnt -t virtiofs` before touching any files. The Deck client tested
+(1792618285) reads `~/.local/share/Steam/steamapps/libraryfolders.vdf` first, falls back to
+`config/libraryfolders.vdf` if it is absent, and rewrites both as matching copies. The hook
+atomically edits the authoritative file, preserving existing numbered entries (or importing
+the legacy file); it supplies only `path` and `label`. Steam assigns `contentid`, measures
+`totalsize`, and populates `apps` itself. No guessed IDs or installed-app records are written.
+With a previously registered share absent, Steam **keeps the entry but logs “Install folder …
+not mounted”**; it is not a usable install location until the share returns. The hook leaves
+both the list and marker alone in that case, never creating a substitute library on the guest
+disk. Keep an external volume connected before starting the VM; reconnect and restart if missing.
 
 The launcher adds the device with `krun_add_virtiofs4` (`KRUN_SEMANTICS_LINUX_SIMPLIFIED`: the
 guest sees its own uid/gid on every file, so the `steamos` user reads and writes without ownership

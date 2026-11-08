@@ -253,7 +253,7 @@ Moonlight 请求的分辨率暂时接管客户机显示尺寸（偶数且不超�
 | 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，其余控制器是否成为玩家 2–4，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
 | 声音 | 输出设备（系统默认跟随 macOS，或指定 CoreAudio 设备），音量/静音，低（10 毫秒）/普通（20 毫秒）/稳定（60 毫秒）缓冲——经 `krun_snd_set_*`（`dlsym` 查找；旧 libkrun 下字段置灰并说明） | 声音（`--no-sound`） |
 | 游戏 | **共享游戏统计**（同意前关闭，见“游戏统计”）；已知游戏及已记录会话的游戏：单独配置（图形、Vulkan 驱动、启动选项，见下文）、会话数、游玩时间、上次会话的 FPS / 1% low / 游戏内存 / Vulkan 驱动、可选的个人评价（运行良好 / 可玩但有问题 / 能启动但无法游玩 / 无法启动）与每款游戏的**共享**开关 | 配置可能需要重启 Steam 或虚拟机（见下文） |
-| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + SteamOS 中的挂载点（`--share`、`--share-mount`、`--no-share`，见“共享文件夹”） |
+| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + SteamOS 中的挂载点 + 用作 Steam 库（`--share`、`--share-mount`、`--no-share`、`--share-library`、`--no-share-library`，见“共享文件夹”） |
 
 **虚拟机内存与图形共享 Mac 的内存。** 自动分配的虚拟机内存为物理内存的一半（4–16 GiB）。
 每次启动还会为 macOS、其他应用和驱动开销预留至少 3 GiB 或宿主内存的四分之一，
@@ -408,6 +408,35 @@ Klipper 恢复的历史）不发往 Mac；共享内容改为在 Mac 侧提供。
 SteamOS，每次启动时挂载到 **SteamOS 中的挂载点**（默认 `/home/steamos/MacShare`）。文件就地读写，不复制：
 存放在 Mac 上的游戏以 Mac 磁盘的速度加载，SteamOS 写入的内容立即出现在 Mac 上。默认关闭（未选择文件夹）。
 命令行：`--share DIR`、`--share-mount PATH`，`--no-share` 仅本次启动。
+
+选择共享文件夹后，**用作 Steam 库**默认开启（下次启动生效）。SteamOS 会在 Steam 启动前创建
+**`<挂载点>/SteamLibrary/steamapps`**，并注册 `<挂载点>/SteamLibrary`，无需在桌面模式使用
+无响应的“添加驱动器”对话框。在 Steam 的存储设置和安装位置选择器中，它是名为 **Mac Share** 的
+第二个库，而不是需要格式化的 Deck 可移动磁盘。`--share-library` / `--no-share-library` 仅覆盖
+本次启动；关闭后不会删除文件，也不会移除已注册的库。
+
+注册对**每个客户机库路径只进行一次**。之后在 Steam 中移除库会被尊重，即使切换到其他共享后再切回来。
+标记为 `~/.local/share/Steam/config/steamac-share-library.json`（在 `config.vdf` 旁）；
+如需自动重新注册已移除的路径，请先停止 Steam，再从标记中删除该路径。仅更换 Mac 文件夹而保留
+相同的客户机挂载路径不会重新注册。
+
+**文件系统：推荐 APFS。** Proton 将 Windows 前缀存入每个库的 `steamapps/compatdata`，这需要
+符号链接，而不只是可写的游戏文件。钩子以 `steamos` 身份在实际挂载的共享中尝试创建并读取符号链接，
+失败时跳过注册（包括不支持符号链接的 exFAT）。Mac OS Extended/HFS+ 支持符号链接，不会因文件系统
+名称被排除。已在虚拟机中检查 APFS virtio-fs 的读写、chmod，以及 Proton 11 ARM64 前缀的
+`dosdevices/c:` / `z:` 符号链接。普通不区分大小写的 APFS 在 Linux 中仍不区分大小写：需要仅大小写
+不同的文件名的游戏应使用区分大小写的卷或虚拟机内部库。此功能不会把 Mac/Windows Steam 库转换为
+Linux 库；请为 SteamOS 使用单独的文件夹。
+
+实现：`steam-share-library` 是 `steam.service` 的非阻塞 `ExecStartPre`，由与 `steamac.share=PATH`
+一起传入的 `steamac.share_library=1` 启用。它在修改任何文件前通过 `findmnt -t virtiofs` 检查
+**准确的挂载点**。已测试的 Deck 客户端（1792618285）优先读取
+`~/.local/share/Steam/steamapps/libraryfolders.vdf`，缺失时回退到 `config/libraryfolders.vdf`，
+并将两者重写为相同副本。钩子原子更新主文件，保留已有编号条目（或导入旧文件），只设置 `path` 和
+`label`。Steam 自行分配 `contentid`、测量 `totalsize`、填充 `apps`，不写入猜测的 ID 或安装记录。
+先前注册的共享缺失时，Steam **保留条目，但记录“Install folder … not mounted”**，共享恢复前不能用作
+安装位置。此时钩子不修改列表或标记，也不会在客户机磁盘上创建替代库。请先连接外置卷再启动虚拟机；
+如果启动时未连接，请连接后重启。
 
 启动器通过 `krun_add_virtiofs4` 添加设备（`KRUN_SEMANTICS_LINUX_SIMPLIFIED`：客户机在每个文件上看到自己的
 uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗口），并在内核命令行传入

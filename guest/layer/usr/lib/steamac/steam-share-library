@@ -1,0 +1,168 @@
+#!/usr/bin/python3
+"""Register a mounted Mac share once per library path, before Steam starts (as steamos).
+
+The Deck client reads steamapps/libraryfolders.vdf and rewrites config/libraryfolders.vdf
+as its mirror. If the former is absent it imports the latter. Preserve existing entries,
+including old scalar-path entries; Steam fills in contentid, totalsize and apps itself.
+A marker next to config.vdf remembers every registered path, not just the latest share:
+removing a library in Steam is a user choice, even after switching shares and back.
+
+No mount, no writes (including no mkdir on the guest's underlying home). Proton puts its
+symlink-heavy compatdata inside the library: reject a filesystem that cannot create and
+follow symlinks. A failure must never stop Steam. Test overrides: STEAMAC_CMDLINE,
+STEAMAC_STEAM_ROOT, as in the other Steam ExecStartPre hooks.
+"""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+EMPTY = '"libraryfolders"\n{\n}\n'
+
+
+def log(text):
+    print("steam-share-library: " + text, file=sys.stderr)
+
+
+def atomic_write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write(text)
+        os.chmod(tmp, path.stat().st_mode & 0o777 if path.exists() else 0o600)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def vdf_unquote(token):
+    if not token.startswith('"'):
+        return token
+    return re.sub(r'\\([\\"nrt])', lambda m: {"n": "\n", "r": "\r", "t": "\t"}.get(m[1], m[1]), token[1:-1])
+
+
+def vdf_quote(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + '"'
+
+
+def vdf_entries(text):
+    """Scalar spans and block closing offsets, like the other Steam VDF hooks."""
+    tokens = [m for m in re.finditer(r'//[^\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+', text)
+              if not m[0].startswith("//")]
+    values, blocks, seen, stack = {}, {}, set(), []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token[0] == "}":
+            if not stack:
+                raise ValueError("unbalanced VDF closing brace")
+            blocks[tuple(stack)] = token.start()
+            stack.pop()
+            i += 1
+            continue
+        if token[0] == "{" or i + 1 == len(tokens):
+            raise ValueError("incomplete VDF key/value")
+        key = (*stack, vdf_unquote(token[0]).lower())
+        if key in seen:
+            raise ValueError("duplicate VDF key")
+        seen.add(key)
+        value = tokens[i + 1]
+        if value[0] == "{":
+            stack.append(key[-1])
+        elif value[0] == "}":
+            raise ValueError("missing VDF value")
+        else:
+            values[key] = (vdf_unquote(value[0]), value.start(), value.end())
+        i += 2
+    if stack:
+        raise ValueError("unbalanced VDF opening brace")
+    return values, blocks
+
+
+def add_library(text, library, steam_root):
+    values, blocks = vdf_entries(text)
+    root = ("libraryfolders",)
+    if root not in blocks:
+        raise ValueError("no libraryfolders block")
+    indices = {p[1] for p in (*values, *blocks) if len(p) >= 2 and p[0] == root[0] and p[1].isdigit()}
+    for key, (value, _, _) in values.items():
+        if (len(key) == 2 and key[1].isdigit() or
+                len(key) == 3 and key[1].isdigit() and key[2] == "path") and key[0] == root[0]:
+            if os.path.normpath(value) == str(library):
+                return text
+    # On a fresh install retain slot 0 for Steam's internal library. Do not invent
+    # content IDs, sizes or installed app records; the client discovers those.
+    entries = []
+    if not indices:
+        entries.append((0, steam_root, ""))
+    entries.append((max((int(n) for n in indices), default=0) + 1, library, "Mac Share"))
+    addition = "".join('\t"%d"\n\t{\n\t\t"path"\t\t%s\n\t\t"label"\t\t%s\n\t}\n' %
+                       (index, vdf_quote(str(path)), vdf_quote(label)) for index, path, label in entries)
+    pos = blocks[root]
+    start = text.rfind("\n", 0, pos) + 1
+    if text[start:pos].strip():
+        start = pos
+        addition = "\n" + addition
+    return text[:start] + addition + text[start:]
+
+
+def supports_symlinks(mount):
+    # Run as steamos on the actual backing filesystem, not on /tmp. TemporaryDirectory
+    # removes both files on success and on failure, including unsupported exFAT.
+    with tempfile.TemporaryDirectory(prefix=".steamac-library-", dir=mount) as tmp:
+        probe = Path(tmp)
+        (probe / "target").write_text("steamac\n")
+        (probe / "link").symlink_to("target")
+        return (probe / "link").is_symlink() and (probe / "link").read_text() == "steamac\n"
+
+
+def register_library(steam_root, mount):
+    library = mount / "SteamLibrary"
+    marker = steam_root / "config/steamac-share-library.json"
+    paths = json.loads(marker.read_text()) if marker.exists() else []
+    if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths):
+        raise ValueError("invalid shared library marker")
+    if str(library) in paths:
+        return
+    config = steam_root / "steamapps/libraryfolders.vdf"
+    legacy = steam_root / "config/libraryfolders.vdf"
+    source = config if config.exists() else legacy
+    text = source.read_text() if source.exists() else EMPTY
+    changed = add_library(text if text.strip() else EMPTY, library, steam_root)
+    if not supports_symlinks(mount):
+        raise ValueError("share does not support symlinks (Proton prefixes need them)")
+    (library / "steamapps").mkdir(parents=True, exist_ok=True)
+    if changed != text or not config.exists():
+        atomic_write(config, changed)
+    atomic_write(marker, json.dumps([*paths, str(library)], ensure_ascii=False) + "\n")
+    log("registered " + str(library) + " (once per path)")
+
+
+def main():
+    args = dict(part.split("=", 1) for part in Path(os.environ.get("STEAMAC_CMDLINE", "/proc/cmdline")).read_text().split() if "=" in part)
+    share = args.get("steamac.share", "")
+    if args.get("steamac.share_library") != "1" or not share:
+        return
+    # Same contract as Options.isValidShareMount and the initramfs.
+    if not re.fullmatch(r"/home/steamos/[A-Za-z0-9/_.-]+", share) or any(p in ("", ".", "..") for p in share.split("/")[3:]):
+        raise ValueError("invalid shared mount path")
+    mounted = subprocess.run(["findmnt", "--mountpoint", share, "--types", "virtiofs", "--noheadings"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    if mounted.returncode:
+        return
+    steam_root = Path(os.environ.get("STEAMAC_STEAM_ROOT", str(Path.home() / ".local/share/Steam")))
+    register_library(steam_root, Path(share))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        log("could not register shared library: " + str(error))
+    # ExecStartPre also carries '-', but an unavailable share never fails Steam here either.
+    sys.exit(0)

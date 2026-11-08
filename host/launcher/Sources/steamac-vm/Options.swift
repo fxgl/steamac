@@ -30,6 +30,8 @@ struct Options {
     /// --share-mount PATH / Settings > Advanced "Mount point in SteamOS": where the guest mounts the share
     /// (kernel cmdline steamac.share=PATH; the initramfs creates a runtime mount unit for it).
     var shareMount = Options.defaultShareMount
+    /// Register SteamLibrary inside the share once per guest path (`steamac.share_library=1`).
+    var shareLibrary = true
     static let defaultShareMount = "/home/steamos/MacShare"
     static func isReadableFolder(_ path: String) -> Bool {
         var isDir: ObjCBool = false
@@ -160,6 +162,7 @@ struct Options {
 
     static let usage = """
     usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ... [--share DIR [--share-mount PATH] | --no-share]
+                      [--share-library | --no-share-library]
                       [--cpus N] [--mem MiB] [--display WxH] [--refresh HZ] [--headless]
                       [--log FILE] [--no-net] [--no-sound] [--ssh-port PORT | --no-ssh] [--shm-mib MiB]
                       [--gpu-flags HEX] [--gvproxy PATH] [--frame-dump PNG]
@@ -201,6 +204,11 @@ struct Options {
                            SteamOS", /home/steamos/MacShare): a subdirectory of /home/steamos/;
                            kernel cmdline steamac.share=PATH, the initramfs creates a mount unit for it on every boot
       --no-share           no shared folder this run
+      --share-library      create SteamLibrary in the shared folder on next start and register it in Steam
+                           once per path (default: Settings > Advanced "Use as a Steam library", on).
+                           Proton requires symbolic links: APFS recommended, exFAT unsupported;
+                           automatic registration skips shares without symbolic link support
+      --no-share-library   do not create or register a shared Steam library this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
                            cores, 2..8)
       --mem MiB            guest RAM (default: Settings > Advanced, automatic = half this Mac's RAM,
@@ -380,6 +388,8 @@ struct Options {
             case "--share": o.share = try value(a)
             case "--no-share": o.share = nil
             case "--share-mount": o.shareMount = try value(a)
+            case "--share-library": o.shareLibrary = true
+            case "--no-share-library": o.shareLibrary = false
             case "--cpus": o.cpus = try int(a)
             case "--mem": o.memMiB = try int(a)
             case "--display":
@@ -543,6 +553,7 @@ struct Options {
             add("steamac.gfx", o.wmtrLibrary == nil ? "vulkan" : "dxmt")
             add("steamac.gpu_mib", String(VMSizing.gpuBudgetMiB(memMiB: o.memMiB)))
             add("steamac.share", o.share == nil ? nil : o.shareMount)
+            add("steamac.share_library", o.share != nil && o.shareLibrary ? "1" : nil)
             if o.macTime {
                 add("steamac.tz", MacTime.zone)
                 add("steamac.clock24", MacTime.clock24.map { $0 ? "1" : "0" })
@@ -622,6 +633,11 @@ struct Options {
             ov[.sharedMount] = "--share-mount \(shareMount)"
         } else {
             shareMount = Options.isValidShareMount(s.sharedMount) ? s.sharedMount : Options.defaultShareMount
+        }
+        if given("--share-library") || given("--no-share-library") {
+            ov[.sharedLibrary] = shareLibrary ? "--share-library" : "--no-share-library"
+        } else {
+            shareLibrary = s.sharedLibrary
         }
         if given("--no-gamepad") { ov[.virtualPad] = "--no-gamepad" }
         if let padType { ov[.padType] = "--pad \(padType.rawValue)" }

@@ -2,6 +2,22 @@
   "sourceLanguage" : "en",
   "strings" : {
     "" : {},
+    "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При следующем запуске создаёт SteamLibrary в общей папке и добавляет её в Steam один раз для каждого пути, чтобы позже вы могли удалить её из Steam. Для Proton нужна поддержка символических ссылок: рекомендуется APFS; exFAT не поддерживается. Общие папки без поддержки символических ссылок не добавляются автоматически."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下次启动时在共享文件夹中创建 SteamLibrary 并将其添加到 Steam，每个路径仅添加一次，因此你之后可以在 Steam 中将其移除。Proton 需要符号链接支持：推荐使用 APFS；不支持 exFAT。缺少符号链接支持的共享文件夹不会被自动添加。"
+          }
+        }
+      }
+    },
     "This controller needs Input Monitoring to pass through as itself. Enable FX Steam Launcher in Mac System Settings › Privacy & Security › Input Monitoring. If access is already enabled but the controller is still unavailable, restart the launcher." : {
       "localizations" : {
         "ru" : {
@@ -8171,6 +8187,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请使用 NAME=value 格式的词（最多 256 个字符）。名称必须以 VKD3D_、DXVK_、PROTON_、WINE_、MESA_、RADV_、VK_、DXMT_、MTL_ 或 STEAMAC_ 开头；值只能包含英文字母、数字和 _.,:;+-。"
+          }
+        }
+      }
+    },
+    "Use as a Steam library" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать как библиотеку Steam"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用作 Steam 库"
           }
         }
       }

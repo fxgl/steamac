@@ -12,8 +12,95 @@ import SwiftUI
 /// that a guest process's GPU teardown is no crash report (LineScanner), and the automatic VM size
 /// (VMSizing) on simulated Macs, the update check's version ordering and release selection,
 /// the Mac time zone and clock format kernel parameters (MacTime), and the clipboard port's frame codec and
-/// concealed-item filter (ClipboardSync).
+/// concealed-item filter (ClipboardSync), plus shared-library preferences and boot arguments.
 enum SettingsSelfTest {
+    /// Use a private preferences domain, like ProvisionSelfTest's disk-selection checks.
+    private static func sharedLibrarySelfCheck() -> [String] {
+        let domain = "es.fxgam.steamac.selftest-share-library-\(UUID().uuidString)"
+        let previousDomain = getenv("STEAMAC_DEFAULTS_DOMAIN").map { String(cString: $0) }
+        setenv("STEAMAC_DEFAULTS_DOMAIN", domain, 1)
+        let settings = LauncherSettings()
+        defer {
+            settings.defaults.removePersistentDomain(forName: domain)
+            if let previousDomain { setenv("STEAMAC_DEFAULTS_DOMAIN", previousDomain, 1) }
+            else { unsetenv("STEAMAC_DEFAULTS_DOMAIN") }
+        }
+        var failures: [String] = []
+        func check(_ ok: Bool, _ name: String) {
+            if !ok { failures.append("shared library: \(name)") }
+        }
+        check(settings.sharedLibrary && Options().shareLibrary, "default is on")
+        check(LauncherSettings.Key.sharedLibrary.nextStart, "key applies on next start")
+        check(settings.set("sharedLibrary", "off") && !settings.sharedLibrary, "debug set off")
+        check(settings.defaults.object(forKey: "sharedLibrary") as? Bool == false, "off is persisted")
+        check(!LauncherSettings().sharedLibrary, "off is loaded")
+        check(!settings.set("sharedLibrary", "invalid") && !settings.sharedLibrary, "invalid debug value rejected")
+        check(settings.set("sharedLibrary", "on") && settings.sharedLibrary, "debug set on")
+        check(LauncherSettings().sharedLibrary, "on is loaded")
+        settings.noteBoot(overrides: [:], autoCapture: nil)
+        check(!settings.restartPending, "initial boot snapshot")
+        settings.sharedLibrary = false
+        check(settings.restartPending, "changing the preference needs a restart")
+        settings.sharedLibrary = true
+        check(!settings.restartPending, "restoring the preference clears restart")
+        settings.noteBoot(overrides: [.sharedLibrary: "--no-share-library"], autoCapture: nil)
+        settings.sharedLibrary = false
+        check(!settings.restartPending, "CLI override is excluded from restart tracking")
+        settings.resetAll()
+        check(settings.sharedLibrary && LauncherSettings().sharedLibrary, "reset restores default")
+        check(settings.defaults.object(forKey: "sharedLibrary") == nil, "reset removes saved key")
+        let folder = NSTemporaryDirectory() + "steamac-share-library-\(UUID().uuidString)"
+        do {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(atPath: folder) }
+            let boot = folder + "/boot"
+            try Data().write(to: URL(fileURLWithPath: boot))
+            let base = ["steamac-vm", "--kernel", boot, "--disk", boot, "--no-ssh",
+                        "--headless", "--frame-dump", "/dev/null", "--vulkan-driver", "moltenvk"]
+            let cases: [(String, String, Bool, [String], [String], String?)] = [
+                ("no folder", "", true, [], [], nil),
+                ("folder enabled", folder, true, [], ["1"], nil),
+                ("folder disabled", folder, false, [], [], nil),
+                ("missing saved folder", folder + "/missing", true, [], [], nil),
+                ("no share", folder, true, ["--no-share"], [], nil),
+                ("CLI folder", "", true, ["--share", folder], ["1"], nil),
+                ("CLI on", folder, false, ["--share-library"], ["1"], "--share-library"),
+                ("CLI off", folder, true, ["--no-share-library"], [], "--no-share-library"),
+                ("CLI on without folder", "", false, ["--share-library"], [], "--share-library"),
+                ("CLI last on", folder, false, ["--no-share-library", "--share-library"], ["1"], "--share-library"),
+                ("CLI last off", folder, true, ["--share-library", "--no-share-library"], [], "--no-share-library"),
+                ("cmdline off", folder, true, ["--cmdline", "steamac.share_library=0"], ["0"], nil),
+                ("cmdline on", folder, false, ["--cmdline", "steamac.share_library=1"], ["1"], nil),
+            ]
+            for (name, path, enabled, flags, expected, override) in cases {
+                settings.sharedFolder = path
+                settings.sharedLibrary = enabled
+                let (options, overrides) = try Options.resolve(base + flags, settings: settings)
+                let prefix = "steamac.share_library="
+                let values = options.cmdline.split(separator: " ").filter { $0.hasPrefix(prefix) }
+                    .map { String($0.dropFirst(prefix.count)) }
+                check(values == expected, "\(name): boot argument \(values), expected \(expected)")
+                check(overrides[.sharedLibrary] == override, "\(name): CLI override note")
+                check(options.shareLibrary == (override.map { $0 == "--share-library" } ?? enabled),
+                      "\(name): effective option")
+                check(settings.sharedLibrary == enabled && LauncherSettings().sharedLibrary == enabled,
+                      "\(name): one-run override did not change saved preference")
+            }
+            settings.sharedFolder = folder
+            settings.sharedLibrary = true
+            let mount = "/home/steamos/OtherShare"
+            let (options, _) = try Options.resolve(base + ["--cmdline", "steamac.share=\(mount)"], settings: settings)
+            let mounts = options.cmdline.split(separator: " ").filter { $0.hasPrefix("steamac.share=") }
+            check(mounts == [Substring("steamac.share=\(mount)")], "explicit share mount is preserved")
+            check(options.cmdline.split(separator: " ").contains("steamac.share_library=1"),
+                  "library enabled with an explicit share mount")
+        } catch {
+            failures.append("shared library: \(error)")
+        }
+        log("selftest-settings: shared library: \(failures.isEmpty ? "ok" : "FAIL: \(failures.joined(separator: "; "))")")
+        return failures
+    }
+
     static func run(_ o: Options, overrides: [LauncherSettings.Key: String]) -> Never {
         let settings = LauncherSettings.shared
         let profileID = 2147483646
@@ -40,6 +127,7 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+            + sharedLibrarySelfCheck()
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType
         context.needsInputMonitoring = true

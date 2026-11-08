@@ -34,15 +34,15 @@ final class LauncherSettings: ObservableObject {
         // Streaming
         case streamingHost
         // Advanced
-        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, sharedMount, steamosBranch, steamClient,
-             vulkanDriver, wmtr, wmtrLibrary
+        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, sharedMount, sharedLibrary,
+             steamosBranch, steamClient, vulkanDriver, wmtr, wmtrLibrary
 
         var nextStart: Bool {
             switch self {
             case .openFullscreen, .dpiSource, .fixedDPI, .fixedWidthMM, .fixedHeightMM, .refreshRate,
                  .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .metalHUD, .soundEnabled, .cpus, .memMiB, .sshEnabled,
                  .sshPort, .network, .lanRemotePlay,
-                 .diskImage, .sharedFolder, .sharedMount, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
+                 .diskImage, .sharedFolder, .sharedMount, .sharedLibrary, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
                 return true
             default:
                 return false
@@ -392,6 +392,8 @@ final class LauncherSettings: ObservableObject {
     @Published var sharedFolder = "" { didSet { save(.sharedFolder, sharedFolder) } }
     /// Where SteamOS mounts it (Options.shareMount; kernel cmdline steamac.share=).
     @Published var sharedMount = Options.defaultShareMount { didSet { save(.sharedMount, sharedMount) } }
+    /// Register SteamLibrary inside the shared folder on the next start (Options.shareLibrary).
+    @Published var sharedLibrary = true { didSet { save(.sharedLibrary, sharedLibrary) } }
     /// SteamOS update branch "Create New Disk…" installs (atomupd vr/<branch>.json).
     @Published var steamosBranch = "stable" { didSet { save(.steamosBranch, steamosBranch) } }
     /// Steam client of the next start (`steamac.steam_client=`).
@@ -482,6 +484,7 @@ final class LauncherSettings: ObservableObject {
         string(.sharedFolder, &sharedFolder)
         string(.sharedMount, &sharedMount)
         if !Options.isValidShareMount(sharedMount) { sharedMount = Options.defaultShareMount }
+        bool(.sharedLibrary, &sharedLibrary)
         string(.steamosBranch, &steamosBranch)
         if !DiskCreator.branches.contains(steamosBranch) {
             log("settings: SteamOS branch \(steamosBranch) is not offered; falling back to stable")
@@ -566,6 +569,7 @@ final class LauncherSettings: ObservableObject {
         case .diskImage: diskImage = text == "default" ? "" : text
         case .sharedFolder: sharedFolder = text == "none" ? "" : text
         case .sharedMount: guard Options.isValidShareMount(text) else { return false }; sharedMount = text
+        case .sharedLibrary: guard let b else { return false }; sharedLibrary = b
         case .steamosBranch: guard DiskCreator.branches.contains(text) else { return false }; steamosBranch = text
         case .steamClient: guard let v = SteamClient(rawValue: text) else { return false }; steamClient = v
         case .vulkanDriver: guard let v = VulkanDriver(rawValue: text) else { return false }; vulkanDriver = v
@@ -602,7 +606,8 @@ final class LauncherSettings: ObservableObject {
         cpus = fresh.cpus; memMiB = fresh.memMiB; sshEnabled = fresh.sshEnabled; sshPort = fresh.sshPort; network = fresh.network
         lanRemotePlay = fresh.lanRemotePlay
         streamingHost = fresh.streamingHost
-        diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; sharedMount = fresh.sharedMount; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
+        diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; sharedMount = fresh.sharedMount
+        sharedLibrary = fresh.sharedLibrary; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
         reloadGames()
@@ -636,7 +641,8 @@ final class LauncherSettings: ObservableObject {
             .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution, .metalHUD: metalHUD,
             .soundEnabled: soundEnabled, .cpus: cpus, .memMiB: memMiB, .sshEnabled: sshEnabled, .sshPort: sshPort,
             .network: network, .lanRemotePlay: lanRemotePlay,
-            .diskImage: diskImage, .sharedFolder: sharedFolder, .sharedMount: sharedMount, .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
+            .diskImage: diskImage, .sharedFolder: sharedFolder, .sharedMount: sharedMount, .sharedLibrary: sharedLibrary,
+            .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
             .vulkanDriver: vulkanDriver.rawValue, .wmtr: wmtr, .wmtrLibrary: wmtrLibrary,
         ]
         var s: [Key: String] = [:]

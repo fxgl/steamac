@@ -1241,6 +1241,12 @@ private struct AdvancedTab: View {
                         Button("Choose Folder…") { chooseSharedFolder() }
                         Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
                     }
+                    Toggle(isOn: $settings.sharedLibrary) {
+                        Label2(title: "Use as a Steam library",
+                               detail: String(localized: "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically."),
+                               now: false, key: .sharedLibrary)
+                    }
+                    .disabled(settings.sharedFolder.isEmpty)
                     HStack {
                         Label2(title: "Mount point in SteamOS",
                                detail: String(localized: "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
