@@ -4,6 +4,33 @@ import Foundation
 /// Per-disk first-boot configuration appended to Fedora's initramfs. Passwords
 /// are hashed on the Mac; no plaintext is written to the guest or the sidecar.
 enum BazziteSetup {
+    /// Upgrade existing guests without touching their disk or account data.
+    static func installSteamCompatibility(initrd: URL) throws {
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v1")
+        guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
+        let hook = """
+        #!/bin/sh
+        set -eu
+        mkdir -p /sysroot/etc/steamac/bin /sysroot/etc/environment.d /sysroot/etc/profile.d
+        printf '#!/bin/sh\\nexec /usr/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
+        chmod 755 /sysroot/etc/steamac/bin/steam
+        printf 'PATH=/etc/steamac/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin\\n' > /sysroot/etc/environment.d/91-steamac-path.conf
+        printf 'export PATH=/etc/steamac/bin:$PATH\\n' > /sysroot/etc/profile.d/steamac-path.sh
+        """
+        var archive: [UInt8] = []
+        for name in ["var", "var/lib", "var/lib/dracut", "var/lib/dracut/hooks", "var/lib/dracut/hooks/pre-pivot"] {
+            Cpio.append(&archive, name: name, mode: 0o040755, ino: 1, data: [])
+        }
+        Cpio.append(&archive, name: "var/lib/dracut/hooks/pre-pivot/91-steamac-compat.sh", mode: 0o100755, ino: 2, data: Array(hook.utf8) + [10])
+        Cpio.append(&archive, name: "TRAILER!!!", mode: 0, ino: 0, data: [])
+        let file = try FileHandle(forWritingTo: initrd)
+        defer { try? file.close() }
+        let end = try file.seekToEnd()
+        try file.write(contentsOf: Data(repeating: 0, count: Int((4 - end % 4) % 4)))
+        try file.write(contentsOf: Data(archive))
+        try Data("1".utf8).write(to: receipt, options: .atomic)
+    }
+
     static func grow(_ path: String, bytes: Int64) throws -> GPT {
         var table = try GPT.read(path: path, allowAlignedUsableRange: true)
         guard bytes >= Int64(table.sectors * 512), bytes <= 2048 << 30, bytes % (1 << 20) == 0,

@@ -546,6 +546,9 @@ struct Options {
             if let disk = o.disks.first?.path, BazziteGuest.exists(disk) {
                 let guest = try BazziteGuest.load(disk)
                 guest.apply(&o, diskPath: disk)
+                if !o.explicit.contains("--initrd") {
+                    try BazziteSetup.installSteamCompatibility(initrd: URL(fileURLWithPath: o.initrd!))
+                }
             } else {
                 Provision.attachPending(&o)
                 Provision.attachConfig(&o)
