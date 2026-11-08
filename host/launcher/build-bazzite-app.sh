@@ -28,6 +28,9 @@ mkdir -p "$stage"
 ditto "$upstream_app" "$stage/Steamac Bazzite.app"
 tmp="$stage/Steamac Bazzite.app"
 cp "$bin" "$tmp/Contents/MacOS/steamac-vm"
+if [[ -f "$root/wmtr/build/x86_64-linux/winemetal.so" ]]; then
+    cp "$root/wmtr/build/x86_64-linux/winemetal.so" "$tmp/Contents/Resources/winemetal-trace.so"
+fi
 exe="$tmp/Contents/MacOS/steamac-vm"
 chmod u+w "$exe"
 # SwiftPM may reference either Sentry.framework or its static library.

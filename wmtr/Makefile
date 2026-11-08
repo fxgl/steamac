@@ -75,10 +75,12 @@ $(OUT)/wmtr_loopback: tests/wmtr_loopback.m src/wmtr_host.m src/wmtr_objects.h s
 # Steam Runtime's and the FEX rootfs's glibc), so the unixlib would not load
 LINUX_CFLAGS = -O2 -g -Wall -Wno-unused-function -mtls-dialect=gnu $(INC) -include include/wmtr_glibc_compat.h
 client-linux: $(OUT)/x86_64-linux/winemetal.so
-$(OUT)/x86_64-linux/winemetal.so: src/wmtr_client.c src/transport_virtgpu.c include/*.h src/*.inc
+$(OUT)/x86_64-linux/winemetal.so: src/wmtr_client.c src/transport_virtgpu.c include/*.h src/*.h src/*.inc
 	mkdir -p $(OUT)/x86_64-linux
 	$(CC) $(LINUX_CFLAGS) -shared -fPIC -o $@ src/wmtr_client.c src/transport_virtgpu.c -lpthread -ldl
 test-linux: $(OUT)/x86_64-linux/winemetal.so
+	$(CC) -Wall -Wextra -Werror -Isrc -o $(OUT)/x86_64-linux/wmtr_trace_test tests/wmtr_trace_test.c
+	./$(OUT)/x86_64-linux/wmtr_trace_test
 	mkdir -p $(OUT)/x86_64-linux/standin
 	$(CC) -shared -fPIC -o $(OUT)/x86_64-linux/standin/ntdll.so tests/ntdll_standin.c
 	$(CC) -O2 -o $(OUT)/x86_64-linux/wmtr_ntdll_test tests/wmtr_ntdll_test.c -ldl

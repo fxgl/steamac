@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v10")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v11")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash
@@ -40,6 +40,9 @@ enum BazziteSetup {
         mount -t erofs -o ro /dev/vdb /run/steamac-dxmt-layer
         mkdir -p /sysroot/etc/steamac/dxmt
         cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/etc/steamac/
+        if [ -f /steamac-winemetal-trace.so ]; then
+            cp /steamac-winemetal-trace.so /sysroot/etc/steamac/dxmt/x86_64-unix/winemetal.so
+        fi
         cp /steamac-dxmt-routing /sysroot/etc/steamac/bin/steam-gfx-path
         chmod 755 /sysroot/etc/steamac/bin/steam-gfx-path
         umount /run/steamac-dxmt-layer
@@ -54,9 +57,16 @@ enum BazziteSetup {
         printf 'PATH=/etc/steamac/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin\\n' > /sysroot/etc/environment.d/91-steamac-path.conf
         printf 'export PATH=/etc/steamac/bin:$PATH\\n' > /sysroot/etc/profile.d/steamac-path.sh
         """
+        let traceClient = Bundle.main.resourceURL?.appendingPathComponent("winemetal-trace.so")
+        let traceData = try traceClient.flatMap { url in
+            FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        }
         var archive: [UInt8] = []
         for name in ["var", "var/lib", "var/lib/dracut", "var/lib/dracut/hooks", "var/lib/dracut/hooks/pre-pivot"] {
             Cpio.append(&archive, name: name, mode: 0o040755, ino: 1, data: [])
+        }
+        if let traceData {
+            Cpio.append(&archive, name: "steamac-winemetal-trace.so", mode: 0o100644, ino: 6, data: Array(traceData))
         }
         Cpio.append(&archive, name: "steamac-dxmt-routing", mode: 0o100755, ino: 5, data: Array(DXMTGuestScript.routing.utf8))
         Cpio.append(&archive, name: "steamac-fex-rootfs", mode: 0o100755, ino: 4, data: Array(FEXRootFS.installer.utf8))

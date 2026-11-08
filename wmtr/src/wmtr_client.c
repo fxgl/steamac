@@ -79,6 +79,7 @@ slot_release(void *p) {
 /* WMTR_TRACE=<path> (debugging): one line per call before and after, with the first parameter words */
 #include <sys/syscall.h>
 #include <unistd.h>
+#include "wmtr_trace.h"
 static FILE *trace_f;
 static pthread_mutex_t trace_lock = PTHREAD_MUTEX_INITIALIZER;
 static void
@@ -99,11 +100,7 @@ wmtr_init(void) {
   const char *ch = getenv("WMTR_CLIENT_HANDLES");
   if (ch && *ch) client_handles = env_int(ch) != 0;
   const char *tp = getenv("WMTR_TRACE");
-  if (tp && *tp) {
-    char path[512];
-    snprintf(path, sizeof path, "%s.%d", tp, (int)getpid());
-    if ((trace_f = fopen(path, "w"))) setvbuf(trace_f, NULL, _IOLBF, 0);
-  }
+  trace_f = wmtr_open_trace(tp);
   pthread_key_create(&slot_key, slot_release);
   T = wmtr_transport_create();
   if (!T) { LOG(0, "no transport\n"); return; }
