@@ -129,7 +129,7 @@ enum AppBundle {
     static func isDiskImage(_ path: String) -> Bool {
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
-              let table = try? GPT.read(path: path) else { return false }
+              let table = try? GPT.read(path: path, allowAlignedUsableRange: BazziteGuest.exists(path)) else { return false }
         if BazziteGuest.exists(path), let guest = try? BazziteGuest.load(path),
            table.sectors * 512 == UInt64(guest.diskBytes),
            [guest.kernel.name, guest.initrd.name].allSatisfy({ FileManager.default.isReadableFile(atPath: BazziteGuest.directory(path) + "/" + $0) }) { return true }
@@ -290,7 +290,7 @@ enum FirstRun {
         let alert = NSAlert()
         alert.messageText = String(localized: "No guest disk image")
         let looked = AppBundle.defaultDiskCandidates().map { "• " + ($0 as NSString).abbreviatingWithTildeInPath }
-        var info = String(localized: "FX Steam Launcher needs a guest disk image. Choose SteamOS or Bazzite in Create New Disk.\n\n")
+        var info = String(localized: "FX Steam Launcher needs a guest disk image. Click Create New Disk… below, then choose Operating system → Bazzite ARM64 or SteamOS.\n\n")
         if !settings.diskImage.isEmpty {
             let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
             info += path + "\n\n" + AppBundle.invalidDiskMessage + "\n\n"

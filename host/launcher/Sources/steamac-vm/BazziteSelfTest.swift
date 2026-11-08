@@ -92,6 +92,28 @@ enum BazziteSelfTest {
                                 commandLine: "root=UUID=123 ostree=/ostree/test selinux=0", disk: asset,
                                 kernel: .init(name: "Image", sha256: asset.sha256, bytes: 50),
                                 initrd: .init(name: "initrd", sha256: asset.sha256, bytes: 50))
+        check("Bazzite disk picker accepts aligned GPT with sidecar") {
+            let path = dir.appendingPathComponent("picker.img").path
+            let fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { return false }; defer { close(fd) }
+            guard ftruncate(fd, off_t(guest.diskBytes)) == 0 else { return false }
+            let table = GPT(diskGUID: UUID(), sectors: UInt64(guest.diskBytes / 512), entries: [])
+            var primary = table.primaryBytes(), backup = table.backupBytes()
+            for (isPrimary, offset) in [(true, 512), (false, 32 * 512)] {
+                var h = Array((isPrimary ? primary : backup)[offset..<(offset + 512)])
+                GPT.put64(&h, 40, 2048); GPT.put32(&h, 16, 0)
+                GPT.put32(&h, 16, GPT.crc32(h[0..<92]))
+                if isPrimary { primary.replaceSubrange(offset..<(offset + 512), with: h) }
+                else { backup.replaceSubrange(offset..<(offset + 512), with: h) }
+            }
+            try GPT.pwriteAll(fd, primary, at: 0)
+            try GPT.pwriteAll(fd, backup, at: (table.sectors - 33) * 512)
+            let sidecar = URL(fileURLWithPath: BazziteGuest.directory(path))
+            try fm.createDirectory(at: sidecar, withIntermediateDirectories: false)
+            try JSONEncoder().encode(guest).write(to: sidecar.appendingPathComponent("bazzite-steamac.json"))
+            for name in [guest.kernel.name, guest.initrd.name] { try Data().write(to: sidecar.appendingPathComponent(name)) }
+            return AppBundle.isDiskImage(path)
+        }
         check("manifest and boot routing") {
             try guest.validate()
             var o = Options()
