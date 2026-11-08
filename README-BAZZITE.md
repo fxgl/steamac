@@ -16,7 +16,9 @@ bootc command line. Bazzite uses the Fedora initramfs, direct Plasma desktop,
 absolute pointer input, and no SteamOS `/usr` layer. SteamOS keeps its existing
 creation and boot path. Explicit kernel/initrd/cmdline options take precedence.
 
-This is experimental. A Steam sign-in screen is not a game compatibility test.
+This is experimental. Integrated guest testing still shows Zink allocation
+failures and stalled game loading with both host Vulkan drivers; this build
+is not yet validated for gameplay. A Steam sign-in screen is not a game compatibility test.
 Full Bazzite Game Mode, Proton, FEX graphics provider, audio/controller behavior,
 persistence and updates/rollback need end-to-end validation. Fedora Mesa must be
 built with steamac's Venus blob alignment support; stock Fedora Mesa is not
