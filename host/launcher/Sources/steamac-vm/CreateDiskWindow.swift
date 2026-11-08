@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// "Create SteamOS Disk" window (first-run sheet and Settings > Advanced "Create New Disk…"):
@@ -8,6 +9,10 @@ import SwiftUI
 /// downloaded chunks; Create again continues from there).
 final class CreateDiskModel: ObservableObject {
     @Published var path: String
+    @Published var system = "steamos"
+    @Published var releases: [BazziteRelease] = []
+    @Published var selectedRelease = ""
+    @Published private(set) var loadingReleases = false
     @Published var branch: String
     @Published var homeGiB = DiskLayout.defaultHomeGiB
     /// Empty = no password (release default; Settings > Advanced "Enable SSH" sets one later).
@@ -22,6 +27,7 @@ final class CreateDiskModel: ObservableObject {
     let settings: LauncherSettings
     var onFinish: ((DiskCreator.Result) -> Void)?
     private var creator: DiskCreator?
+    private var bazziteCreator: BazziteDiskCreator?
 
     init(settings: LauncherSettings) {
         self.settings = settings
@@ -50,7 +56,60 @@ final class CreateDiskModel: ObservableObject {
         return String(localized: "\(gigabytes) GB free there; about 14 GB are needed (the disk is sparse) plus ~6 GB of download cache.")
     }
 
+    var isBazzite: Bool { system == "bazzite" }
+    var canCreate: Bool { isBazzite ? releases.contains { $0.id == selectedRelease } : licenseAccepted }
+
+    func selectSystem() {
+        path = Self.freePath(AppBundle.appSupportDir + (isBazzite ? "/bazzite.img" : "/steamos.img"))
+        if isBazzite && releases.isEmpty { loadReleases() }
+    }
+
+    func loadReleases() {
+        guard !loadingReleases else { return }
+        loadingReleases = true
+        error = nil
+        Thread { [weak self] in
+            let outcome = Swift.Result { try BazziteDiskCreator().releases() }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loadingReleases = false
+                switch outcome {
+                case .success(let releases):
+                    self.releases = releases
+                    self.selectedRelease = releases.first?.id ?? ""
+                    if releases.isEmpty { self.error = "No Bazzite builds published yet in Naozumi520/bazzite Releases." }
+                case .failure(let error): self.error = error.localizedDescription
+                }
+            }
+        }.start()
+    }
+
+    private func startBazzite() {
+        guard !running, let release = releases.first(where: { $0.id == selectedRelease }) else { return }
+        let c = BazziteDiskCreator()
+        bazziteCreator = c
+        error = nil
+        interrupted = false
+        running = true
+        c.onStatus = { [weak self] status in DispatchQueue.main.async { self?.status = status } }
+        let destination = path
+        Thread { [weak self] in
+            let outcome = Swift.Result { try c.run(path: destination, release: release) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.running = false
+                self.bazziteCreator = nil
+                switch outcome {
+                case .success(let result): self.result = result; self.onFinish?(result)
+                case .failure(is DiskCreator.Cancelled): self.interrupted = true
+                case .failure(let error): self.error = error.localizedDescription; self.interrupted = true
+                }
+            }
+        }.start()
+    }
+
     func start() {
+        if isBazzite { startBazzite(); return }
         guard !running, licenseAccepted else { return }
         SteamOSLicense.accept(settings, via: "Create SteamOS Disk window")
         settings.steamosBranch = branch
@@ -88,7 +147,7 @@ final class CreateDiskModel: ObservableObject {
         }.start()
     }
 
-    func cancel() { creator?.cancel() }
+    func cancel() { creator?.cancel(); bazziteCreator?.cancel() }
 }
 
 private struct CreateDiskView: View {
@@ -99,10 +158,30 @@ private struct CreateDiskView: View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section {
+                    Picker("Operating system", selection: $model.system) {
+                        Text("SteamOS").tag("steamos")
+                        Text("Bazzite ARM64 (experimental)").tag("bazzite")
+                    }
+                    .onChange(of: model.system) { model.selectSystem() }
+                    .disabled(model.running || model.result != nil)
+                    if model.isBazzite {
+                        Text("Downloads a Bazzite ARM64 build from Naozumi520/bazzite GitHub Releases and verifies SHA-256. Steam downloads directly from Valve on first start. Game compatibility is experimental.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    } else {
                     Text("Downloads the official SteamOS image from Valve (signed bundle, ~4.5 GB of data), checks Valve's signature and the image checksum, and writes a new disk. The first start then finishes the setup inside the VM.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Section {
+                    if model.isBazzite {
+                        Picker("Build", selection: $model.selectedRelease) {
+                            ForEach(model.releases) { release in Text(verbatim: release.title).tag(release.id) }
+                        }
+                        Button(model.loadingReleases ? "Checking releases…" : "Refresh builds", action: model.loadReleases)
+                            .disabled(model.loadingReleases)
+                        Text("Includes a 40 GB sparse disk and automatic local login as bazzite. SSH is disabled.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
                     Picker("SteamOS branch", selection: $model.branch) {
                         ForEach(DiskCreator.branches, id: \.self) { Text(verbatim: $0).tag($0) }
                     }
@@ -113,6 +192,7 @@ private struct CreateDiskView: View {
                             Text("\(model.homeGiB) GB").monospacedDigit()
                         }
                     }
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("Location")
@@ -122,23 +202,28 @@ private struct CreateDiskView: View {
                             Button("Choose…") { choose() }
                         }
                         Text(verbatim: model.pathExists ? String(localized: "A file with this name exists; it is never overwritten. Choose another name.")
-                             : model.freeSpace)
+                             : model.isBazzite ? "40 GB virtual disk; download and used blocks consume storage on your Mac." : model.freeSpace)
                             .font(.caption).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                     }
+                    if !model.isBazzite {
                     HStack {
                         Text("Password for user steamos (optional)")
                         Spacer()
                         SecureField("none", text: $model.password).frame(width: 160)
                     }
+                    }
                 }
                 .disabled(model.running)
+                if !model.isBazzite {
                 Section {
                     SteamClientPicker(settings: model.settings)
                 }
                 .disabled(model.running)
+                }
                 Section {
                     CrashReportsToggle(settings: model.settings, checkbox: true)
                 }
+                if !model.isBazzite {
                 Section {
                     Toggle(isOn: $model.licenseAccepted) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -155,10 +240,11 @@ private struct CreateDiskView: View {
                     .toggleStyle(.checkbox)
                 }
                 .disabled(model.running || model.result != nil)
+                }
                 if model.running || model.status != nil || model.error != nil {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(verbatim: model.error != nil ? String(localized: "Failed") : model.interrupted ? String(localized: "Stopped — Create continues where it left off")
+                            Text(verbatim: model.error != nil ? String(localized: "Failed") : model.interrupted ? (model.isBazzite ? String(localized: "Stopped — Create retries the download") : String(localized: "Stopped — Create continues where it left off"))
                                  : model.status?.localizedTitle ?? String(localized: "Starting…"))
                                 .font(.headline)
                             ProgressView(value: model.status?.fraction ?? 0)
@@ -176,9 +262,9 @@ private struct CreateDiskView: View {
                     Button("Stop") { model.cancel() }
                 } else {
                     Button("Cancel") { close() }.keyboardShortcut(.cancelAction)
-                    Button(model.interrupted ? String(localized: "Resume") : String(localized: "Create")) { model.start() }
+                    Button(model.interrupted && !model.isBazzite ? String(localized: "Resume") : String(localized: "Create")) { model.start() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(model.pathExists || model.result != nil || !model.licenseAccepted)
+                        .disabled(model.pathExists || model.result != nil || !model.canCreate)
                 }
             }
             .padding([.horizontal, .bottom], 20)
@@ -188,7 +274,7 @@ private struct CreateDiskView: View {
 
     private func choose() {
         let panel = NSSavePanel()
-        panel.title = String(localized: "Location of the new SteamOS disk")
+        panel.title = String(localized: "Location of the new guest disk")
         panel.nameFieldStringValue = (model.path as NSString).lastPathComponent
         panel.directoryURL = URL(fileURLWithPath: (model.path as NSString).deletingLastPathComponent)
         panel.canCreateDirectories = true
@@ -212,10 +298,16 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        window.title = String(localized: "Create SteamOS Disk")
+        window.title = String(localized: "Create Guest Disk")
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: CreateDiskView(model: model) { [weak self] in self?.window.performClose(nil) })
+    }
+
+    static func selectBazziteForSelfTest() {
+        guard let model = current?.model else { return }
+        model.system = "bazzite"
+        model.selectSystem()
     }
 
     /// First run: blocks until the disk exists (its path) or the user closes the window (nil).
@@ -249,7 +341,9 @@ final class CreateDiskWindowController: NSObject, NSWindowDelegate {
         guard model.running else { return true }
         let alert = NSAlert()
         alert.messageText = String(localized: "Stop creating the disk?")
-        alert.informativeText = String(localized: "Downloaded data is kept; creating the disk again continues from there.")
+        alert.informativeText = model.isBazzite
+            ? String(localized: "The partial Bazzite download is removed. Create retries the download.")
+            : String(localized: "Downloaded data is kept; creating the disk again continues from there.")
         alert.addButton(withTitle: String(localized: "Stop"))
         alert.addButton(withTitle: String(localized: "Continue"))
         if alert.runModal() == .alertFirstButtonReturn { model.cancel() }

@@ -42,6 +42,20 @@ setenv("MVK_CONFIG_LOG_LEVEL", "1", 0)
 CrashReporting.setUp(options: options, settings: settings)
 CrashReporting.runTests(&options)
 
+if options.selftestBazzite { BazziteSelfTest.run() }
+if let path = options.createBazzite {
+    let creator = BazziteDiskCreator()
+    creator.onStatus = { log("bazzite: \(Int($0.fraction * 100))% \($0.title) \($0.detail)") }
+    do {
+        let releases = try creator.releases()
+        guard let release = releases.first(where: { options.bazziteBuild == nil || $0.id == options.bazziteBuild }) else {
+            throw OptionError("No compatible Bazzite build available in Naozumi520/bazzite Releases")
+        }
+        let result = try creator.run(path: path, release: release)
+        log("bazzite: disk ready: \(result.path)")
+        exit(0)
+    } catch { log("bazzite: \(error)"); exit(1) }
+}
 if options.selftestDisplay { SelfTest.run(options) }
 if options.selftestOverlay { OverlaySelfTest.run(options) }
 if options.selftestStall { StallSelfTest.run(options) }

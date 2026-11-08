@@ -162,6 +162,12 @@ impl Focus {
 /// doc; None = unknown). Watches the focused window for resizes. None = the
 /// connection broke.
 fn read_state(c: &mut Conn, desktop: bool) -> Option<(u32, Option<(u16, u16)>)> {
+    // Bazzite runs Plasma directly on KWin, so gamescope's properties are absent.
+    // Report the desktop's Xwayland root size for absolute pointer mapping.
+    if desktop && std::env::var_os("FX_PROGRESS_DESKTOP_NATIVE").is_some() {
+        let size = c.conn.get_geometry(c.root).ok()?.reply().ok().map(|g| (g.width, g.height));
+        return Some((0, size.filter(|&(w, h)| w > 0 && h > 0)));
+    }
     let cardinal = |c: &Conn, atom: u32| -> Option<u32> {
         let r = c.conn.get_property(false, c.root, atom, AtomEnum::CARDINAL, 0, 1).ok()?.reply().ok()?;
         Some(r.value32().and_then(|mut v| v.next()).unwrap_or(0))

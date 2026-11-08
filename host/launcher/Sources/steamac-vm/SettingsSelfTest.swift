@@ -343,7 +343,11 @@ enum SettingsSelfTest {
                 CreateDiskWindowController.show(settings: settings)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     capture("create-disk", CreateDiskWindowController.visibleWindow.flatMap(SettingsWindowController.snapshot))
-                    CreateDiskWindowController.visibleWindow?.close()
+                    CreateDiskWindowController.selectBazziteForSelfTest()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        capture("create-bazzite", CreateDiskWindowController.visibleWindow.flatMap(SettingsWindowController.snapshot))
+                        CreateDiskWindowController.visibleWindow?.close()
+                    }
                     let alert = FirstRun.makeAlert(settings: settings)
                     alert.layout()
                     alert.window.center()

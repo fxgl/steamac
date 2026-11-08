@@ -145,6 +145,9 @@ struct Options {
     var keepCache = false
     /// --accept-eula: accept Valve's SteamOS EULA + Steam Subscriber Agreement (SteamOSLicense).
     var acceptLicense = false
+    var selftestBazzite = false
+    var createBazzite: String?
+    var bazziteBuild: String?
     var selftestProvision = false
     var selftestMetalCache = false
     var referenceDisk: String?
@@ -189,6 +192,9 @@ struct Options {
     Inside FX Steam Launcher.app, --kernel/--initrd/--disk default to the bundled Image, initramfs and
     layer plus the disk image chosen in Settings > Advanced.
 
+      --create-bazzite PATH download and verify a new Bazzite disk from Naozumi520/bazzite Releases
+      --bazzite-build TAG   optional release tag for --create-bazzite (default newest compatible build)
+      --selftest-bazzite    verify release validation, sparse extraction and Fedora boot routing
       --kernel PATH        raw arm64 Image (KRUN_KERNEL_FORMAT_RAW)
       --initrd PATH        initramfs
       --cmdline STR        kernel command line (default: "console=hvc0 loglevel=4 rootwait"; fsck.repair=yes,
@@ -463,6 +469,9 @@ struct Options {
             case "--selftest-settings": o.selftestSettings = true
             case "--selftest-remote-play": o.selftestRemotePlay = true
             case "--selftest-stream": o.selftestStream = true
+            case "--selftest-bazzite": o.selftestBazzite = true
+            case "--create-bazzite": o.createBazzite = try value(a)
+            case "--bazzite-build": o.bazziteBuild = try value(a)
             case "--selftest-provision": o.selftestProvision = true
             case "--selftest-metal-cache": o.selftestMetalCache = true
             case "--selftest-pointer": o.selftestPointer = true
@@ -509,7 +518,7 @@ struct Options {
     var isSelftest: Bool {
         selftestDisplay || selftestOverlay || selftestStall || selftestPill || selftestSettings || selftestProvision || selftestRemotePlay
             || selftestMetalCache || selftestPointer || selftestGameLayers || selftestStream || createDisk != nil || growDisk != nil
-            || showSSHPassword != nil
+            || showSSHPassword != nil || selftestBazzite || createBazzite != nil
     }
 
     /// Command line + saved settings (+ app bundle resources): what this boot runs with, and which
@@ -531,8 +540,13 @@ struct Options {
         }
         if !o.isSelftest {
             AppBundle.fill(&o, settings: settings, overrides: &overrides)
-            Provision.attachPending(&o)
-            Provision.attachConfig(&o)
+            if let disk = o.disks.first?.path, BazziteGuest.exists(disk) {
+                let guest = try BazziteGuest.load(disk)
+                guest.apply(&o, diskPath: disk)
+            } else {
+                Provision.attachPending(&o)
+                Provision.attachConfig(&o)
+            }
             let words = o.cmdline.split(separator: " ")
             func add(_ key: String, _ value: @autoclosure () -> String?) {
                 guard !words.contains(where: { $0.hasPrefix(key + "=") }), let v = value() else { return }

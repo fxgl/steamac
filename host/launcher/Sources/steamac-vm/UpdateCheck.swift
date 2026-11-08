@@ -26,8 +26,8 @@ import SwiftUI
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
-    static let latestURL = URL(string: "https://api.github.com/repos/fxgl/steamac/releases/latest")!
-    static let releasesPage = URL(string: "https://github.com/fxgl/steamac/releases")!
+    static let latestURL = URL(string: "https://api.github.com/repos/Naozumi520/steamac/releases/latest")!
+    static let releasesPage = URL(string: "https://github.com/Naozumi520/steamac/releases")!
     static let urlEnv = "STEAMAC_UPDATE_URL", fakeVersionEnv = "STEAMAC_FAKE_VERSION"
     static let interval: TimeInterval = 6 * 3600
     static let timeout: TimeInterval = 10
@@ -148,7 +148,7 @@ final class UpdateChecker {
         for (a, b, want) in order where compare(parse(a)!, parse(b)!) != want { failures.append("update: \(a) vs \(b) not \(want.rawValue)") }
         let json = """
             [{"tag_name": "v9.0", "draft": true}, {"tag_name": "v8.0", "prerelease": true}, {"tag_name": "nightly"},
-             {"tag_name": "v1.3.10", "name": "1.3.10", "body": "x", "html_url": "https://github.com/fxgl/steamac/releases/tag/v1.3.10",
+             {"tag_name": "v1.3.10", "name": "1.3.10", "body": "x", "html_url": "https://github.com/Naozumi520/steamac/releases/tag/v1.3.10",
               "assets": [{"name": "FX-Steam-Launcher-1.3.10-gpl-sources.tar", "browser_download_url": "https://e/x.tar"},
                          {"name": "FX-Steam-Launcher-1.3.10.dmg", "browser_download_url": "https://e/x.dmg"}]},
              {"tag_name": "v1.3.9"}]

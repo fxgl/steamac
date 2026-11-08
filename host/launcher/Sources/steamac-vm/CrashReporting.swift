@@ -179,7 +179,7 @@ enum CrashReporting {
     /// The saved setting, read from the defaults store (the supervisor also sees changes the VM
     /// process's Settings window made).
     private static var settingAllows: Bool {
-        LauncherSettings.shared.defaults.object(forKey: LauncherSettings.Key.sendCrashReports.rawValue) as? Bool ?? true
+        LauncherSettings.shared.defaults.object(forKey: LauncherSettings.Key.sendCrashReports.rawValue) as? Bool ?? false
     }
 
     // MARK: setup

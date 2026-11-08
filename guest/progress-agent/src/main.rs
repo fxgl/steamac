@@ -486,7 +486,8 @@ fn main() {
     };
 
     // Desktop Mode: Plasma instead of Steam in this gamescope session (focus.rs).
-    let desktop = std::env::var("GAMESCOPE_SESSION_TARGET").is_ok_and(|t| t == "plasma-session.target");
+    let desktop = std::env::var("GAMESCOPE_SESSION_TARGET").is_ok_and(|t| t == "plasma-session.target")
+        || std::env::var_os("FX_PROGRESS_DESKTOP_NATIVE").is_some();
     let mut focus = focus::Focus::new(desktop);
     let heartbeat = alive::Heartbeat::new();
     let mut collector = collect::Collector::new();

@@ -130,6 +130,9 @@ enum AppBundle {
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
               let table = try? GPT.read(path: path) else { return false }
+        if BazziteGuest.exists(path), let guest = try? BazziteGuest.load(path),
+           table.sectors * 512 == UInt64(guest.diskBytes),
+           [guest.kernel.name, guest.initrd.name].allSatisfy({ FileManager.default.isReadableFile(atPath: BazziteGuest.directory(path) + "/" + $0) }) { return true }
         return DiskLayout.parts(homeGiB: DiskLayout.defaultHomeGiB).allSatisfy { part in
             var matches = 0
             for entry in table.entries where entry.name == part.name {
@@ -141,7 +144,7 @@ enum AppBundle {
     }
 
     static var invalidDiskMessage: String {
-        String(localized: "Choose a raw SteamOS GPT disk with the SteamOS partitions (including esp, rootfs-A and home), not a recovery archive or Steam's macOS installer. Use Create SteamOS Disk to download and create the correct disk.")
+        String(localized: "Choose a SteamOS raw GPT disk or a Bazzite disk with its matching .bazzite boot folder. Use Create New Disk to download a build.")
     }
 
     /// Shared by both disk pickers: do not save a bad selection or silently ignore it.
@@ -149,7 +152,7 @@ enum AppBundle {
     static func acceptDiskSelection(_ path: String) -> Bool {
         guard isDiskImage(path) else {
             let alert = NSAlert()
-            alert.messageText = String(localized: "Not a usable SteamOS disk")
+            alert.messageText = String(localized: "Not a usable guest disk")
             alert.informativeText = (path as NSString).abbreviatingWithTildeInPath + "\n\n" + invalidDiskMessage
             alert.runModal()
             return false
@@ -157,10 +160,10 @@ enum AppBundle {
         return true
     }
 
-    /// "Choose a SteamOS disk image" panels (first run, Settings > Advanced): files only, no
+    /// "Choose a guest disk image" panels (first run, Settings > Advanced): files only, no
     /// packages (public.data excludes bundles and folders; a raw image of any name conforms).
     static func configureDiskPanel(_ panel: NSOpenPanel) {
-        panel.title = String(localized: "Choose a SteamOS disk image")
+        panel.title = String(localized: "Choose a guest disk image")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -195,7 +198,10 @@ enum AppBundle {
             o.needsDisk = true
             return
         }
-        o.disks = [DiskSpec(path: disk, readOnly: false), DiskSpec(path: res + "/steamac-layer.img", readOnly: true)]
+        o.disks = [DiskSpec(path: disk, readOnly: false)]
+        if !BazziteGuest.exists(disk) {
+            o.disks.append(DiskSpec(path: res + "/steamac-layer.img", readOnly: true))
+        }
     }
 
     /// Finder / `open` launch: stdout and stderr are /dev/null, so the guest console and the
@@ -282,9 +288,9 @@ enum FirstRun {
     /// The first-run alert (also captured by --selftest-settings).
     static func makeAlert(settings: LauncherSettings) -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = String(localized: "No SteamOS disk image")
+        alert.messageText = String(localized: "No guest disk image")
         let looked = AppBundle.defaultDiskCandidates().map { "• " + ($0 as NSString).abbreviatingWithTildeInPath }
-        var info = String(localized: "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n")
+        var info = String(localized: "FX Steam Launcher needs a guest disk image. Choose SteamOS or Bazzite in Create New Disk.\n\n")
         if !settings.diskImage.isEmpty {
             let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
             info += path + "\n\n" + AppBundle.invalidDiskMessage + "\n\n"

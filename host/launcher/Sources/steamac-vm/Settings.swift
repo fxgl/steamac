@@ -10,9 +10,9 @@ import Foundation
 final class LauncherSettings: ObservableObject {
     /// This process's settings (the VM process's window, gamepad, sound and Settings window share it).
     static let shared = LauncherSettings()
-    static let defaultDomain = "es.fxgam.steamac"
+    static let defaultDomain = "io.github.naozumi520.steamac-bazzite"
     /// Domain used before the bundle id change; copied once into the domain if that is still empty.
-    static let legacyDomain = "dev.steamac.vm"
+    static let legacyDomain = "io.github.naozumi520.steamac-bazzite.legacy"
     static var domain: String {
         ProcessInfo.processInfo.environment["STEAMAC_DEFAULTS_DOMAIN"].flatMap { $0.isEmpty ? nil : $0 } ?? defaultDomain
     }
@@ -312,7 +312,7 @@ final class LauncherSettings: ObservableObject {
     @Published var openFullscreen = false { didSet { save(.openFullscreen, openFullscreen) } }
     @Published var perfStats = false { didSet { save(.perfStats, perfStats) } }
     /// Crash reports and diagnostics through Sentry (CrashReporting); applies now.
-    @Published var sendCrashReports = true { didSet { save(.sendCrashReports, sendCrashReports) } }
+    @Published var sendCrashReports = false { didSet { save(.sendCrashReports, sendCrashReports) } }
     /// While the app is not active: mute the guest's sound / freeze the focused game.
     @Published var muteInBackground = true { didSet { save(.muteInBackground, muteInBackground) } }
     @Published var pauseInBackground = false { didSet { save(.pauseInBackground, pauseInBackground) } }
