@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v2")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v3")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash
@@ -22,6 +22,8 @@ enum BazziteSetup {
             fi
             ln -sfn "$root/$target" "$HOME/.steam/$name"
         done
+        /etc/steamac/bin/prepare-fex-rootfs
+        export FEX_ROOTFS="$HOME/.local/share/steamac/fex-rootfs"
         exec /usr/bin/steam-arm64 "$@"
         """
         let hook = """
@@ -29,6 +31,8 @@ enum BazziteSetup {
         set -eu
         mkdir -p /sysroot/etc/steamac/bin /sysroot/etc/environment.d /sysroot/etc/profile.d
         printf '#!/bin/sh\\nexec /etc/steamac/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
+        cp /steamac-fex-rootfs /sysroot/etc/steamac/bin/prepare-fex-rootfs
+        chmod 755 /sysroot/etc/steamac/bin/prepare-fex-rootfs
         cp /steamac-compat-launcher /sysroot/etc/steamac/bin/steam-arm64
         chmod 755 /sysroot/etc/steamac/bin/steam-arm64
         if [ -f /sysroot/etc/steamac-client ]; then
@@ -42,6 +46,7 @@ enum BazziteSetup {
         for name in ["var", "var/lib", "var/lib/dracut", "var/lib/dracut/hooks", "var/lib/dracut/hooks/pre-pivot"] {
             Cpio.append(&archive, name: name, mode: 0o040755, ino: 1, data: [])
         }
+        Cpio.append(&archive, name: "steamac-fex-rootfs", mode: 0o100755, ino: 4, data: Array(FEXRootFS.installer.utf8))
         Cpio.append(&archive, name: "steamac-compat-launcher", mode: 0o100755, ino: 3, data: Array(launcher.utf8) + [10])
         Cpio.append(&archive, name: "var/lib/dracut/hooks/pre-pivot/91-steamac-compat.sh", mode: 0o100755, ino: 2, data: Array(hook.utf8) + [10])
         Cpio.append(&archive, name: "TRAILER!!!", mode: 0, ino: 0, data: [])
