@@ -38,7 +38,8 @@ enum BazziteSetup {
         printf '#!/bin/sh\\nexec /etc/steamac/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
         mkdir -p /run/steamac-dxmt-layer
         mount -t erofs -o ro /dev/vdb /run/steamac-dxmt-layer
-        cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/etc/steamac/
+        mkdir -p /sysroot/usr/lib/steamac
+        cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/usr/lib/steamac/
         cp /run/steamac-dxmt-layer/usr/lib/steamac/steam-gfx-path /sysroot/etc/steamac/bin/
         chmod 755 /sysroot/etc/steamac/bin/steam-gfx-path
         umount /run/steamac-dxmt-layer
