@@ -8,7 +8,8 @@ enum BazziteSetup {
         var table = try GPT.read(path: path, allowAlignedUsableRange: true)
         guard bytes >= Int64(table.sectors * 512), bytes <= 2048 << 30, bytes % (1 << 20) == 0,
               let index = table.entries.indices.max(by: { table.entries[$0].lastLBA < table.entries[$1].lastLBA }),
-              table.entries[index].firstLBA == 3_125_248 else {
+              table.entries.count == 3,
+              table.entries[index].type == UUID(uuidString: "0FC63DAF-8483-4772-8E79-3D69D8477DE4")! else {
             throw OptionError("Unsupported Bazzite disk layout or capacity")
         }
         if bytes == Int64(table.sectors * 512) { return table }

@@ -36,6 +36,9 @@ struct BazziteGuest: Codable {
               Set([disk.name, kernel.name, initrd.name]).count == 3 else {
             throw OptionError("Invalid Bazzite guest manifest")
         }
+        if let installedDiskBytes {
+            guard installedDiskBytes >= diskBytes, installedDiskBytes <= 2048 << 30, installedDiskBytes % (1 << 20) == 0 else { throw OptionError("Invalid installed Bazzite capacity") }
+        }
         for asset in [disk, kernel, initrd] {
             guard !asset.name.isEmpty, asset.name != ".", asset.name != "..",
                   asset.name == (asset.name as NSString).lastPathComponent,

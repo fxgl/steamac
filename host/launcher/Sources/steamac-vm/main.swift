@@ -51,7 +51,7 @@ if let path = options.createBazzite {
         guard let release = releases.first(where: { options.bazziteBuild == nil || $0.id == options.bazziteBuild }) else {
             throw OptionError("No compatible Bazzite build available in Naozumi520/bazzite Releases")
         }
-        let result = try creator.run(path: path, release: release)
+        let result = try creator.run(path: path, release: release, diskGiB: options.bazziteDiskGiB ?? 64, password: options.createPassword)
         log("bazzite: disk ready: \(result.path)")
         exit(0)
     } catch { log("bazzite: \(error)"); exit(1) }

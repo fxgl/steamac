@@ -148,6 +148,7 @@ struct Options {
     var selftestBazzite = false
     var createBazzite: String?
     var bazziteBuild: String?
+    var bazziteDiskGiB: Int?
     var selftestProvision = false
     var selftestMetalCache = false
     var referenceDisk: String?
@@ -193,6 +194,7 @@ struct Options {
     layer plus the disk image chosen in Settings > Advanced.
 
       --create-bazzite PATH download and verify a new Bazzite disk from Naozumi520/bazzite Releases
+      --bazzite-disk-gib N capacity of the Bazzite system/games disk (48..2048 GiB; default 64)
       --bazzite-build TAG   optional release tag for --create-bazzite (default newest compatible build)
       --selftest-bazzite    verify release validation, sparse extraction and Fedora boot routing
       --kernel PATH        raw arm64 Image (KRUN_KERNEL_FORMAT_RAW)
@@ -471,6 +473,7 @@ struct Options {
             case "--selftest-stream": o.selftestStream = true
             case "--selftest-bazzite": o.selftestBazzite = true
             case "--create-bazzite": o.createBazzite = try value(a)
+            case "--bazzite-disk-gib": o.bazziteDiskGiB = try int(a)
             case "--bazzite-build": o.bazziteBuild = try value(a)
             case "--selftest-provision": o.selftestProvision = true
             case "--selftest-metal-cache": o.selftestMetalCache = true

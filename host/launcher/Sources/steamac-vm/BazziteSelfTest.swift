@@ -87,6 +87,33 @@ enum BazziteSelfTest {
             try write(2048, 8191)
             return rejects { _ = try GPT.read(path: target.path, allowAlignedUsableRange: true) }
         }
+        check("Bazzite capacity grows root and backup GPT") {
+            let target = dir.appendingPathComponent("grow.img")
+            let table = GPT(diskGUID: UUID(), sectors: 16384, entries: [
+                .init(type: DiskLayout.typeESP, uuid: UUID(), firstLBA: 2048, lastLBA: 4095, attributes: 0, name: "esp"),
+                .init(type: DiskLayout.typeEFI, uuid: UUID(), firstLBA: 4096, lastLBA: 6143, attributes: 0, name: "boot"),
+                .init(type: UUID(uuidString: "0FC63DAF-8483-4772-8E79-3D69D8477DE4")!, uuid: UUID(), firstLBA: 6144, lastLBA: 14335, attributes: 0, name: "root")])
+            let fd = open(target.path, O_RDWR | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { return false }; defer { close(fd) }
+            guard ftruncate(fd, off_t(table.sectors * 512)) == 0 else { return false }
+            try table.write(fd: fd)
+            let grown = try BazziteSetup.grow(target.path, bytes: 16 << 20)
+            return grown.entries.last?.uuid == table.entries.last?.uuid
+                && grown.entries.last?.lastLBA == grown.lastUsableLBA
+                && grown.sectors == 32768
+                && rejects { _ = try BazziteSetup.grow(target.path, bytes: 8 << 20) }
+        }
+        check("first-boot archive hashes password and installs executable hook") {
+            let target = dir.appendingPathComponent("initramfs")
+            try Data().write(to: target)
+            try BazziteSetup.append(to: target, password: "private-test-password")
+            let contents = try Cpio.parse(Array(Data(contentsOf: target)))
+            guard let setup = contents.first(where: { $0.0 == "steamac-setup/firstboot" }),
+                  let hook = contents.first(where: { $0.0.hasSuffix("90-steamac-setup.sh") }) else { return false }
+            let script = String(decoding: setup.1, as: UTF8.self)
+            return !script.contains("private-test-password") && script.contains("bazzite:$6$")
+                && script.contains("resize2fs /dev/vda3") && !hook.1.isEmpty
+        }
         let asset = BazziteGuest.Asset(name: "disk.gz", sha256: String(repeating: "a", count: 64), bytes: 100)
         let guest = BazziteGuest(schema: 1, build: "test", sourceRevision: "test", diskBytes: 40 << 30,
                                 commandLine: "root=UUID=123 ostree=/ostree/test selinux=0", disk: asset,
