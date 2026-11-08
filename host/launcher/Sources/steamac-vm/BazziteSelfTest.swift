@@ -160,7 +160,7 @@ enum BazziteSelfTest {
             var o = Options()
             guest.apply(&o, diskPath: "/tmp/test.img")
             return o.kernel == "/tmp/test.img.bazzite/Image" && o.initrd == "/tmp/test.img.bazzite/initrd"
-                && o.cmdline == guest.commandLine && o.wmtrLibrary == nil && o.mouseMode == .tablet
+                && o.cmdline == guest.commandLine && o.wmtrLibrary == LauncherSettings.Wmtr.path(for: "") && o.mouseMode == .tablet
         }
         check("explicit boot arguments preserved") {
             var o = Options(); o.explicit = ["--cmdline"]; o.cmdline = "custom"
