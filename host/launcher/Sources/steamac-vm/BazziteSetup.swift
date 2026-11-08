@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v4")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v5")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash
@@ -22,6 +22,9 @@ enum BazziteSetup {
             fi
             ln -sfn "$root/$target" "$HOME/.steam/$name"
         done
+        export STEAMAC_DXMT_DIR=/etc/steamac/dxmt
+        /etc/steamac/bin/steam-gfx-path
+        nohup /etc/steamac/bin/steam-gfx-path --watch > "$HOME/.local/share/steamac-dxmt.log" 2>&1 < /dev/null &
         # Rootfs provisioning must never gate native Steam startup.
         mkdir -p "$HOME/.local/share/steamac"
         nohup /etc/steamac/bin/prepare-fex-rootfs > "$HOME/.local/share/steamac/rootfs-install.log" 2>&1 < /dev/null &
@@ -33,6 +36,12 @@ enum BazziteSetup {
         set -eu
         mkdir -p /sysroot/etc/steamac/bin /sysroot/etc/environment.d /sysroot/etc/profile.d
         printf '#!/bin/sh\\nexec /etc/steamac/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
+        mkdir -p /run/steamac-dxmt-layer
+        mount -t erofs -o ro /dev/vdb /run/steamac-dxmt-layer
+        cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/etc/steamac/
+        cp /run/steamac-dxmt-layer/usr/lib/steamac/steam-gfx-path /sysroot/etc/steamac/bin/
+        chmod 755 /sysroot/etc/steamac/bin/steam-gfx-path
+        umount /run/steamac-dxmt-layer
         cp /steamac-fex-rootfs /sysroot/etc/steamac/bin/prepare-fex-rootfs
         chmod 755 /sysroot/etc/steamac/bin/prepare-fex-rootfs
         cp /steamac-compat-launcher /sysroot/etc/steamac/bin/steam-arm64

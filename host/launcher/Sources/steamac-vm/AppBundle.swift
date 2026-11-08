@@ -199,9 +199,8 @@ enum AppBundle {
             return
         }
         o.disks = [DiskSpec(path: disk, readOnly: false)]
-        if !BazziteGuest.exists(disk) {
-            o.disks.append(DiskSpec(path: res + "/steamac-layer.img", readOnly: true))
-        }
+        // Bazzite mounts only the DXMT payload, never the Arch /usr overlay.
+        o.disks.append(DiskSpec(path: res + "/steamac-layer.img", readOnly: true))
     }
 
     /// Finder / `open` launch: stdout and stderr are /dev/null, so the guest console and the
