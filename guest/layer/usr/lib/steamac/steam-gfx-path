@@ -21,7 +21,7 @@ set -uo pipefail
 
 CMDLINE=${STEAMAC_CMDLINE:-/proc/cmdline}
 STEAM=${STEAMAC_STEAM_ROOT:-$HOME/.local/share/Steam}
-PAYLOAD=${STEAMAC_DXMT_DIR:-/etc/steamac/dxmt}
+PAYLOAD=${STEAMAC_DXMT_DIR:-/usr/lib/steamac/dxmt}
 STATE=${STEAMAC_GFX_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/steamac/gfx-path}
 # <directory under files/lib/wine>/<dll>: Proton's copy that DXMT's replaces
 DLLS="dxvk/d3d11 dxvk/dxgi dxvk/d3d10core vkd3d-proton/d3d12"
