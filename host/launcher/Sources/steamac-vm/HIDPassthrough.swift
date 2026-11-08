@@ -26,12 +26,16 @@ final class HIDPassthrough {
     static let puckSlots = 2...5
     static let wiredSteamController: UInt16 = 0x1302
     /// The controller-state report IDs: USB/dongle (0x42), BLE (0x45) and the newer "Ibex" with
-    /// a trackpad timestamp (0x47). Only these keep a Puck slot alive: battery (0x43), wireless
-    /// status (0x46/0x79) and lizard-mode keyboard/mouse reports do not
-    /// (SDL_hidapi_steam_triton.c).
+    /// a trackpad timestamp (0x47). Outside Desktop Mode only these keep a Puck slot alive:
+    /// battery (0x43), wireless status (0x46/0x79) and lizard-mode keyboard/mouse reports do not
+    /// (SDL_hidapi_steam_triton.c). In Desktop Mode any input report refreshes liveness: Plasma
+    /// often leaves the controller in lizard mode, which would otherwise drop Valve passthrough
+    /// after `puckSlotTimeout` and flap through the Puck's Xbox 360 GameController pad.
     static let stateReports: Set<UInt8> = [0x42, 0x45, 0x47]
-    /// A slot without controller state for this long has no controller.
+    /// A slot without controller state for this long has no controller (Gaming Mode / Steam).
     static let puckSlotTimeout: TimeInterval = 2
+    /// Desktop Mode grace: longer idle before treating a quiet Puck slot as empty.
+    static let puckDesktopSlotTimeout: TimeInterval = 30
 
     /// What the guest's uhid device is created with (`hid-create`).
     struct Identity: Equatable {
@@ -89,7 +93,9 @@ final class HIDPassthrough {
         var live: Bool {
             guard puckSlot != nil else { return true }
             guard let t = lastState else { return false }
-            return ProcessInfo.processInfo.systemUptime - t < HIDPassthrough.puckSlotTimeout
+            let timeout = owner?.desktopFocus == true
+                ? HIDPassthrough.puckDesktopSlotTimeout : HIDPassthrough.puckSlotTimeout
+            return ProcessInfo.processInfo.systemUptime - t < timeout
         }
 
         init(ref: IOHIDDevice, registryID: UInt64, identity: Identity, maxInput: Int, maxFeature: Int, puckSlot: Int? = nil, generic: Bool = false) {
@@ -120,6 +126,15 @@ final class HIDPassthrough {
     /// Monitoring prompt. Only Auto / Steam Controller pass them through.
     var matchSteamControllers = false {
         didSet { if matchSteamControllers != oldValue { rematch() } }
+    }
+    /// Guest Desktop Mode (Plasma): keep Puck slots alive on lizard-mode reports and with a
+    /// longer idle timeout so Valve passthrough does not flap to Xbox while the controller is still
+    /// on the dongle.
+    var desktopFocus = false {
+        didSet {
+            guard desktopFocus != oldValue else { return }
+            onChange?()
+        }
     }
     /// Generic controllers use Automatic and the existing Virtual controller off switch.
     var matchGenericControllers = false {
@@ -449,12 +464,21 @@ final class HIDPassthrough {
             d.lastInputLength = length
             d.lastInputTime = ProcessInfo.processInfo.systemUptime
             let reportID = report[0]
-            if d.puckSlot != nil, HIDPassthrough.stateReports.contains(reportID) {
-                let wasLive = d.live
-                d.lastState = ProcessInfo.processInfo.systemUptime
-                if !wasLive {
-                    log("hid passthrough: Puck slot \(d.puckSlot ?? 0): controller state (report 0x\(String(reportID, radix: 16)), \(length) bytes)")
-                    me.onChange?()
+            if d.puckSlot != nil {
+                let state = HIDPassthrough.stateReports.contains(reportID)
+                // Gaming Mode: only controller-state reports. Desktop: lizard keyboard/mouse
+                // activity also counts — otherwise a quiet 2 s drops Valve uhid for Xbox.
+                if state || me.desktopFocus {
+                    let wasLive = d.live
+                    d.lastState = ProcessInfo.processInfo.systemUptime
+                    if !wasLive {
+                        if state {
+                            log("hid passthrough: Puck slot \(d.puckSlot ?? 0): controller state (report 0x\(String(reportID, radix: 16)), \(length) bytes)")
+                        } else {
+                            log("hid passthrough: Puck slot \(d.puckSlot ?? 0): kept alive in Desktop Mode (report 0x\(String(reportID, radix: 16)), \(length) bytes)")
+                        }
+                        me.onChange?()
+                    }
                 }
             }
             // While passed through, every report goes to SteamOS (state, battery, wireless, ...).
