@@ -26,8 +26,8 @@ if Supervisor.isChild, let driver = Supervisor.profileDriver { options.vulkanDri
 settings.bootedDriver = Supervisor.isChild ? options.vulkanDriver : nil
 settings.bootedDXMT = Supervisor.isChild ? options.wmtrLibrary != nil : nil
 
-// Decide before anything can initialise Metal: off means no Apple HUD completion handlers,
-// not just a hidden overlay. Enabling the HUD later takes effect on the next VM boot.
+// Prepare the HUD before Metal initializes. macOS 27 keeps it available for live
+// toggling; macOS 26 retains opt-in loading because of HUD completion-handler crashes.
 MetalHUD.configure(isChild: Supervisor.isChild, headless: options.headless, requested: settings.metalHUD)
 
 if options.selftestMetalCache { MetalCompilerCache.selfTest() }

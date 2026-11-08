@@ -345,7 +345,7 @@ final class LauncherSettings: ObservableObject {
     /// The guest display gets the screen's pixel density (backing scale guest pixels per window
     /// point, Options.pixelScale) instead of one pixel per point; next start.
     @Published var retinaResolution = false { didSet { save(.retinaResolution, retinaResolution) } }
-    /// Apple's Metal HUD: enabling loads libMTLHud on the next boot; off hides it now, unloads next boot.
+    /// Apple's Metal HUD visibility. macOS 27 supports live toggling; macOS 26 loads it at boot.
     @Published var metalHUD = false { didSet { save(.metalHUD, metalHUD) } }
     /// MetalFX spatial upscaling of the guest picture to the window's pixel size (Renderer); applies now.
     @Published var superResolution = false { didSet { save(.superResolution, superResolution) } }
