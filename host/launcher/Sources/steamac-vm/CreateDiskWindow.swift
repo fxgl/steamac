@@ -14,6 +14,7 @@ final class CreateDiskModel: ObservableObject {
     @Published var selectedRelease = ""
     @Published private(set) var loadingReleases = false
     @Published var branch: String
+    @Published var bazziteDiskGiB = 64
     @Published var homeGiB = DiskLayout.defaultHomeGiB
     /// Empty = no password (release default; Settings > Advanced "Enable SSH" sets one later).
     @Published var password = AppBundle.releaseDefaults ? "" : "steamos"
@@ -92,9 +93,9 @@ final class CreateDiskModel: ObservableObject {
         interrupted = false
         running = true
         c.onStatus = { [weak self] status in DispatchQueue.main.async { self?.status = status } }
-        let destination = path
+        let destination = path, capacity = bazziteDiskGiB, guestPassword = password
         Thread { [weak self] in
-            let outcome = Swift.Result { try c.run(path: destination, release: release) }
+            let outcome = Swift.Result { try c.run(path: destination, release: release, diskGiB: capacity, password: guestPassword) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.running = false
@@ -179,7 +180,14 @@ private struct CreateDiskView: View {
                         }
                         Button(model.loadingReleases ? "Checking releases…" : "Refresh builds", action: model.loadReleases)
                             .disabled(model.loadingReleases)
-                        Text("Includes a 40 GB sparse disk and automatic local login as bazzite. SSH is disabled.")
+                        Stepper(value: $model.bazziteDiskGiB, in: 48...2048, step: 16) {
+                            HStack {
+                                Text("Disk capacity (system and games, sparse)")
+                                Spacer()
+                                Text("\(model.bazziteDiskGiB) GiB").monospacedDigit()
+                            }
+                        }
+                        Text("Automatic local login as bazzite. SSH is disabled. The filesystem expands to the chosen capacity on first boot.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                     Picker("SteamOS branch", selection: $model.branch) {
@@ -202,24 +210,20 @@ private struct CreateDiskView: View {
                             Button("Choose…") { choose() }
                         }
                         Text(verbatim: model.pathExists ? String(localized: "A file with this name exists; it is never overwritten. Choose another name.")
-                             : model.isBazzite ? "40 GB virtual disk; download and used blocks consume storage on your Mac." : model.freeSpace)
+                             : model.isBazzite ? "\(model.bazziteDiskGiB) GiB virtual disk; only downloaded and used blocks consume storage on your Mac." : model.freeSpace)
                             .font(.caption).foregroundStyle(model.pathExists ? Color.red : Color.secondary)
                     }
-                    if !model.isBazzite {
                     HStack {
-                        Text("Password for user steamos (optional)")
+                        Text(model.isBazzite ? "Password for user bazzite (optional)" : "Password for user steamos (optional)")
                         Spacer()
                         SecureField("none", text: $model.password).frame(width: 160)
                     }
-                    }
                 }
                 .disabled(model.running)
-                if !model.isBazzite {
                 Section {
                     SteamClientPicker(settings: model.settings)
                 }
                 .disabled(model.running)
-                }
                 Section {
                     CrashReportsToggle(settings: model.settings, checkbox: true)
                 }

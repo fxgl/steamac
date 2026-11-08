@@ -131,7 +131,7 @@ enum AppBundle {
         guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
               let table = try? GPT.read(path: path, allowAlignedUsableRange: BazziteGuest.exists(path)) else { return false }
         if BazziteGuest.exists(path), let guest = try? BazziteGuest.load(path),
-           table.sectors * 512 == UInt64(guest.diskBytes),
+           table.sectors * 512 == UInt64(guest.installedDiskBytes ?? guest.diskBytes),
            [guest.kernel.name, guest.initrd.name].allSatisfy({ FileManager.default.isReadableFile(atPath: BazziteGuest.directory(path) + "/" + $0) }) { return true }
         return DiskLayout.parts(homeGiB: DiskLayout.defaultHomeGiB).allSatisfy { part in
             var matches = 0

@@ -71,7 +71,7 @@ final class BazziteDiskCreator {
         while let data = try file.read(upToCount: 1 << 20), !data.isEmpty { hash.update(data: data) }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
-    func run(path: String, release: BazziteRelease) throws -> DiskCreator.Result {
+    func run(path: String, release: BazziteRelease, diskGiB: Int? = nil, password: String? = nil) throws -> DiskCreator.Result {
         let fm = FileManager.default
         let path = (path as NSString).standardizingPath
         guard !fm.fileExists(atPath: path), !fm.fileExists(atPath: BazziteGuest.directory(path)),
@@ -79,7 +79,7 @@ final class BazziteDiskCreator {
         try BazziteRelease.validateAssetURL(manifestURL)
         report("Reading Bazzite release…", release.title, 0)
         let data = try fetch(manifestURL)
-        let manifest = try JSONDecoder().decode(BazziteGuest.self, from: data)
+        var manifest = try JSONDecoder().decode(BazziteGuest.self, from: data)
         try manifest.validate()
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -94,15 +94,21 @@ final class BazziteDiskCreator {
         report("Preparing Bazzite disk…", "Sparse disk; empty blocks use no storage", 0.75)
         let disk = stage.appendingPathComponent("disk.img")
         try extract(stage.appendingPathComponent(manifest.disk.name), to: disk, expectedBytes: manifest.diskBytes)
-        let gpt = try GPT.read(path: disk.path, allowAlignedUsableRange: true)
+        var gpt = try GPT.read(path: disk.path, allowAlignedUsableRange: true)
         guard gpt.sectors * 512 == UInt64(manifest.diskBytes) else { throw OptionError("Bazzite disk GPT size mismatch") }
+        if let diskGiB {
+            guard (48...2048).contains(diskGiB) else { throw OptionError("Choose a disk capacity from 48 to 2048 GiB") }
+            gpt = try BazziteSetup.grow(disk.path, bytes: Int64(diskGiB) << 30)
+            manifest.installedDiskBytes = Int64(gpt.sectors * 512)
+        }
+        try BazziteSetup.append(to: stage.appendingPathComponent(manifest.initrd.name), password: password)
         try checkCancel()
         let sidecar = stage.appendingPathComponent("boot")
         try fm.createDirectory(at: sidecar, withIntermediateDirectories: false)
         for name in [manifest.kernel.name, manifest.initrd.name] {
             try fm.moveItem(at: stage.appendingPathComponent(name), to: sidecar.appendingPathComponent(name))
         }
-        try data.write(to: sidecar.appendingPathComponent("bazzite-steamac.json"))
+        try JSONEncoder().encode(manifest).write(to: sidecar.appendingPathComponent("bazzite-steamac.json"))
         try fm.moveItem(atPath: sidecar.path, toPath: BazziteGuest.directory(path))
         do { try fm.moveItem(atPath: disk.path, toPath: path) }
         catch { try? fm.removeItem(atPath: BazziteGuest.directory(path)); throw error }

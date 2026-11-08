@@ -76,7 +76,7 @@ enum Cpio {
         return out
     }
 
-    private static func append(_ out: inout [UInt8], name: String, mode: UInt32, ino: UInt32, data: [UInt8]) {
+    static func append(_ out: inout [UInt8], name: String, mode: UInt32, ino: UInt32, data: [UInt8]) {
         let fields: [UInt32] = [ino, mode, 0, 0, mode == 0 ? 0 : 1, 0, UInt32(data.count), 0, 0, 0, 0,
                                 UInt32(name.utf8.count + 1), 0]
         out += Array("070701".utf8)

@@ -16,6 +16,7 @@ struct BazziteGuest: Codable {
     let disk: Asset
     let kernel: Asset
     let initrd: Asset
+    var installedDiskBytes: Int64? = nil
 
     static func directory(_ path: String) -> String { path + ".bazzite" }
     static func manifestPath(_ path: String) -> String { directory(path) + "/bazzite-steamac.json" }
