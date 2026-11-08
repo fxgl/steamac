@@ -85,9 +85,13 @@ both back on once, but only if both are still exactly those values.
 Gaming Mode defaults the Steam UI to the virtual display's native resolution, including Retina,
 instead of Steam's separate 1920 × 1080 UI cap. Before Steam starts,
 `/usr/lib/steamac/steam-native-resolution` supplies a missing
-`InstallConfigStore/Gamescope/EnableSteamNativeExternalResolution` value in `config.vdf`.
-An explicit on/off choice in Steam is preserved. The global game resolution setting controls
-games separately; choosing 5120 × 2880 there does not raise the Steam UI resolution. The
+`InstallConfigStore/Gamescope/EnableSteamNativeExternalResolution` value in `config.vdf`,
+once per Steam installation (marker `config/steamac-native-resolution`). Existing values and
+later choices in Steam are preserved, even if Steam removes the key. An existing 1080p cap
+requires a new gamescope session (restart the VM); restarting Steam alone is not enough.
+The global game resolution setting controls games separately; choosing 5120 × 2880 there does
+not raise the Steam UI resolution. Enabling native UI resolution can also raise games' default
+resolution and GPU cost; preserving the previous game defaults is not implemented yet. The
 launcher's existing 4094-pixel maximum display side still applies.
 
 Steam's idle screensaver (Settings → Display → Screensaver in Game Mode) is off in the VM. After a

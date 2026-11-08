@@ -5,7 +5,9 @@ Steam otherwise requests a 1920x1080 Xwayland surface even when gamescope's
 output follows the launcher's Retina display. GameResolutionGlobal controls
 games, not this surface. This install-scoped setting deliberately lives directly
 under InstallConfigStore/Gamescope (not Software/Valve/Steam/Gamescope).
-Only supply a missing value: an explicit choice in Steam always wins.
+Only supply a missing value, once per Steam installation. The marker prevents
+reapplying the default even if Steam later removes the key for a user choice.
+A new gamescope session is required to lift an existing 1080p cap.
 """
 from pathlib import Path
 import runpy
@@ -25,11 +27,16 @@ def native_resolution(text):
 
 def main():
     config = Path.home() / ".local/share/Steam/config/config.vdf"
+    marker = config.parent / "steamac-native-resolution"
+    if marker.exists():
+        return
     text = config.read_text() if config.exists() else ""
     changed = native_resolution(text if text.strip() else vdf["EMPTY"])
     if changed != text:
         vdf["atomic_write"](config, changed)
         print("steam-native-resolution: default Steam UI to native display resolution", file=sys.stderr)
+
+    vdf["atomic_write"](marker, "1\n")
 
 
 if __name__ == "__main__":

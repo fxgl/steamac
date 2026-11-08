@@ -38,6 +38,36 @@ class NativeResolutionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hook["native_resolution"](text)
 
+    def test_marker_preserves_removed_key_and_reinstall_reapplies(self):
+        with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", HOME=home):
+            hook["main"]()
+            config = Path(home) / ".local/share/Steam/config/config.vdf"
+            marker = config.parent / "steamac-native-resolution"
+            self.assertEqual(marker.read_text(), "1\n")
+            user = '"InstallConfigStore" { "Other" "keep" }\n'
+            config.write_text(user)
+            hook["main"]()
+            self.assertEqual(config.read_text(), user)
+            marker.unlink()
+            hook["main"]()
+            values, _ = hook["vdf"]["vdf_entries"](config.read_text())
+            self.assertEqual(values[KEY][0], "1")
+
+    def test_existing_choice_gets_marker_and_malformed_config_does_not(self):
+        with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", HOME=home):
+            config = Path(home) / ".local/share/Steam/config/config.vdf"
+            config.parent.mkdir(parents=True)
+            marker = config.parent / "steamac-native-resolution"
+            config.write_text('"InstallConfigStore" {')
+            with self.assertRaises(ValueError):
+                hook["main"]()
+            self.assertFalse(marker.exists())
+            user = '"InstallConfigStore" { "Gamescope" { "EnableSteamNativeExternalResolution" "0" } }'
+            config.write_text(user)
+            hook["main"]()
+            self.assertEqual(config.read_text(), user)
+            self.assertTrue(marker.exists())
+
     def test_startup_creates_config_and_preserves_permissions(self):
         with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", HOME=home):
             hook["main"]()
