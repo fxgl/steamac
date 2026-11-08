@@ -6,13 +6,34 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v1")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v2")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
+        let launcher = """
+        #!/bin/bash
+        set -euo pipefail
+        root="$HOME/.local/share/Steam"
+        mkdir -p "$HOME/.steam"
+        for mapping in sdkarm64:linuxarm64 sdk64:linux64 sdk32:linux32 bin64:steamrt64 bin32:ubuntu12_32; do
+            name=${mapping%%:*}
+            target=${mapping#*:}
+            if [[ -e "$HOME/.steam/$name" && ! -L "$HOME/.steam/$name" ]]; then
+                echo "Refusing to replace existing $HOME/.steam/$name" >&2
+                exit 1
+            fi
+            ln -sfn "$root/$target" "$HOME/.steam/$name"
+        done
+        exec /usr/bin/steam-arm64 "$@"
+        """
         let hook = """
         #!/bin/sh
         set -eu
         mkdir -p /sysroot/etc/steamac/bin /sysroot/etc/environment.d /sysroot/etc/profile.d
-        printf '#!/bin/sh\\nexec /usr/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
+        printf '#!/bin/sh\\nexec /etc/steamac/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
+        cp /steamac-compat-launcher /sysroot/etc/steamac/bin/steam-arm64
+        chmod 755 /sysroot/etc/steamac/bin/steam-arm64
+        if [ -f /sysroot/etc/steamac-client ]; then
+            sed -i 's|exec /usr/bin/steam-arm64 |exec /etc/steamac/bin/steam-arm64 |' /sysroot/etc/steamac-client
+        fi
         chmod 755 /sysroot/etc/steamac/bin/steam
         printf 'PATH=/etc/steamac/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin\\n' > /sysroot/etc/environment.d/91-steamac-path.conf
         printf 'export PATH=/etc/steamac/bin:$PATH\\n' > /sysroot/etc/profile.d/steamac-path.sh
@@ -21,6 +42,7 @@ enum BazziteSetup {
         for name in ["var", "var/lib", "var/lib/dracut", "var/lib/dracut/hooks", "var/lib/dracut/hooks/pre-pivot"] {
             Cpio.append(&archive, name: name, mode: 0o040755, ino: 1, data: [])
         }
+        Cpio.append(&archive, name: "steamac-compat-launcher", mode: 0o100755, ino: 3, data: Array(launcher.utf8) + [10])
         Cpio.append(&archive, name: "var/lib/dracut/hooks/pre-pivot/91-steamac-compat.sh", mode: 0o100755, ino: 2, data: Array(hook.utf8) + [10])
         Cpio.append(&archive, name: "TRAILER!!!", mode: 0, ino: 0, data: [])
         let file = try FileHandle(forWritingTo: initrd)

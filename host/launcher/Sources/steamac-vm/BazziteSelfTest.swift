@@ -125,7 +125,8 @@ enum BazziteSelfTest {
             let files = try Cpio.parse(Array(first))
             let hook = files.first { $0.0.hasSuffix("91-steamac-compat.sh") }
             return try first == Data(contentsOf: target)
-                && String(decoding: hook?.1 ?? [], as: UTF8.self).contains("exec /usr/bin/steam-arm64")
+                && String(decoding: hook?.1 ?? [], as: UTF8.self).contains("exec /etc/steamac/bin/steam-arm64")
+                && files.contains { $0.0 == "steamac-compat-launcher" && String(decoding: $0.1, as: UTF8.self).contains("sdkarm64:linuxarm64") }
         }
         let asset = BazziteGuest.Asset(name: "disk.gz", sha256: String(repeating: "a", count: 64), bytes: 100)
         let guest = BazziteGuest(schema: 1, build: "test", sourceRevision: "test", diskBytes: 40 << 30,
