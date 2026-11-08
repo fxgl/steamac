@@ -87,8 +87,11 @@ background processing of Vulkan shaders）。
 每个 Steam 安装只处理一次（标记 `config/steamac-native-resolution`）。已有值和之后在 Steam
 中的选择均保留，即使 Steam 删除该键也不会重新应用默认值。已有的 1080p 上限需要重新启动
 gamescope 会话（重启虚拟机）才能解除；只重启 Steam 不够。全局游戏分辨率设置单独控制游戏，
-在那里选择 5120 × 2880 不会提高 Steam UI 分辨率。启用原生 UI 分辨率也可能提高游戏的默认
-分辨率和 GPU 开销；保留原有游戏默认分辨率的功能尚未实现。启动器每边最多 4094 像素的限制仍适用。
+在那里选择 5120 × 2880 不会提高 Steam UI 分辨率。为避免增加游戏默认 GPU 开销，每个账号缺失或为 `Default` 的全局游戏分辨率会一次性设为
+原有上限：1920 × 1080，16:10 为 1920 × 1200；较小显示器保留其首选模式。明确的全局设置
+（包括 `Native`）和单个游戏覆盖值不变。账号标记为
+`userdata/<account>/config/steamac-native-resolution`。新账号会在配置文件出现后的下一次 Steam
+启动时处理；之后的用户修改（包括删除该键）均保留。启动器每边最多 4094 像素的限制仍适用。
 
 虚拟机中 Steam 空闲屏保（游戏模式下 设置 → 显示 → 屏幕保护程序）默认关闭。数分钟无输入后，Steam 会把
 `Screensaver_uid<n>` 窗口放到正在运行的游戏前面，gamescope 把焦点移给它，之后的点击都进入 Steam，直到按

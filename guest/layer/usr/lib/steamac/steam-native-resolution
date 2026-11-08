@@ -3,7 +3,9 @@
 
 Steam otherwise requests a 1920x1080 Xwayland surface even when gamescope's
 output follows the launcher's Retina display. GameResolutionGlobal controls
-games, not this surface. This install-scoped setting deliberately lives directly
+games, not this surface. Before enabling native UI, seed each account's missing/Default
+game resolution with the former UI cap, once per account. Explicit global and
+per-game choices are untouched. This install-scoped UI setting lives directly
 under InstallConfigStore/Gamescope (not Software/Valve/Steam/Gamescope).
 Only supply a missing value, once per Steam installation. The marker prevents
 reapplying the default even if Steam later removes the key for a user choice.
@@ -11,10 +13,12 @@ A new gamescope session is required to lift an existing 1080p cap.
 """
 from pathlib import Path
 import runpy
+import re
 import sys
 
 # Share the byte-preserving VDF editor used by the other config.vdf startup hook.
 vdf = runpy.run_path(str(Path(__file__).with_name("steam-idle-screensaver")))
+GAME_KEY = ("UserLocalConfigStore", "Gamescope", "GameResolutionGlobal")
 KEY = ("InstallConfigStore", "Gamescope", "EnableSteamNativeExternalResolution")
 
 
@@ -25,8 +29,61 @@ def native_resolution(text):
     return vdf["vdf_add"](text, KEY, "1")
 
 
+def legacy_resolution(width, height):
+    """Match Steam's former external-UI cap; never enlarge a small display."""
+    cap_height = 1200 if width * 10 == height * 16 else 1080
+    return (1920, cap_height) if width * height > 1920 * 1200 else (width, height)
+
+
+def preferred_mode():
+    for modes in sorted(Path("/sys/class/drm").glob("card*-*/modes")):
+        lines = modes.read_text().splitlines()
+        if lines and (match := re.fullmatch(r"([0-9]+)x([0-9]+)", lines[0])):
+            width, height = map(int, match.groups())
+            if width > 0 and height > 0:
+                return width, height
+    raise ValueError("no preferred DRM display mode; retry next Steam start")
+
+
+def game_resolution(text, size):
+    values, _ = vdf["vdf_entries"](text)
+    key = tuple(part.lower() for part in GAME_KEY)
+    current = values.get(key)
+    if current and current[0].lower() not in ("", "default"):
+        return text
+    value = f"{size[0]}x{size[1]}"
+    if current:
+        _, start, end = current
+        return text[:start] + vdf["vdf_quote"](value) + text[end:]
+    return vdf["vdf_add"](text, GAME_KEY, value)
+
+
+def preserve_game_defaults(steamroot):
+    # Account files appear after first sign-in. Retry on later starts for new
+    # accounts, but never reapply to an account whose marker already exists.
+    for config in sorted((steamroot / "userdata").glob("*/config/localconfig.vdf")):
+        if not config.parent.parent.name.isdecimal():
+            continue
+        marker = config.parent / "steamac-native-resolution"
+        if marker.exists():
+            continue
+        text = config.read_text()
+        values, _ = vdf["vdf_entries"](text)
+        current = values.get(tuple(part.lower() for part in GAME_KEY))
+        if not current or current[0].lower() in ("", "default"):
+            changed = game_resolution(text, legacy_resolution(*preferred_mode()))
+            if changed != text:
+                vdf["atomic_write"](config, changed)
+                print("steam-native-resolution: preserve legacy game default in " + str(config), file=sys.stderr)
+        vdf["atomic_write"](marker, "1\n")
+
+
 def main():
-    config = Path.home() / ".local/share/Steam/config/config.vdf"
+    steamroot = Path.home() / ".local/share/Steam"
+    # Prepare game defaults before enabling the native UI. Do not bypass this
+    # step when the install marker exists: accounts can be added afterwards.
+    preserve_game_defaults(steamroot)
+    config = steamroot / "config/config.vdf"
     marker = config.parent / "steamac-native-resolution"
     if marker.exists():
         return
@@ -35,7 +92,6 @@ def main():
     if changed != text:
         vdf["atomic_write"](config, changed)
         print("steam-native-resolution: default Steam UI to native display resolution", file=sys.stderr)
-
     vdf["atomic_write"](marker, "1\n")
 
 
@@ -43,4 +99,4 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError) as error:
-        print("steam-native-resolution: leaving config.vdf: " + str(error), file=sys.stderr)
+        print("steam-native-resolution: leaving remaining settings unchanged: " + str(error), file=sys.stderr)

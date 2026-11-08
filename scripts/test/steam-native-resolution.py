@@ -12,6 +12,38 @@ KEY = tuple(part.lower() for part in hook["KEY"])
 
 
 class NativeResolutionTests(unittest.TestCase):
+    def test_legacy_cap_matches_steam(self):
+        for mode, expected in [((3840, 2160), (1920, 1080)), ((2560, 1600), (1920, 1200)),
+                               ((3440, 1440), (1920, 1080)), ((1280, 800), (1280, 800)),
+                               ((1920, 1200), (1920, 1200)), ((1920, 1080), (1920, 1080))]:
+            self.assertEqual(hook["legacy_resolution"](*mode), expected)
+
+    def test_game_default_only_and_per_game_values_untouched(self):
+        for value in (None, "", "Default", "Native", "1280x720", "5120x2880"):
+            entry = '' if value is None else '"GameResolutionGlobal" "' + value + '"'
+            text = '"UserLocalConfigStore" { "Gamescope" { ' + entry + ' } "Apps" { "1172620" { "ResolutionOverride" "Native" } } }'
+            changed = hook["game_resolution"](text, (1920, 1080))
+            values, _ = hook["vdf"]["vdf_entries"](changed)
+            key = tuple(part.lower() for part in hook["GAME_KEY"])
+            self.assertEqual(values[key][0], "1920x1080" if value in (None, "", "Default") else value)
+            self.assertIn('"ResolutionOverride" "Native"', changed)
+
+    def test_accounts_added_after_install_and_later_choices(self):
+        with tempfile.TemporaryDirectory() as home, patch.dict("os.environ", HOME=home):
+            hook["main"]()
+            root = Path(home) / ".local/share/Steam"
+            config = root / "userdata/123/config/localconfig.vdf"
+            config.parent.mkdir(parents=True)
+            original = '"UserLocalConfigStore" { "Gamescope" { "GameResolutionGlobal" "Default" } }'
+            config.write_text(original)
+            with patch.dict(hook["preserve_game_defaults"].__globals__, preferred_mode=lambda: (3840, 2160)):
+                hook["main"]()
+                self.assertIn('"1920x1080"', config.read_text())
+                config.write_text(original)
+                hook["main"]()
+                self.assertEqual(config.read_text(), original)
+                self.assertTrue((config.parent / "steamac-native-resolution").exists())
+
     def test_fresh_install_uses_install_root(self):
         text = hook["native_resolution"]('"InstallConfigStore" {}')
         values, _ = hook["vdf"]["vdf_entries"](text)

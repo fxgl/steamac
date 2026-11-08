@@ -90,8 +90,12 @@ once per Steam installation (marker `config/steamac-native-resolution`). Existin
 later choices in Steam are preserved, even if Steam removes the key. An existing 1080p cap
 requires a new gamescope session (restart the VM); restarting Steam alone is not enough.
 The global game resolution setting controls games separately; choosing 5120 × 2880 there does
-not raise the Steam UI resolution. Enabling native UI resolution can also raise games' default
-resolution and GPU cost; preserving the previous game defaults is not implemented yet. The
+not raise the Steam UI resolution. To avoid raising games' default GPU cost, each account's missing/`Default` global game
+resolution is initialized once to the former UI cap (1920 × 1080, or 1920 × 1200 for 16:10;
+smaller displays keep their preferred mode). Explicit global choices, including `Native`, and
+per-game overrides are preserved. The account marker is `userdata/<account>/config/steamac-native-resolution`;
+new accounts are handled on the next Steam start after their config appears. Later user changes
+are not reapplied, including when the key is removed. The
 launcher's existing 4094-pixel maximum display side still applies.
 
 Steam's idle screensaver (Settings → Display → Screensaver in Game Mode) is off in the VM. After a
