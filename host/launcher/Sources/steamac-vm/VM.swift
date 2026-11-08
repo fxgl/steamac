@@ -120,6 +120,7 @@ final class VM {
             // remain hidden, so use wmtr's separate presenter for Bazzite.
             if BazziteGuest.exists(o.disks.first?.path ?? "") {
                 unsetenv("WMTR_PRESENT")
+                setenv("WMTR_PRESENT_TRACE", "1", 1)
                 log("gpu: Bazzite DXMT uses a separate Metal window (native desktop focus)")
             } else {
                 setenv("WMTR_PRESENT", "overlay", 1)
