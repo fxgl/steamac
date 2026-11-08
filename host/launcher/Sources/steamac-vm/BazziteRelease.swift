@@ -15,7 +15,7 @@ struct BazziteRelease: Decodable, Identifiable, Hashable {
     var title: String { name.flatMap { $0.isEmpty ? nil : $0 } ?? tag_name }
     var manifestURL: URL? { assets.first { $0.name == "bazzite-steamac.json" }?.browser_download_url }
     static let repository = "Naozumi520/bazzite"
-    static let api = URL(string: "https://api.github.com/repos/\(repository)/releases")!
+    static let api = URL(string: "https://api.github.com/repos/\(repository)/releases?per_page=30")!
 
     static func validateAssetURL(_ url: URL) throws {
         guard url.scheme == "https", url.host == "github.com", url.user == nil,

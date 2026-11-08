@@ -6,6 +6,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 upstream_app=${STEAMAC_BASE_APP:-/Applications/FX Steam Launcher.app}
+base_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$upstream_app/Contents/Info.plist")
+[[ "$base_version" == 1.9.13 ]] || { echo 'Use FX Steam Launcher 1.9.13 resources (STEAMAC_BASE_APP); older GPU libraries do not match the guest backports.' >&2; exit 1; }
 sdk=${STEAMAC_KRUN_INCLUDE:-$root/work/build/launcher-sdk/include}
 out="$root/work/out"
 app="$out/Steamac Bazzite.app"

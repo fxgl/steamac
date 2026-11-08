@@ -27,7 +27,8 @@ final class BazziteDiskCreator {
         try checkCancel()
         let semaphore = DispatchSemaphore(value: 0)
         var result: Swift.Result<Data, Error> = .failure(OptionError("No GitHub response"))
-        var request = URLRequest(url: url, timeoutInterval: 60)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("steamac-bazzite", forHTTPHeaderField: "User-Agent")
         let t = URLSession.shared.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }

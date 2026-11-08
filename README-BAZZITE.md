@@ -29,7 +29,8 @@ refresh/rollback path is implemented.
 Use the patched libkrun v1.19.6 headers from this tree's `host/libkrun` build.
 `host/launcher/build-bazzite-app.sh` builds Swift from this checkout and assembles
 `work/out/Steamac Bazzite.app` using the matched libraries/resources from an
-installed FX Steam Launcher (override `STEAMAC_BASE_APP`). Set
+FX Steam Launcher 1.9.13 app (set `STEAMAC_BASE_APP` to its path).
+Older host GPU libraries do not match the integrated guest backports. Set
 `STEAMAC_KRUN_INCLUDE` to your header directory. It leaves the installed app
 untouched. All existing third-party notices are carried into the resulting app.
 The app is ad-hoc signed for local use; it is not Developer ID notarized.
