@@ -549,6 +549,13 @@ struct Options {
             if let disk = o.disks.first?.path, BazziteGuest.exists(disk) {
                 let guest = try BazziteGuest.load(disk)
                 guest.apply(&o, diskPath: disk)
+                if o.disks.count == 1, let resources = Bundle.main.resourcePath {
+                    let payload = resources + "/steamac-layer.img"
+                    guard FileManager.default.fileExists(atPath: payload) else {
+                        throw OptionError("Bazzite DXMT payload is missing: \(payload)")
+                    }
+                    o.disks.append(DiskSpec(path: payload, readOnly: true))
+                }
                 if !o.explicit.contains("--initrd") {
                     try BazziteSetup.installSteamCompatibility(initrd: URL(fileURLWithPath: o.initrd!))
                 }
