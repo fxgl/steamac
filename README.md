@@ -617,7 +617,7 @@ does not say which HID device a controller is: with several DualSenses connected
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
 **Generic HID joysticks and gamepads.** **Automatic** also passes Generic Desktop (usage page 1)
-Joystick (4) and Game Pad (5) devices unsupported by GameController
+Joystick (4) and Game Pad (5) devices not published by GameController
 through as themselves: for example DJI FPV Remote Controller 2 (`2ca3:1020`) and Spektrum SLT6
 (`35cf:04fb`). The existing raw-HID/uhid path preserves the descriptor, IDs and reports; the
 guest's `hid-generic`, SDL and Steam handle layout and calibration. This is not Xbox emulation:
@@ -634,10 +634,18 @@ sticky and are not displaced. Generic devices cannot reserve a player on an olde
 choose an explicit **Appears in SteamOS as** kind to stop generic discovery and passthrough.
 `pad state` lists each generic controller's name, VID/PID, registry ID and reserved player.
 
-To avoid duplicate input, the launcher asks the public `GCController.supportsHIDDevice` API
-before opening a generic device (cached per HID registry ID), rather than guessing from names,
-VID/PID or the timing of GameController connection notifications. DualSense and Valve devices
-keep their existing routes. Discovery uses an independent-devices IOHIDManager: matching does
+To avoid duplicate input, a generic HID is GameController-owned only when
+`GCController.supportsHIDDevice` is true (cached per HID registry ID) **and** a published
+`GCController.controllers()` entry has a `vendorName` or `productCategory` exactly matching
+the HID product, manufacturer, or “manufacturer product”, ignoring case and collapsing whitespace.
+There is no public controller-to-HID link; this is a name match, not a VID/PID guess.
+Supported devices wait unopened for **2 seconds** after discovery for asynchronous publication;
+without a matching controller they then pass through as generic HID, including the DJI C5
+even when macOS advertises support. A later matching GC connection releases the generic route
+before player assignment; disconnecting it re-offers the HID device. Each hold, acceptance or
+GC-owned skip/release is logged once per transition with VID:PID and product.
+DualSense and Valve devices keep their existing routes.
+Discovery uses an independent-devices IOHIDManager: matching does
 not open unrelated devices or request Input Monitoring. Ordinary joystick/gamepad collections
 do not need that permission; a connected composite controller with keyboard/mouse/trackpad collections
 may need it, and only opening an accepted controller can request it. Apple marks those collections

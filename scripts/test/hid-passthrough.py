@@ -37,6 +37,8 @@ if "GenericHIDRouting" in production:
     flags += ["-D", "HAS_GENERIC_HID"]
 if "func diagnosticLines()" in production:
     flags += ["-D", "HAS_HID_DIAGNOSTICS"]
+if "func gameControllersChanged()" in production:
+    flags += ["-D", "HAS_GAMECONTROLLER_OWNERSHIP"]
 if "var needsInputMonitoring" in production:
     flags += ["-D", "HAS_INPUT_MONITORING_WARNING"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:

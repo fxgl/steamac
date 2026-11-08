@@ -392,7 +392,7 @@ private final class PadSlot {
         if let remote { return (.pad(remote.kind), "Moonlight controller \(remote.number + 1)") }
         let type = typeOverride ?? settings.padType
         // A Steam Controller goes through in Automatic / Steam Controller; a generic HID that
-        // GameController does not support goes through in Automatic only. Puck slots follow an
+        // GameController does not publish goes through in Automatic only. Puck slots follow an
         // unambiguous GameController player; BLE and generic devices reserve free players.
         if hidCapable, let d = rawControllerDevice(),
            type == .auto || (type == .steamController && !d.generic) {
@@ -615,8 +615,35 @@ enum GenericHIDRouting {
         automatic && virtualPad
     }
 
-    static func accepts(usagePage: Int, usage: Int, knownController: Bool, gameControllerSupported: Bool) -> Bool {
-        usagePage == 1 && usages.contains(usage) && !knownController && !gameControllerSupported
+    static func accepts(usagePage: Int, usage: Int, knownController: Bool) -> Bool {
+        usagePage == 1 && usages.contains(usage) && !knownController
+    }
+
+    static let publicationGrace: TimeInterval = 2
+    enum Ownership: Equatable { case held, generic, gameController }
+
+    /// There is no public GCController -> IOHIDDevice link. Require advertised HID support
+    /// AND an actually published controller with an exact, case/whitespace-normalized name:
+    /// vendorName or productCategory equals product, manufacturer, or "manufacturer product".
+    /// Do not use substrings or VID-only guesses (unrelated controllers can coexist).
+    static func matchesController(product: String?, manufacturer: String?, vendorName: String?, productCategory: String) -> Bool {
+        func normalized(_ value: String?) -> String {
+            (value ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+        }
+        let product = normalized(product), manufacturer = normalized(manufacturer)
+        let names = [product, manufacturer, [manufacturer, product].filter { !$0.isEmpty }.joined(separator: " ")]
+        return [normalized(vendorName), normalized(productCategory)].contains { name in
+            !name.isEmpty && names.contains(name)
+        }
+    }
+
+    /// GameController publishes asynchronously. Hold supported devices without opening them
+    /// for two seconds, then permit generic HID unless a matching controller really exists.
+    /// The same decision applies on later GC connect/disconnect (including after acceptance).
+    static func ownership(supported: Bool, matchingController: Bool, elapsed: TimeInterval) -> Ownership {
+        guard supported else { return .generic }
+        if matchingController { return .gameController }
+        return elapsed < publicationGrace ? .held : .generic
     }
 
     static func reportID(numbered: Bool, firstByte: UInt8) -> UInt8 {
@@ -635,8 +662,8 @@ enum GenericHIDRouting {
             checks += 1
             if !ok { failures.append("Generic HID routing: \(name)") }
         }
-        func accepts(_ page: Int, _ usage: Int, known: Bool = false, supported: Bool = false) -> Bool {
-            Self.accepts(usagePage: page, usage: usage, knownController: known, gameControllerSupported: supported)
+        func accepts(_ page: Int, _ usage: Int, known: Bool = false) -> Bool {
+            Self.accepts(usagePage: page, usage: usage, knownController: known)
         }
         check(accepts(1, 5), "DJI / Spektrum gamepad")
         check(accepts(1, 4), "joystick")
@@ -645,7 +672,24 @@ enum GenericHIDRouting {
         check(!accepts(0x0d, 5), "not digitizer/trackpad")
         check(!accepts(0xff00, 5), "not vendor-defined/internal collection")
         check(!accepts(1, 5, known: true), "DualSense/Valve use their existing path")
-        check(!accepts(1, 5, supported: true), "GameController support excludes raw duplicate before GC enumeration")
+        check(ownership(supported: true, matchingController: false, elapsed: 0) == .held, "supported HID waits for publication")
+        check(ownership(supported: true, matchingController: false, elapsed: 1.999) == .held, "full publication grace")
+        check(ownership(supported: true, matchingController: false, elapsed: 2) == .generic, "support alone does not claim HID")
+        check(ownership(supported: true, matchingController: true, elapsed: 1) == .gameController, "publication during grace claims HID")
+        check(ownership(supported: true, matchingController: true, elapsed: 3) == .gameController, "late publication claims HID")
+        check(ownership(supported: true, matchingController: false, elapsed: 3) == .generic, "GC disappearance re-offers HID")
+        check(ownership(supported: false, matchingController: true, elapsed: 0) == .generic, "name alone never claims unsupported HID")
+        func matches(_ vendor: String?, _ category: String = "", product: String? = "C5", manufacturer: String? = "DJI") -> Bool {
+            matchesController(product: product, manufacturer: manufacturer, vendorName: vendor, productCategory: category)
+        }
+        check(matches(" c5\n"), "product match ignores case and surrounding whitespace")
+        check(matches(" dJi "), "manufacturer matches vendorName")
+        check(matches(" DJI \n C5 "), "combined name collapses internal whitespace")
+        check(matches(nil, " c5 "), "productCategory can identify a published controller")
+        check(!matches("C50"), "no product substring match")
+        check(!matches("DJI Other"), "manufacturer prefix alone does not match")
+        check(!matches(nil, "", product: nil, manufacturer: " \n"), "missing/blank names do not match")
+        check(!matches("Xbox Wireless Controller", "Xbox One"), "unrelated published controller does not claim DJI")
         check(enabled(automatic: true, virtualPad: true), "Automatic permits generic HID")
         check(!enabled(automatic: true, virtualPad: false), "Virtual controller off excludes generic matching")
         check(!enabled(automatic: false, virtualPad: true), "explicit pad kinds exclude generic matching")
@@ -897,10 +941,12 @@ final class GamepadBridge {
         let nc = NotificationCenter.default
         observers.append(nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
             if let c = n.object as? GCController { log("gamepad connected: \(c.vendorName ?? "?") (\(c.productCategory))") }
+            self?.hid.gameControllersChanged()
             self?.assignControllers()
         })
         observers.append(nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] n in
             if let c = n.object as? GCController { log("gamepad disconnected: \(c.vendorName ?? "?")") }
+            self?.hid.gameControllersChanged()
             self?.assignControllers()
         })
         observers.append(nc.addObserver(forName: .GCControllerDidBecomeCurrent, object: nil, queue: .main) { [weak self] _ in

@@ -3,7 +3,7 @@ import IOKit.hid
 import GameController
 
 /// Raw HID controllers passed through to the guest as uhid devices (GamepadBridge, `hid-create`
-/// on fx.pad): DualSense, Steam Controller, and generic joysticks/gamepads not supported by
+/// on fx.pad): DualSense, Steam Controller, and generic joysticks/gamepads not published by
 /// GameController. The guest gets their own descriptors and reports, including output reports.
 ///
 /// GameController keeps the device too (it still picks the controller and wakes a sleeping
@@ -56,7 +56,7 @@ final class HIDPassthrough {
         let registryID: UInt64
         let identity: Identity
         let maxInput: Int
-        /// Generic Desktop controller not supported by GameController (not a DualSense/Valve).
+        /// Generic Desktop controller not owned by a published GCController (not DualSense/Valve).
         let generic: Bool
         let maxFeature: Int
         /// Report IDs apply device-wide, including requests for undeclared report types.
@@ -134,6 +134,11 @@ final class HIDPassthrough {
             waitingForPermission = false
         }
         guard let m = manager else { return }
+        if !matchGenericControllers {
+            genericDevices.removeAll()
+            genericTimer?.invalidate()
+            genericTimer = nil
+        }
         IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
         let excluded = devices.filter {
             $0.generic ? !matchGenericControllers : (HIDPassthrough.isSteamController($0) && !matchSteamControllers)
@@ -160,8 +165,23 @@ final class HIDPassthrough {
             [kIOHIDDeviceUsagePageKey: 1, kIOHIDDeviceUsageKey: $0] as CFDictionary
         } : [])
     }
-    /// supportsHIDDevice is expensive; a registry entry's support does not change on re-match.
-    private var gameControllerSupport: [UInt64: Bool] = [:]
+    /// Keep unopened candidates too: GC publication/removal must re-evaluate the same HID
+    /// registry entry, without re-matching or opening a device just to discover ownership.
+    private final class GenericDevice {
+        let ref: IOHIDDevice
+        let result: IOReturn
+        let appeared = ProcessInfo.processInfo.systemUptime
+        /// supportsHIDDevice is expensive and stable for one HID registry entry.
+        let supported: Bool
+        var ownership: GenericHIDRouting.Ownership?
+        init(_ ref: IOHIDDevice, result: IOReturn) {
+            self.ref = ref
+            self.result = result
+            supported = GCController.supportsHIDDevice(ref)
+        }
+    }
+    private var genericDevices: [UInt64: GenericDevice] = [:]
+    private var genericTimer: Timer?
     /// Devices came or went.
     var onChange: (() -> Void)?
     /// Settings > Controller shows a warning while Input Monitoring is still required for a
@@ -185,6 +205,12 @@ final class HIDPassthrough {
         IOHIDManagerRegisterDeviceMatchingCallback(m, { ctx, result, _, device in
             guard let ctx else { return }
             Unmanaged<HIDPassthrough>.fromOpaque(ctx).takeUnretainedValue().added(device, result: result)
+        }, ctx)
+        // Pending/GC-owned devices are not opened or scheduled. The manager watches their
+        // removal; active devices also keep their device-level callback (see `watch`).
+        IOHIDManagerRegisterDeviceRemovalCallback(m, { ctx, _, _, device in
+            guard let ctx else { return }
+            Unmanaged<HIDPassthrough>.fromOpaque(ctx).takeUnretainedValue().removed(device)
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -244,6 +270,9 @@ final class HIDPassthrough {
     /// Close the current manager and start a fresh one, so its devices open now after an Input
     /// Monitoring grant. The matching callback re-finds the devices.
     private func restart() {
+        genericTimer?.invalidate()
+        genericTimer = nil
+        genericDevices.removeAll()
         devices.removeAll()
         stopPuckTimer()
         if let m = manager {
@@ -267,17 +296,24 @@ final class HIDPassthrough {
         let generic = !HIDPassthrough.isKnownController(ref)
         if generic {
             guard matchGenericControllers else { return }
-            let supported: Bool
-            if let cached = gameControllerSupport[id] { supported = cached }
-            else {
-                supported = GCController.supportsHIDDevice(ref)
-                gameControllerSupport[id] = supported
-            }
             guard GenericHIDRouting.usages.contains(where: {
-                IOHIDDeviceConformsTo(ref, 1, UInt32($0)) && GenericHIDRouting.accepts(
-                    usagePage: 1, usage: $0, knownController: false, gameControllerSupported: supported)
+                IOHIDDeviceConformsTo(ref, 1, UInt32($0)) &&
+                    GenericHIDRouting.accepts(usagePage: 1, usage: $0, knownController: false)
             }) else { return }
+            let candidate: GenericDevice
+            if let cached = genericDevices[id] { candidate = cached }
+            else {
+                candidate = GenericDevice(ref, result: result)
+                genericDevices[id] = candidate
+            }
+            evaluateGeneric(candidate, id: id, controllers: GCController.controllers())
+            scheduleGenericCheck()
+            return
         }
+        open(ref, id: id, result: result, generic: false)
+    }
+
+    private func open(_ ref: IOHIDDevice, id: UInt64, result: IOReturn, generic: Bool) {
         // Opening only accepted devices avoids requesting Input Monitoring for unrelated HID
         // devices. Ordinary gamepad/joystick collections do not require it; composite controllers
         // with keyboard/mouse collections can require it, just like a Steam Controller.
@@ -314,13 +350,79 @@ final class HIDPassthrough {
         onChange?()
     }
 
+    private func matchingController(_ ref: IOHIDDevice, controllers: [GCController]) -> Bool {
+        let product = IOHIDDeviceGetProperty(ref, kIOHIDProductKey as CFString) as? String
+        let manufacturer = IOHIDDeviceGetProperty(ref, kIOHIDManufacturerKey as CFString) as? String
+        return controllers.contains {
+            GenericHIDRouting.matchesController(product: product, manufacturer: manufacturer,
+                                                vendorName: $0.vendorName, productCategory: $0.productCategory)
+        }
+    }
+
+    private func evaluateGeneric(_ candidate: GenericDevice, id: UInt64, controllers: [GCController]) {
+        let ownership = GenericHIDRouting.ownership(supported: candidate.supported,
+            matchingController: candidate.supported && matchingController(candidate.ref, controllers: controllers),
+            elapsed: ProcessInfo.processInfo.systemUptime - candidate.appeared)
+        if ownership != candidate.ownership {
+            let ref = candidate.ref
+            let vendor = (IOHIDDeviceGetProperty(ref, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue ?? 0
+            let product = (IOHIDDeviceGetProperty(ref, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue ?? 0
+            let name = IOHIDDeviceGetProperty(ref, kIOHIDProductKey as CFString) as? String ?? "?"
+            let reason: String
+            switch ownership {
+            case .held: reason = "held for GameController publication (up to 2s; supportsHIDDevice=true)"
+            case .gameController: reason = "skipped/released: matching published GameController (supportsHIDDevice=true)"
+            case .generic:
+                reason = candidate.supported ? "accepted as generic: no matching published GameController after 2s"
+                    : "accepted as generic: supportsHIDDevice=false"
+            }
+            log(String(format: "hid passthrough: %04x:%04x", vendor, product) + " \(name): \(reason)")
+            candidate.ownership = ownership
+        }
+        if ownership == .generic {
+            if !devices.contains(where: { $0.registryID == id }) {
+                open(candidate.ref, id: id, result: candidate.result, generic: true)
+            }
+        } else if let i = devices.firstIndex(where: { $0.registryID == id }) {
+            // Stop raw reports before GamepadBridge can create the GC-backed guest pad.
+            let d = devices.remove(at: i)
+            d.onInput = nil
+            d.inputOwner = nil
+            onChange?()
+        }
+    }
+
+    /// Called before player assignment on both GC connect and disconnect notifications.
+    /// A late publication releases generic passthrough; disappearance re-offers the device.
+    func gameControllersChanged() {
+        let controllers = GCController.controllers()
+        for (id, candidate) in genericDevices {
+            evaluateGeneric(candidate, id: id, controllers: controllers)
+        }
+        scheduleGenericCheck()
+    }
+
+    private func scheduleGenericCheck() {
+        genericTimer?.invalidate()
+        genericTimer = nil
+        guard let deadline = genericDevices.values.filter({ $0.ownership == .held })
+            .map({ $0.appeared + GenericHIDRouting.publicationGrace }).min() else { return }
+        genericTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, deadline - ProcessInfo.processInfo.systemUptime),
+                                           repeats: false) { [weak self] _ in
+            self?.gameControllersChanged()
+        }
+    }
+
     private func removed(_ ref: IOHIDDevice) {
         // The device-level callback gives us the retained ref, even after a manager re-match.
         // Do not query the terminated service's registry ID: keeping a dead Device here would
         // route every reconnect to that controller (STEAMAC-84).
+        if let id = genericDevices.first(where: { $0.value.ref == ref })?.key {
+            genericDevices.removeValue(forKey: id)
+            scheduleGenericCheck()
+        }
         guard let i = devices.firstIndex(where: { $0.ref == ref }) else { return }
         let d = devices.remove(at: i)
-        gameControllerSupport.removeValue(forKey: d.registryID)
         if !devices.contains(where: { $0.puckSlot != nil }) { stopPuckTimer() }
         log("hid passthrough: \(d.identity.name) disconnected")
         onChange?()
@@ -424,9 +526,15 @@ final class HIDPassthrough {
             if devices.contains(where: { $0.registryID == id }) { route = "passed through (see forwarding state above)" }
             else if known { route = "known controller, not opened (see settings/open errors)" }
             else if !controller { route = "excluded usage" }
-            else if GCController.supportsHIDDevice(ref) { route = "GameController-supported (not opened as generic HID)" }
             else if !matchGenericControllers { route = "generic routing disabled" }
-            else { route = "eligible generic HID, not opened (see matching/open errors)" }
+            else if (id.flatMap { genericDevices[$0]?.supported } ?? GCController.supportsHIDDevice(ref)),
+                    matchingController(ref, controllers: GCController.controllers()) {
+                route = "GameController-owned (matching published controller)"
+            }
+            else if id.flatMap({ genericDevices[$0]?.ownership }) == .held {
+                route = "held for GameController publication (up to 2s, not opened)"
+            }
+            else { route = "eligible generic HID, no matching published GameController (see matching/open errors)" }
             var line = String(format: "HID inventory: %04x:%04x", int(kIOHIDVendorIDKey), int(kIOHIDProductIDKey))
                 + " \(string(kIOHIDProductKey)), transport=\(string(kIOHIDTransportKey)), registry=\(id.map(String.init) ?? "?")"
                 + ", primary=\(int(kIOHIDPrimaryUsagePageKey))/\(int(kIOHIDPrimaryUsageKey))"

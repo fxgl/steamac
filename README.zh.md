@@ -461,7 +461,7 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
-**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 不支持的 Generic Desktop
+**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 未发布的 Generic Desktop
 设备（usage page 1，Joystick 4、Game Pad 5）按其本身直通，
 例如 DJI FPV Remote Controller 2（`2ca3:1020`）和 Spektrum SLT6（`35cf:04fb`）。
 默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。
@@ -477,8 +477,15 @@ HID 的可用空位（玩家 2–4 需启用**更多控制器**）。空闲位�
 关闭**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
 即可停止通用 HID 的发现与直通。`pad state` 会列出名称、VID/PID、registry ID 和玩家位置。
 
-为避免重复输入，启动器在打开通用 HID 前调用公开的 `GCController.supportsHIDDevice`
-API（按 HID registry ID 缓存），而不是按名称、VID/PID 或 GameController 通知的先后顺序猜测。
+为避免重复输入，只有 `GCController.supportsHIDDevice` 为 true（按 HID registry ID 缓存），
+**且** `GCController.controllers()` 中确实存在已发布的控制器，其 `vendorName` 或
+`productCategory` 与 HID 的 product、manufacturer 或“manufacturer product”完全匹配时，
+才认为通用 HID 归 GameController 管理。匹配忽略大小写，并将连续空白归一为空格。
+公开 API 无法关联控制器与 HID，因此使用名称匹配，而非猜测 VID/PID。
+声明支持的设备在发现后等待 **2 秒**供异步发布，期间不打开设备；
+若仍无匹配的控制器，则按通用 HID 直通，包括 macOS 声称支持的 DJI C5。
+之后若出现匹配的 GC 控制器，会在分配玩家前释放通用 HID 路径；GC 断开时重新提供 HID。
+每次等待、接受或因 GC 跳过/释放的状态转换只记录一行日志，包含 VID:PID 和产品名称。
 DualSense 和 Valve 设备仍走原有路径。发现使用独立设备模式的 IOHIDManager：
 匹配本身不会打开无关设备或请求“输入监控”。普通操纵杆/手柄集合不需要此权限；
 带键盘/鼠标/触控板集合的已连接复合控制器可能需要，只有打开已选中的控制器时才可能请求。

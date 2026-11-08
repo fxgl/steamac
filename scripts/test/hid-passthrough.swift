@@ -11,13 +11,22 @@ private var services: [io_service_t: TestHIDDevice] = [:]
 private var nextService: io_service_t = 1
 private var permissionRequests = 0
 private var diagnosticInventory: [TestHIDDevice] = []
+private var loggedLines: [String] = []
 
 final class TestHIDElement: NSObject {
     let reportID: UInt32
     init(reportID: UInt32) { self.reportID = reportID }
 }
 
-enum GCController {
+final class GCController {
+    static var published: [GCController] = []
+    let vendorName: String?
+    let productCategory: String
+    init(vendorName: String?, productCategory: String = "Gamepad") {
+        self.vendorName = vendorName
+        self.productCategory = productCategory
+    }
+    static func controllers() -> [GCController] { published }
     static func supportsHIDDevice(_ device: IOHIDDevice) -> Bool {
         device.supportQueries += 1
         return device.gameControllerSupported
@@ -77,8 +86,7 @@ final class TestHIDDevice: NSObject {
 
     func emitRemoval() {
         live = false
-        guard scheduled else { return }
-        removalCallback?(removalContext, kIOReturnSuccess, nil)
+        if scheduled { removalCallback?(removalContext, kIOReturnSuccess, nil) }
         if let manager, manager.isOpen && manager.scheduled {
             manager.removalCallback?(manager.removalContext, kIOReturnSuccess, nil, self)
         }
@@ -114,7 +122,7 @@ final class TestHIDManager {
     }
 }
 
-func log(_ line: String) { print(line) }
+func log(_ line: String) { loggedLines.append(line); print(line) }
 let IOHIDManagerCreate: (CFAllocator?, IOOptionBits) -> IOHIDManager = { _, options in TestHIDManager(options: options) }
 func IOHIDManagerSetDeviceMatchingMultiple(_ manager: IOHIDManager, _ matching: CFArray?) {}
 func IOHIDManagerSetDeviceMatching(_ manager: IOHIDManager, _ matching: CFDictionary?) {}
@@ -366,10 +374,57 @@ extension HIDPassthrough {
         }
         let supported = generic(40)
         supported.gameControllerSupported = true
+        #if HAS_GAMECONTROLLER_OWNERSHIP
+        supported.properties[kIOHIDVendorIDKey] = 0x2ca3
+        supported.properties[kIOHIDProductIDKey] = 0x1020
+        supported.properties[kIOHIDProductKey] = "C5"
+        supported.properties[kIOHIDManufacturerKey] = "DJI"
+        #endif
         genericHID.manager!.emitMatch(supported)
         genericHID.manager!.emitMatch(supported)
+        #if HAS_GAMECONTROLLER_OWNERSHIP
+        check(genericHID.devices.isEmpty && supported.openCalls == 0 && supported.supportQueries == 1
+              && !supported.scheduled,
+              "advertised support without publication holds HID unopened; support cached on re-match")
+        let early = generic(44)
+        early.gameControllerSupported = true
+        early.properties[kIOHIDProductKey] = "Early Pad"
+        genericHID.manager!.emitMatch(early)
+        GCController.published = [GCController(vendorName: "Xbox Wireless Controller", productCategory: "Xbox One")]
+        genericHID.gameControllersChanged()
+        check(supported.openCalls == 0 && early.openCalls == 0,
+              "unrelated published controller does not end another HID's grace period")
+        let earlyController = GCController(vendorName: "  EARLY \n PAD ")
+        GCController.published.append(earlyController)
+        genericHID.gameControllersChanged()
+        check(early.openCalls == 0 && !early.scheduled && genericHID.genericDevices[early.id]?.ownership == .gameController,
+              "matching controller published within grace excludes generic HID without opening")
+        let removedPending = generic(45)
+        removedPending.gameControllerSupported = true
+        genericHID.manager!.emitMatch(removedPending)
+        removedPending.emitRemoval()
+        check(genericHID.genericDevices[removedPending.id] == nil && removedPending.openCalls == 0,
+              "manager removal forgets unopened pending HID without querying dead registry")
+
+        let specialHID = HIDPassthrough()
+        specialHID.matchSteamControllers = true
+        specialHID.matchGenericControllers = true
+        precondition(specialHID.start())
+        let specialSony = TestHIDDevice(id: 46)
+        let specialValve = TestHIDDevice(id: 47, bluetooth: true, valve: true)
+        specialSony.gameControllerSupported = true
+        specialValve.gameControllerSupported = true
+        specialHID.manager!.emitMatch(specialSony)
+        specialHID.manager!.emitMatch(specialValve)
+        specialHID.gameControllersChanged()
+        check(specialHID.devices.count == 2 && specialHID.devices.allSatisfy { !$0.generic }
+              && specialSony.openCalls == 1 && specialValve.openCalls == 1
+              && specialSony.supportQueries == 0 && specialValve.supportQueries == 0,
+              "DualSense and Valve retain immediate special routes despite advertised support and GC changes")
+        #else
         check(genericHID.devices.isEmpty && supported.openCalls == 0 && supported.supportQueries == 1,
               "GameController-supported gamepad is excluded before open; support is cached on re-match")
+        #endif
         let multiAxis = generic(41, usage: 8)
         genericHID.manager!.emitMatch(multiAxis)
         check(genericHID.devices.isEmpty && multiAxis.openCalls == 0,
@@ -405,6 +460,55 @@ extension HIDPassthrough {
             check(unnumbered.setRequests.last?.1 == 0 && unnumbered.setRequests.last?.2 == [0x81, 0x55],
                   "unnumbered output uses report ID zero without stripping payload")
         }
+        #if HAS_GAMECONTROLLER_OWNERSHIP
+        // Exercise the real production timer, not an artificial supportsHIDDevice override.
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: GenericHIDRouting.publicationGrace + 0.1))
+        check(genericHID.devices.contains { $0.ref === supported } && supported.openCalls == 1,
+              "advertised support with no matching published controller accepts HID after real grace timer")
+        check(early.openCalls == 0 && !genericHID.devices.contains { $0.ref === early },
+              "controller published during grace remains excluded after timer expiry")
+        check(removedPending.openCalls == 0, "removed pending device is not opened at grace expiry")
+        var lateInputs = 0
+        if let device = genericHID.devices.first(where: { $0.ref === supported }) {
+            genericHID.activate(device, owner: owner) { _ in lateInputs += 1 }
+        }
+        supported.emit([1, 0])
+        check(lateInputs == 1, "accepted supported HID forwards input before GC publication")
+        let lateController = GCController(vendorName: " dJi  C5 ")
+        GCController.published.append(lateController)
+        genericHID.gameControllersChanged()
+        supported.emit([1, 0])
+        check(!genericHID.devices.contains { $0.ref === supported } && !supported.isOpen
+              && !supported.scheduled && lateInputs == 1,
+              "late matching GC publication releases generic HID and stops duplicate input")
+        GCController.published.removeAll { $0 === lateController }
+        genericHID.gameControllersChanged()
+        check(genericHID.devices.contains { $0.ref === supported } && supported.openCalls == 2,
+              "GC disappearance re-offers the retained HID without a fresh match")
+        GCController.published.append(lateController)
+        genericHID.gameControllersChanged()
+        let decisionsBefore = loggedLines.filter { $0.contains("2ca3:1020 C5:") }.count
+        genericHID.gameControllersChanged()
+        genericHID.manager!.emitMatch(supported)
+        check(decisionsBefore == 5 && loggedLines.filter { $0.contains("2ca3:1020 C5:") }.count == decisionsBefore,
+              "one VID:PID/product ownership log per transition, no repeated GC/rematch spam")
+        early.emitRemoval()
+        check(genericHID.genericDevices[early.id] == nil && early.openCalls == 0,
+              "manager removal forgets GC-owned unopened device")
+        let publishedBeforeEmptyTest = GCController.published
+        GCController.published = []
+        let emptyGCHID = HIDPassthrough()
+        emptyGCHID.matchGenericControllers = true
+        precondition(emptyGCHID.start())
+        let unpublished = generic(48)
+        unpublished.gameControllerSupported = true
+        emptyGCHID.manager!.emitMatch(unpublished)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: GenericHIDRouting.publicationGrace + 0.1))
+        check(GCController.controllers().isEmpty && emptyGCHID.devices.first?.ref === unpublished
+              && unpublished.openCalls == 1,
+              "supportsHIDDevice=true with zero published controllers accepts HID after grace")
+        GCController.published = publishedBeforeEmptyTest
+        #endif
         #endif
         #if HAS_HID_DIAGNOSTICS
         let unseen = generic(50, usage: 8)
@@ -416,13 +520,19 @@ extension HIDPassthrough {
         let keyboard = generic(51, usage: 6)
         keyboard.properties[kIOHIDProductKey] = "Keyboard"
         diagnosticInventory = [unseen, keyboard, supported, numbered]
+        let supportedOpensBeforeCensus = supported.openCalls
         let census = genericHID.diagnosticLines().joined(separator: "\n")
         check(census.contains("35cf:04fb") && census.contains("Horizon SLT6")
               && census.contains("primary=1/8") && census.contains("excluded usage"),
               "inventory exposes controllers excluded by usage matching (STEAMAC-8V)")
+        #if HAS_GAMECONTROLLER_OWNERSHIP
+        check(census.contains("GameController-owned (matching published controller)"),
+              "inventory requires matching published controller, not advertised HID support")
+        #else
         check(census.contains("GameController-supported"), "inventory distinguishes GameController filtering")
+        #endif
         check(census.contains("passed through"), "inventory identifies active raw HID routes")
-        check(unseen.openCalls == 0 && keyboard.openCalls == 0 && supported.openCalls == 0
+        check(unseen.openCalls == 0 && keyboard.openCalls == 0 && supported.openCalls == supportedOpensBeforeCensus
               && !unseen.scheduled && !keyboard.scheduled && permissionRequests == requestsBefore + 1,
               "diagnostic census never opens or schedules excluded devices or requests access")
         check(keyboard.supportQueries == 0, "diagnostics do not probe GameController support for keyboards")
