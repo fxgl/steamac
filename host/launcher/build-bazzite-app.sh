@@ -9,7 +9,7 @@ upstream_app=${STEAMAC_BASE_APP:-/Applications/FX Steam Launcher.app}
 base_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$upstream_app/Contents/Info.plist")
 [[ "$base_version" == 1.9.13 ]] || { echo 'Use FX Steam Launcher 1.9.13 resources (STEAMAC_BASE_APP); older GPU libraries do not match the guest backports.' >&2; exit 1; }
 sdk=${STEAMAC_KRUN_INCLUDE:-$root/work/build/launcher-sdk/include}
-out="$root/work/out"
+out=${STEAMAC_APP_OUTPUT_DIR:-$root/work/out}
 app="$out/Steamac Bazzite.app"
 [[ -f "$sdk/libkrun.h" ]] || { echo 'Set STEAMAC_KRUN_INCLUDE to the patched libkrun v1.19.6 headers.' >&2; exit 1; }
 for resource in Image initramfs.cpio.gz steamac-layer.img gvproxy desync; do
