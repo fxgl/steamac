@@ -31,6 +31,7 @@ enum BazziteSetup {
         #!/bin/bash
         set -eu
         resize2fs /dev/vda3
+        # shellcheck disable=SC2016 -- the password hash must remain literal
         \(hash.isEmpty ? ":" : "printf '%s\\n' 'bazzite:\(hash)' | chpasswd -e")
         rm -f /etc/systemd/system/multi-user.target.wants/steamac-firstboot.service
         rm -f /etc/systemd/system/steamac-firstboot.service /etc/steamac-firstboot
@@ -40,7 +41,8 @@ enum BazziteSetup {
         set -eu
         branch=steamdeck_stable
         flags=(-steamos -steamdeck -tenfoot -nobreakpad)
-        for word in $(cat /proc/cmdline); do
+        read -r -a words < /proc/cmdline
+        for word in "${words[@]}"; do
             case "$word" in
                 steamac.steam_client=deckbeta) branch=steamdeck_publicbeta ;;
                 steamac.steam_client=frame) branch=; flags=(-deckard -vrgamepadui -nobreakpad) ;;
