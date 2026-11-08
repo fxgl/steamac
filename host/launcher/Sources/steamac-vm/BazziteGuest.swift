@@ -57,8 +57,11 @@ struct BazziteGuest: Codable {
         if !o.explicit.contains("--kernel") { o.kernel = dir + "/" + kernel.name }
         if !o.explicit.contains("--initrd") { o.initrd = dir + "/" + initrd.name }
         if !o.explicit.contains("--cmdline") { o.cmdline = commandLine }
-        // Fedora cannot use the SteamOS-only DXMT /usr layer.
-        o.wmtrLibrary = nil
+        // Bazzite ARM64 is built for the host wmtr/DXMT path. Keep the bundled
+        // executor enabled; silently falling back to Vulkan hides D3D11 failures.
+        if !o.explicit.contains("--wmtr-lib") && !o.explicit.contains("--no-wmtr") {
+            o.wmtrLibrary = LauncherSettings.Wmtr.path(for: "")
+        }
         if !o.explicit.contains("--mouse") { o.mouseMode = .tablet }
     }
 }

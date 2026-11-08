@@ -538,6 +538,9 @@ struct Options {
         }
         if !o.isSelftest, let lib = o.wmtrLibrary, let reason = LauncherSettings.Wmtr.unavailableReason(lib) {
             guard !o.explicit.contains("--wmtr-lib") else { throw OptionError("--wmtr-lib: \(reason)") }
+            if BazziteGuest.exists(o.disks.first?.path ?? "") {
+                throw OptionError("Bazzite requires DXMT, but the bundled wmtr executor is unavailable: \(reason)")
+            }
             log("gpu: wmtr: \(reason); the guest gets no wmtr context type")
             o.wmtrLibrary = nil
         }
