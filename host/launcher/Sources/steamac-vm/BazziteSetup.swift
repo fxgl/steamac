@@ -22,7 +22,7 @@ enum BazziteSetup {
             fi
             ln -sfn "$root/$target" "$HOME/.steam/$name"
         done
-        export STEAMAC_DXMT_DIR=/var/lib/steamac/dxmt
+        export STEAMAC_DXMT_DIR=/etc/steamac/dxmt
         /etc/steamac/bin/steam-gfx-path
         nohup /etc/steamac/bin/steam-gfx-path --watch > "$HOME/.local/share/steamac-dxmt.log" 2>&1 < /dev/null &
         # Rootfs provisioning must never gate native Steam startup.
@@ -38,8 +38,8 @@ enum BazziteSetup {
         printf '#!/bin/sh\\nexec /etc/steamac/bin/steam-arm64 "$@"\\n' > /sysroot/etc/steamac/bin/steam
         mkdir -p /run/steamac-dxmt-layer
         mount -t erofs -o ro /dev/vdb /run/steamac-dxmt-layer
-        mkdir -p /sysroot/var/lib/steamac
-        cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/var/lib/steamac/
+        mkdir -p /sysroot/etc/steamac/dxmt
+        cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/etc/steamac/
         cp /run/steamac-dxmt-layer/usr/lib/steamac/steam-gfx-path /sysroot/etc/steamac/bin/
         chmod 755 /sysroot/etc/steamac/bin/steam-gfx-path
         umount /run/steamac-dxmt-layer
