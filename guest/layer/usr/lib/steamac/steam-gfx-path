@@ -35,11 +35,34 @@ if [[ $mode == dxmt && ! -f $PAYLOAD/x86_64-unix/winemetal.so ]]; then
     log "no DXMT files in $PAYLOAD; using Vulkan"; mode=vulkan
 fi
 
-# Proton installs: Steam's (steamapps/common/Proton*) and custom ones (compatibilitytools.d).
+# Resolve each part independently: Proton 7 uses dist/lib64 and flat DXVK directories.
+wine_root() {
+    local w
+    for w in "$1/files/lib/wine" "$1/files/lib64/wine" "$1/dist/lib64/wine" "$1/dist/lib/wine"; do
+        [[ -d $w ]] && { printf '%s' "$w"; return 0; }
+    done
+    return 1
+}
+dll_dir() {
+    local w; w=$(wine_root "$1") || return 1
+    if [[ -d $w/$2/x86_64-windows ]]; then printf '%s' "$w/$2/x86_64-windows"
+    else printf '%s' "$w/$2"; fi
+}
+unix_dir() {
+    local w; w=$(wine_root "$1") || return 1
+    if [[ -d $w/x86_64-unix ]]; then printf '%s' "$w/x86_64-unix"
+    elif [[ -f $w/ntdll.so ]]; then printf '%s' "$w"
+    else return 1; fi
+}
+template_dir() {
+    local w; w=$(wine_root "$1") || return 1
+    printf '%s' "${w%/lib*/wine}/share/default_pfx/drive_c/windows/system32"
+}
 protons() {
-    local d
+    local d D
     for d in "$STEAM"/steamapps/common/Proton* "$STEAM"/compatibilitytools.d/*; do
-        [[ -d $d/files/lib/wine/dxvk/x86_64-windows || -d $d/dist/lib64/wine/dxvk/x86_64-windows ]] && printf '%s\n' "$d"
+        D=$(dll_dir "$d" dxvk) || continue
+        [[ -f $D/d3d11.dll ]] && printf '%s\n' "$d"
     done
 }
 prefixes() {
@@ -80,7 +103,8 @@ stock_keep() { # proton, dll name, file
     local S; S=$(stock_dir "$1")
     local v; v=$(vkey "$1")
     # no version file (nothing to key the copy to) or no x86-64 Wine (stays stock anyway): no copy
-    [[ -n $v && ( -d $1/files/lib/wine/x86_64-windows || -d $1/dist/lib64/wine/x86_64-windows ) ]] || return 0
+    local W; W=$(wine_root "$1") || return 0
+    [[ -n $v && -d $W/x86_64-windows ]] || return 0
     is_dxmt "$3" && return 0
     if [[ $(cat "$S/version" 2>/dev/null) != "$v" ]]; then
         rm -rf "$S"; mkdir -p "$S" && vkey "$1" > "$S/version" || return 0
@@ -97,17 +121,18 @@ original() { # proton, dll name
 
 apply_dxmt() {
     local p=$1 W B; B=$STATE/orig/$(key "$p")
-    if [[ -d $p/files/lib/wine ]]; then W=$p/files/lib/wine; else W=$p/dist/lib64/wine; fi
-    local D f d changed=0
+    W=$(wine_root "$p") || return 1
+    local D f d U changed=0
+    U=$(unix_dir "$p") || U=
     # a Proton without an x86-64 Wine (an ARM64 build) cannot load DXMT: leave it stock (undo an earlier
     # partial setup) instead of replacing files and failing halfway
-    if [[ ! -d $W/x86_64-unix || ! -d $W/x86_64-windows ]]; then
+    if [[ -z $U || ! -d $W/x86_64-windows ]]; then
         [[ -d $B ]] && restore "$p"
         return 0
     fi
     mkdir -p "$B"
     for d in $DLLS; do
-        f=${d#*/}; D=$W/${d%/*}/x86_64-windows
+        f=${d#*/}; D=$(dll_dir "$p" "${d%/*}")
         # optional parts: a Proton without the directory, or a payload without the file, leave it to Proton
         [[ -f $D/$f.dll ]] || continue
         if [[ ! -f $PAYLOAD/x86_64-windows/$f.dll ]]; then
@@ -146,12 +171,14 @@ apply_dxmt() {
         fi
     done
     install_file "$PAYLOAD/x86_64-windows/winemetal.dll" "$W/x86_64-windows/winemetal.dll" || return 1
-    install_file "$PAYLOAD/x86_64-unix/winemetal.so" "$W/x86_64-unix/winemetal.so" || return 1
+    install_file "$PAYLOAD/x86_64-unix/winemetal.so" "$U/winemetal.so" || return 1
     # Wine finds the winemetal builtin only through a system32 entry: like Proton's own builtins, the prefix
     # template gets a link to it, which Proton puts into every prefix it creates or updates
-    local T=$1/files/share/default_pfx/drive_c/windows/system32
-    [[ -d $1/dist ]] && T=$1/dist/share/default_pfx/drive_c/windows/system32
-    [[ -d $T && ! -L $T/winemetal.dll ]] && ln -sfn ../../../../../lib/wine/x86_64-windows/winemetal.dll "$T/winemetal.dll"
+    local T; T=$(template_dir "$p")
+    if [[ -d $T ]]; then
+        local rel=${W#"$p/"}; rel=${rel#*/}
+        ln -sfn "../../../../../$rel/x86_64-windows/winemetal.dll" "$T/winemetal.dll"
+    fi
     printf '%s\n' "$p" > "$B/path"
     vkey "$p" > "$B/version"
     touch "$W/$MARK"
@@ -167,10 +194,10 @@ dxmt_installed() { # payload file, installed file
 
 restore() {
     local p=$1 W B; B=$STATE/orig/$(key "$p")
-    if [[ -d $p/files/lib/wine ]]; then W=$p/files/lib/wine; else W=$p/dist/lib64/wine; fi
+    W=$(wine_root "$p") || return 1
     local D f d keep=0 broken=""
     for d in $DLLS; do
-        f=${d#*/}; D=$W/${d%/*}/x86_64-windows
+        f=${d#*/}; D=$(dll_dir "$p" "${d%/*}")
         [[ -f $D/$f.dll ]] || continue
         # a kept original must be Proton's: one that is DXMT's was kept by an older version of this script
         if [[ -f $B/$f.dll ]] && is_dxmt "$B/$f.dll"; then
@@ -192,8 +219,8 @@ restore() {
             broken+=" $f.dll"
         fi
     done
-    rm -f "$W/x86_64-windows/winemetal.dll" "$W/x86_64-unix/winemetal.so" "$W/$MARK" \
-        "$1/files/share/default_pfx/drive_c/windows/system32/winemetal.dll"
+    rm -f "$W/x86_64-windows/winemetal.dll" "$W/x86_64-unix/winemetal.so" "$W/winemetal.so" "$W/$MARK" \
+        "$(template_dir "$p")/winemetal.dll"
     (( keep )) || rm -rf "$B"
     if [[ -n $broken ]]; then
         log "WARNING: no original of${broken} kept for $p; DXMT's file stays and Direct3D 11 games on the Vulkan path will fail. Repair: in Steam, $(basename "$p") > Properties > Installed Files > Verify integrity of tool files"
@@ -205,13 +232,13 @@ restore() {
 # any DXMT file in a Proton's DXVK/vkd3d-proton set (also one another layer left without its mark)
 has_dxmt() { # proton
     local d f
-    for d in $DLLS; do f=$1/files/lib/wine/${d%/*}/x86_64-windows/${d#*/}.dll; [[ -f $f ]] && is_dxmt "$f" && return 0; done
+    for d in $DLLS; do f=$(dll_dir "$1" "${d%/*}")/${d#*/}.dll; [[ -f $f ]] && is_dxmt "$f" && return 0; done
     return 1
 }
 # a stock Proton on the Vulkan path: keep its files as the stock copy (cheap when already kept)
 stock_all() { # proton
     local d f
-    for d in $DLLS; do f=$1/files/lib/wine/${d%/*}/x86_64-windows/${d#*/}.dll; [[ -f $f ]] && stock_keep "$1" "${d#*/}" "$f"; done
+    for d in $DLLS; do f=$(dll_dir "$1" "${d%/*}")/${d#*/}.dll; [[ -f $f ]] && stock_keep "$1" "${d#*/}" "$f"; done
 }
 
 reconcile() {
@@ -237,14 +264,14 @@ reconcile() {
                 # a prefix this script marked holds Proton's set as Proton last copied it: DXMT's (of any payload)
                 if [[ -f $s/$f.dll && -n $src ]]; then
                     local o; o=$(original "$src" "$f")
-                    [[ -n $o ]] || o=$src/files/lib/wine/${d%/*}/x86_64-windows/$f.dll
+                    [[ -n $o ]] || o=$(dll_dir "$src" "${d%/*}")/$f.dll
                     # never DXMT's: Proton replaces the prefix's file at its next start
                     [[ -f $o ]] && ! is_dxmt "$o" && cp -f "$o" "$s/$f.dll"
                 fi
             done
         done < <(prefixes)
         while read -r p; do
-            if [[ -e $p/files/lib/wine/$MARK || -d $STATE/orig/$(key "$p") ]] || has_dxmt "$p"; then restore "$p"
+            if [[ -e $(wine_root "$p")/$MARK || -d $STATE/orig/$(key "$p") ]] || has_dxmt "$p"; then restore "$p"
             else stock_all "$p"; fi
         done < <(protons)
     fi
@@ -262,7 +289,7 @@ reconcile
 # too.
 command -v inotifywait >/dev/null || { log "no inotifywait; --watch disabled"; exit 0; }
 while :; do
-    mapfile -t dirs < <(protons | while read -r p; do if [[ -d $p/files/lib/wine ]]; then echo "$p/files/lib/wine/dxvk/x86_64-windows"; else echo "$p/dist/lib64/wine/dxvk/x86_64-windows"; fi; done)
+    mapfile -t dirs < <(protons | while read -r p; do dll_dir "$p" dxvk; printf '\n'; done)
     inotifywait -qq -t 600 -e close_write,moved_to,create,delete "$STEAM/steamapps" "$STEAM/steamapps/common" \
         "$STEAM/steamapps/compatdata" ${dirs[@]+"${dirs[@]}"} 2>/dev/null
     sleep 1
