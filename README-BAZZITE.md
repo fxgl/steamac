@@ -51,3 +51,24 @@ steamac-vm --selftest-bazzite
 The guest agent adds `FX_PROGRESS_DESKTOP_NATIVE=1` for a direct KWin desktop.
 The Fedora build of this agent is compiled from this fork, without copying
 Arch/SteamOS dynamic libraries.
+
+## Disk creation options
+
+Bazzite exposes build, total disk capacity (48–2048 GiB, default 64 GiB), location,
+optional `bazzite` password, and the shared Steam client selection. Its ext4 root
+holds both system and games. Creation grows the final Linux partition and both
+GPT tables; a per-disk initramfs hook installs a one-shot first-boot service to
+expand ext4 and apply the password hash before the desktop starts. The password
+is never stored as plaintext. The image remains sparse on APFS.
+
+The installed sidecar records the expanded disk size. The verified release
+initramfs is augmented locally with the setup archive; release hashes describe
+the original downloads. The guest's client wrapper reads the selected client
+on each boot. SteamOS-specific license acceptance and branch selection are
+replaced by the Bazzite build selector; Steam's own terms remain in its client.
+
+Validation of the new options: a 64 GiB disk booted, ext4 expanded online, and
+the chosen password matched the guest shadow hash. GPT tests cover Fedora's
+aligned usable range, invalid partition bounds and backup table relocation.
+Settings captures include all three new options. Graphics/gameplay limitations
+above remain unresolved.
