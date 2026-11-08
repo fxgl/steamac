@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v3")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v4")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash
@@ -22,7 +22,9 @@ enum BazziteSetup {
             fi
             ln -sfn "$root/$target" "$HOME/.steam/$name"
         done
-        /etc/steamac/bin/prepare-fex-rootfs
+        # Rootfs provisioning must never gate native Steam startup.
+        mkdir -p "$HOME/.local/share/steamac"
+        nohup /etc/steamac/bin/prepare-fex-rootfs > "$HOME/.local/share/steamac/rootfs-install.log" 2>&1 < /dev/null &
         export FEX_ROOTFS="$HOME/.local/share/steamac/fex-rootfs"
         exec /usr/bin/steam-arm64 "$@"
         """
