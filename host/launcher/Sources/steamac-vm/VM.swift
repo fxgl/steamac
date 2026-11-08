@@ -116,7 +116,14 @@ final class VM {
         if let lib = o.wmtrLibrary {
             setenv("STEAMAC_WMTR", "1", 1)
             setenv("STEAMAC_WMTR_LIB", lib, 1)
-            setenv("WMTR_PRESENT", "overlay", 1)
+            // Native Plasma does not report gamescope game focus. Its overlay would
+            // remain hidden, so use wmtr's separate presenter for Bazzite.
+            if BazziteGuest.exists(o.disks.first?.path ?? "") {
+                unsetenv("WMTR_PRESENT")
+                log("gpu: Bazzite DXMT uses a separate Metal window (native desktop focus)")
+            } else {
+                setenv("WMTR_PRESENT", "overlay", 1)
+            }
             log("gpu: wmtr context type offered (experimental), executor \(lib)")
         } else {
             unsetenv("STEAMAC_WMTR")
