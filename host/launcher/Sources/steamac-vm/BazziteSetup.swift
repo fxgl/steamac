@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v9")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v10")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash

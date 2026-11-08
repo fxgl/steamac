@@ -291,7 +291,13 @@ reconcile
 # Steam downloads (Proton 10.0, see steam-compat-default) appears in common/ before its files are there;
 # Steam rewrites its steamapps/appmanifest_<appid>.acf when the install finishes, so steamapps/ is watched
 # too.
-command -v inotifywait >/dev/null || { log "no inotifywait; --watch disabled"; exit 0; }
+if ! command -v inotifywait >/dev/null; then
+    log "no inotifywait; checking Proton installations every 5 seconds"
+    while :; do
+        sleep 5
+        reconcile
+    done
+fi
 while :; do
     mapfile -t dirs < <(protons | while read -r p; do dll_dir "$p" dxvk; printf '\n'; done)
     inotifywait -qq -t 600 -e close_write,moved_to,create,delete "$STEAM/steamapps" "$STEAM/steamapps/common" \
