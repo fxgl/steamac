@@ -114,6 +114,19 @@ enum BazziteSelfTest {
             return !script.contains("private-test-password") && script.contains("bazzite:$6$")
                 && script.contains("resize2fs /dev/vda3") && !hook.1.isEmpty
         }
+        check("existing guest Steam compatibility upgrade is idempotent") {
+            let folder = dir.appendingPathComponent("compat")
+            try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+            let target = folder.appendingPathComponent("initramfs")
+            try Data().write(to: target)
+            try BazziteSetup.installSteamCompatibility(initrd: target)
+            let first = try Data(contentsOf: target)
+            try BazziteSetup.installSteamCompatibility(initrd: target)
+            let files = try Cpio.parse(Array(first))
+            let hook = files.first { $0.0.hasSuffix("91-steamac-compat.sh") }
+            return try first == Data(contentsOf: target)
+                && String(decoding: hook?.1 ?? [], as: UTF8.self).contains("exec /usr/bin/steam-arm64")
+        }
         let asset = BazziteGuest.Asset(name: "disk.gz", sha256: String(repeating: "a", count: 64), bytes: 100)
         let guest = BazziteGuest(schema: 1, build: "test", sourceRevision: "test", diskBytes: 40 << 30,
                                 commandLine: "root=UUID=123 ostree=/ostree/test selinux=0", disk: asset,
