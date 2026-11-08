@@ -39,7 +39,7 @@ fi
 protons() {
     local d
     for d in "$STEAM"/steamapps/common/Proton* "$STEAM"/compatibilitytools.d/*; do
-        [[ -d $d/files/lib/wine/dxvk/x86_64-windows ]] && printf '%s\n' "$d"
+        [[ -d $d/files/lib/wine/dxvk/x86_64-windows || -d $d/dist/lib64/wine/dxvk/x86_64-windows ]] && printf '%s\n' "$d"
     done
 }
 prefixes() {
@@ -80,7 +80,7 @@ stock_keep() { # proton, dll name, file
     local S; S=$(stock_dir "$1")
     local v; v=$(vkey "$1")
     # no version file (nothing to key the copy to) or no x86-64 Wine (stays stock anyway): no copy
-    [[ -n $v && -d $1/files/lib/wine/x86_64-windows ]] || return 0
+    [[ -n $v && ( -d $1/files/lib/wine/x86_64-windows || -d $1/dist/lib64/wine/x86_64-windows ) ]] || return 0
     is_dxmt "$3" && return 0
     if [[ $(cat "$S/version" 2>/dev/null) != "$v" ]]; then
         rm -rf "$S"; mkdir -p "$S" && vkey "$1" > "$S/version" || return 0
@@ -96,7 +96,8 @@ original() { # proton, dll name
 }
 
 apply_dxmt() {
-    local p=$1 W=$1/files/lib/wine B; B=$STATE/orig/$(key "$p")
+    local p=$1 W B; B=$STATE/orig/$(key "$p")
+    if [[ -d $p/files/lib/wine ]]; then W=$p/files/lib/wine; else W=$p/dist/lib64/wine; fi
     local D f d changed=0
     # a Proton without an x86-64 Wine (an ARM64 build) cannot load DXMT: leave it stock (undo an earlier
     # partial setup) instead of replacing files and failing halfway
@@ -164,7 +165,8 @@ dxmt_installed() { # payload file, installed file
 }
 
 restore() {
-    local p=$1 W=$1/files/lib/wine B; B=$STATE/orig/$(key "$p")
+    local p=$1 W B; B=$STATE/orig/$(key "$p")
+    if [[ -d $p/files/lib/wine ]]; then W=$p/files/lib/wine; else W=$p/dist/lib64/wine; fi
     local D f d keep=0 broken=""
     for d in $DLLS; do
         f=${d#*/}; D=$W/${d%/*}/x86_64-windows
@@ -259,7 +261,7 @@ reconcile
 # too.
 command -v inotifywait >/dev/null || { log "no inotifywait; --watch disabled"; exit 0; }
 while :; do
-    mapfile -t dirs < <(protons | sed 's|$|/files/lib/wine/dxvk/x86_64-windows|')
+    mapfile -t dirs < <(protons | while read -r p; do if [[ -d $p/files/lib/wine ]]; then echo "$p/files/lib/wine/dxvk/x86_64-windows"; else echo "$p/dist/lib64/wine/dxvk/x86_64-windows"; fi; done)
     inotifywait -qq -t 600 -e close_write,moved_to,create,delete "$STEAM/steamapps" "$STEAM/steamapps/common" \
         "$STEAM/steamapps/compatdata" ${dirs[@]+"${dirs[@]}"} 2>/dev/null
     sleep 1
