@@ -503,6 +503,7 @@ do {
     progress.onFocus = { f in
         focusBeforeKeyboard?(f)
         keyboardLayouts.focused(f)
+        gamepad?.setGuestFocus(f)
     }
     keyboardLayouts.start()
     let streamCapture = StreamCapture(presenter: presenter, renderer: renderer, view: wc.view)

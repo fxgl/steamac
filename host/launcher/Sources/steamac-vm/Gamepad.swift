@@ -936,6 +936,11 @@ final class GamepadBridge {
         GCController.controllers().filter { $0.extendedGamepad != nil }
     }
 
+    /// Guest focus from `fx.progress`: Desktop Mode changes Puck-slot liveness (lizard reports).
+    func setGuestFocus(_ focus: GuestFocus) {
+        hid.desktopFocus = (focus == .desktop)
+    }
+
     func start() {
         GCController.shouldMonitorBackgroundEvents = true
         let nc = NotificationCenter.default

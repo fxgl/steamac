@@ -309,6 +309,19 @@ extension HIDPassthrough {
         hid.deactivate(slot, owner: secondOwner)
         puck.emit([0x42, 0])
         check(movedInputs == 1, "deactivating the current player stops forwarding")
+        check(HIDPassthrough.isLiveSteamController(slot), "state report 0x42 makes a Puck slot live")
+        let lizard = TestHIDDevice(id: 22, valve: true, puckSlot: 3)
+        hid.manager!.emitMatch(lizard)
+        let lizardSlot = hid.devices.last!
+        check(!HIDPassthrough.isLiveSteamController(lizardSlot), "Puck slot without state is not live")
+        lizard.emit([0x40, 0, 0, 0, 0, 0])
+        check(!HIDPassthrough.isLiveSteamController(lizardSlot),
+              "lizard report does not keep a Gaming Mode Puck slot alive")
+        hid.desktopFocus = true
+        lizard.emit([0x40, 0, 0, 0, 0, 0])
+        check(HIDPassthrough.isLiveSteamController(lizardSlot),
+              "Desktop Mode lizard report keeps the Puck slot alive")
+        hid.desktopFocus = false
         hid.stopPuckTimer()
         print("Original regressions: \(checks) checks, \(failures) failures")
 
