@@ -6,7 +6,7 @@ import Foundation
 enum BazziteSetup {
     /// Upgrade existing guests without touching their disk or account data.
     static func installSteamCompatibility(initrd: URL) throws {
-        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v7")
+        let receipt = initrd.deletingLastPathComponent().appendingPathComponent("steam-compat-v8")
         guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
         let launcher = """
         #!/bin/bash
@@ -40,7 +40,7 @@ enum BazziteSetup {
         mount -t erofs -o ro /dev/vdb /run/steamac-dxmt-layer
         mkdir -p /sysroot/etc/steamac/dxmt
         cp -a /run/steamac-dxmt-layer/usr/lib/steamac/dxmt /sysroot/etc/steamac/
-        cp /run/steamac-dxmt-layer/usr/lib/steamac/steam-gfx-path /sysroot/etc/steamac/bin/
+        cp /steamac-dxmt-routing /sysroot/etc/steamac/bin/steam-gfx-path
         chmod 755 /sysroot/etc/steamac/bin/steam-gfx-path
         umount /run/steamac-dxmt-layer
         cp /steamac-fex-rootfs /sysroot/etc/steamac/bin/prepare-fex-rootfs
@@ -58,6 +58,7 @@ enum BazziteSetup {
         for name in ["var", "var/lib", "var/lib/dracut", "var/lib/dracut/hooks", "var/lib/dracut/hooks/pre-pivot"] {
             Cpio.append(&archive, name: name, mode: 0o040755, ino: 1, data: [])
         }
+        Cpio.append(&archive, name: "steamac-dxmt-routing", mode: 0o100755, ino: 5, data: Array(DXMTGuestScript.routing.utf8))
         Cpio.append(&archive, name: "steamac-fex-rootfs", mode: 0o100755, ino: 4, data: Array(FEXRootFS.installer.utf8))
         Cpio.append(&archive, name: "steamac-compat-launcher", mode: 0o100755, ino: 3, data: Array(launcher.utf8) + [10])
         Cpio.append(&archive, name: "var/lib/dracut/hooks/pre-pivot/91-steamac-compat.sh", mode: 0o100755, ino: 2, data: Array(hook.utf8) + [10])
