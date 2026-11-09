@@ -32,7 +32,7 @@ enum CrashReporting {
     static let summary = String(localized: "Crash reports and rare errors go to the FX Steam Launcher developers (Sentry). No personal data.")
     static let whatIsSent = [
         String(localized: "Crash reports of the launcher and the VM process: crash reason, stack traces, loaded libraries."),
-        String(localized: "A few errors: guest GPU context lost, shader pipeline compile failures (with an excerpt of the failing Metal shader source), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."),
+        String(localized: "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."),
         String(localized: "The launcher's last ~200 log lines (launcher, MoltenVK, libkrun and virglrenderer messages; home folder paths shortened to ~) and the boot stages."),
         String(localized: "Versions and setup: app, macOS, libkrun/virglrenderer/MoltenVK builds, kernel, SteamOS build, Mac model, GPU, VM CPUs/RAM/display mode, game App IDs."),
         String(localized: "A random install ID (not linked to you) to count affected Macs."),
@@ -105,6 +105,7 @@ enum CrashReporting {
     /// Supervisor: run dir of the current boot (VM-process tags, user-exit marker).
     nonisolated(unsafe) private static var runDir: String?
     nonisolated(unsafe) private static var lineScanner = LineScanner()
+    nonisolated(unsafe) private static var failedShaderAttachments = FailedShaderAttachments()
     /// The open multi-line message a delayed report was scheduled for (LineScanner.pendingSerial).
     nonisolated(unsafe) private static var scheduledSerial: Int?
     /// Most recent event this process sent (Report a Problem associates its feedback with it).
@@ -676,7 +677,9 @@ enum CrashReporting {
         guard locked({ running }) else { return }
         // Supervisor: the VM process's Settings window may have turned reporting off meanwhile.
         if role == .launcher { guard settingAllows else { return } }
-        let fingerprint = kind.rawValue + "|" + key
+        // Excerpt-only reports from older releases must not suppress the new
+        // attachment-capable diagnostic for another 30 days; event grouping stays stable.
+        let fingerprint = kind.rawValue + "|" + key + (kind == .pipelineCompile ? "|shader-attachments" : "")
         let hasSource = kind == .pipelineCompile && LineScanner.hasShaderSource(extra)
         let allowed: Bool = locked {
             guard kindCounts[kind, default: 0] < kind.budget, reportedThisProcess.count < 12,
@@ -689,7 +692,7 @@ enum CrashReporting {
         event.message = SentryMessage(formatted: String(scrub(message).prefix(2000)))
         event.fingerprint = [kind.rawValue, String(key.prefix(200))]
         if !extra.isEmpty {
-            let limit = kind == .pipelineCompile ? LineScanner.mslLimit : 8000
+            let limit = kind == .pipelineCompile ? FailedShaderAttachments.extraLimit : 8000
             event.extra = extra.mapValues { String(scrub($0).prefix(limit)) }
         }
         if kind == .gpuContextFatal || kind == .vmKilled, let dir = role == .launcher ? runDir : Supervisor.runDir,
@@ -706,8 +709,10 @@ enum CrashReporting {
             t.merge(vm) { old, _ in old }
         }
         let scoped = t.mapValues { String(scrub($0).prefix(200)) }
+        let attachments = kind == .pipelineCompile ? locked { failedShaderAttachments.claim(extra: extra, scrub: scrub) } : []
         let id = SentrySDK.capture(event: event) { scope in
             scope.setTags(scoped)
+            for attachment in attachments { scope.addAttachment(attachment) }
             if kind == .installationIncomplete { scope.clearBreadcrumbs() }
         }.sentryIdString
         locked { lastEvent = id }
@@ -967,7 +972,7 @@ enum CrashReporting {
         var capped = LineScanner()
         let large = Array(pipelineLines.prefix(3))
             + ["[mvk-msl] // Pipeline failure MSL stage=0 entry=main"]
-            + (1...3000).map { "[mvk-msl] \($0): " + String(repeating: "v", count: 80) }
+            + (1...6000).map { "[mvk-msl] \($0): " + String(repeating: "v", count: 80) }
             + Array(pipelineLines.suffix(7))
         let bounded = large.flatMap { capped.feed($0) } + capped.flushPending()
         if bounded.first?.extra.values.contains(where: { $0.count > LineScanner.mslLimit }) != false
@@ -1037,6 +1042,62 @@ enum CrashReporting {
         if LineScanner.hasShaderSource(["msl_stage_4": "// Pipeline failure MSL stage=4"])
             || !LineScanner.hasShaderSource(source) {
             failures.append("scanner: source enrichment confused a stage header with shader source")
+        }
+        // STEAMAC-AD: fields are truncated by Sentry at 16 KiB. Reconstruct exact
+        // scrubbed source into bounded, event-scoped attachments without networking.
+        func shaderFixture(bytes: Int) -> String {
+            var lines = Array(repeating: "// shader attachment padding", count: 1137)
+            lines[568] = "kernel void sentryAttachmentMiddle() {}"
+            lines[0] = "// /Users/steamac-attachment-test/private/shader.metal"
+            let padding = bytes - lines.reduce(0) { $0 + $1.utf8.count + 1 }
+            let each = padding / lines.count, extra = padding % lines.count
+            for index in lines.indices { lines[index] += String(repeating: "x", count: each + (index < extra ? 1 : 0)) }
+            return lines.joined(separator: "\n") + "\n"
+        }
+        func shaderExtra(_ source: String, library: Bool = false, full: Bool = true) -> [String: String] {
+            let lines = source.split(separator: "\n", omittingEmptySubsequences: false).dropLast(source.hasSuffix("\n") ? 1 : 0)
+            let header = "// \(library ? "Library failure MSL" : "Pipeline failure MSL stage=5 entry=main0")"
+                + " bytes=\(source.utf8.count) lines=\(lines.count) capture=\(full ? "full" : "excerpt")"
+            var scanner = LineScanner()
+            let log = ["[mvk-error] VK_ERROR_INITIALIZATION_FAILED: \(library ? "Shader library" : "Compute pipeline") compile failed (Error code 2):",
+                       "[mvk-msl] " + header]
+                + lines.enumerated().map { "[mvk-msl] \($0.offset + 1): \($0.element)" }
+            return (log.flatMap { scanner.feed($0) } + scanner.flushPending()).first?.extra ?? [:]
+        }
+        let adSource = shaderFixture(bytes: 112824)
+        var attachments = FailedShaderAttachments()
+        let attached = attachments.claim(extra: shaderExtra(adSource), scrub: scrub)
+        if attached.count != 1 || attached.first?.data != Data(scrub(adSource).utf8)
+            || attached.first?.filename.hasPrefix("shader-") != true
+            || attached.first?.filename.hasSuffix(".metal") != true {
+            failures.append("scanner: AD-sized source did not become a complete scrubbed shader attachment")
+        }
+        if !attachments.claim(extra: shaderExtra(adSource, library: true), scrub: scrub).isEmpty {
+            failures.append("scanner: the same library/pipeline shader attachment was not deduplicated")
+        }
+        let maximum = shaderFixture(bytes: FailedShaderAttachments.sourceLimit)
+        let maxAttachments = attachments.claim(extra: shaderExtra(maximum), scrub: scrub)
+        if maxAttachments.count != 1 || maxAttachments.first?.data != Data(scrub(maximum).utf8)
+            || !attachments.claim(extra: shaderExtra("kernel void thirdShader() {}\n"), scrub: scrub).isEmpty {
+            failures.append("scanner: shader attachment byte limit or two-per-process budget failed")
+        }
+        for invalid in [shaderExtra(adSource, full: false), shaderExtra(shaderFixture(bytes: FailedShaderAttachments.sourceLimit + 1)),
+                        shaderExtra(String(repeating: "\n", count: 8193))] {
+            var rejected = FailedShaderAttachments()
+            if !rejected.claim(extra: invalid, scrub: scrub).isEmpty {
+                failures.append("scanner: excerpt or over-limit shader became a complete-source attachment")
+            }
+        }
+        var malformed = shaderExtra(adSource)
+        malformed["msl_stage_5"] = malformed["msl_stage_5"]?.replacingOccurrences(of: "\n2: ", with: "\n3: ")
+        var incomplete = FailedShaderAttachments()
+        if !incomplete.claim(extra: malformed, scrub: scrub).isEmpty {
+            failures.append("scanner: numbered source with a gap became an attachment")
+        }
+        let noNewline = "kernel void sentryNoFinalNewline() {}"
+        var finalLine = FailedShaderAttachments()
+        if finalLine.claim(extra: shaderExtra(noNewline, library: true), scrub: scrub).first?.data != Data(noNewline.utf8) {
+            failures.append("scanner: library shader without a final newline changed in its attachment")
         }
         var processClaims: [String: Bool] = [:]
         let claimed = [
@@ -1251,7 +1312,7 @@ private struct LineScanner {
     /// MoltenVK logs complete bounded small shaders, or excerpts of larger sources,
     /// after compilation fails. Keep each stage separate from descriptors and interfaces.
     static let mslPrefix = "[mvk-msl] "
-    static let mslLimit = 131072  // 64 KiB MSL plus numbered-line prefixes; at most eight stages.
+    static let mslLimit = FailedShaderAttachments.recordLimit  // Bounded source + prefixes, at most eight stages.
 
     private final class Pending {
         let kind: CrashReporting.Kind
@@ -1262,13 +1323,15 @@ private struct LineScanner {
         var stage: String?
         var stages: [String: String] = [:]
         var interfaces = ""
+        var stageCounts: [String: Int] = [:]
+        var interfaceCount = 0
 
         init(kind: CrashReporting.Kind, header: String) { self.kind = kind; self.header = header }
 
         func appendMSL(_ text: String) {
             if text.hasPrefix("// Metal pipeline descriptor:") || text.hasPrefix("// Vulkan static blend ")
                 || text.hasPrefix("// color-attachment ") {
-                if interfaces.count < LineScanner.mslLimit { interfaces += (text + "\n").prefix(LineScanner.mslLimit - interfaces.count) }
+                appendInterface(text)
                 return
             }
             let prefix = "// Pipeline failure MSL stage="
@@ -1279,18 +1342,28 @@ private struct LineScanner {
             } else if text.hasPrefix("// Failed graphics pipeline stage interfaces") {
                 stage = nil
             }
-            // Keep replayable small shaders (including library failures) independently.
-            // A large vertex source must never crowd out fragment source or descriptors.
+            // Retain complete attachment candidates independently of short extras.
+            // Maintain counts while appending: rescanning each growing Swift String
+            // for every shader line makes large failure records quadratic.
             if let stage {
-                let count = stages[stage, default: ""].count
-                if count < LineScanner.mslLimit { stages[stage, default: ""] += (text + "\n").prefix(LineScanner.mslLimit - count) }
+                let count = stageCounts[stage, default: 0]
+                let addition = String((text + "\n").prefix(max(0, LineScanner.mslLimit - count)))
+                stages[stage, default: ""] += addition
+                stageCounts[stage, default: 0] += addition.count
             } else if !stages.isEmpty {
-                if interfaces.count < LineScanner.mslLimit { interfaces += (text + "\n").prefix(LineScanner.mslLimit - interfaces.count) }
+                appendInterface(text)
             } else if mslCount < LineScanner.mslLimit {
                 let line = String(text.prefix(LineScanner.mslLimit - mslCount))
                 msl.append(line)
                 mslCount += line.count + 1
             }
+        }
+
+        private func appendInterface(_ text: String) {
+            guard interfaceCount < LineScanner.mslLimit else { return }
+            let addition = String((text + "\n").prefix(LineScanner.mslLimit - interfaceCount))
+            interfaces += addition
+            interfaceCount += addition.count
         }
 
         var hasMSL: Bool { !msl.isEmpty || !stages.isEmpty || !interfaces.isEmpty }

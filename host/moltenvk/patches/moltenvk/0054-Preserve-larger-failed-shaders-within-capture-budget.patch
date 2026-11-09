@@ -1,0 +1,52 @@
+From: FX Steam Launcher <steamac@fxgam.es>
+Date: Mon, 9 Nov 2026 16:00:00 +0300
+Subject: [PATCH] Preserve bounded failed shader source for event attachments
+
+STEAMAC-AD event 16602f89d93a4a0c85667a4b861643e5 reports an M3 Pro
+compute pipeline compiler interruption. Its shader is 112824 bytes and
+1137 lines, but the 65536-byte complete-source guard selects an excerpt.
+The captured 6834 characters omit the kernel body and cannot reproduce
+the compiler failure. No other event or attachment contains the source.
+
+Raise the library/pipeline complete-source limits to 256 KiB / 8192 lines.
+The launcher retains a bounded 384 KiB numbered record, reconstructs and
+scrubs the exact source, and sends it as an event-scoped .metal attachment
+(at most two distinct shaders per process). Sentry's 16 KiB context-field
+truncation does not apply to attachments.
+
+The sentry-ad-capture diagnostic regression exercises both real failure
+loggers with synthetic direct MSL at AD's dimensions, the inclusive
+byte/line limits, and one past each limit. It checks exact source recovery
+and numbered-record size; it does not reproduce Bodycam's compiler bug.
+No compiler workaround is justified by the incomplete capture.
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+@@ -216,9 +216,10 @@
+ 		lines.emplace_back(msl.data() + offset, end - offset);
+ 		offset = end + 1;
+ 	}
+-	// Small shaders must be replayable: omitting the middle loses the object-stage
+-	// payload, bindings and entry point of geometry pipelines (STEAMAC-41).
+-	const bool fullSource = msl.size() <= 65536 && lines.size() <= 1536;
++	// Preserve STEAMAC-AD's 112824-byte/1137-line shader for event attachments.
++	// The launcher bounds numbered records separately and attaches at most two
++	// complete, scrubbed sources of up to 256 KiB per process.
++	const bool fullSource = msl.size() <= 262144 && lines.size() <= 8192;
+ 	string out = "[mvk-msl] // Pipeline failure MSL stage=" + to_string(stage) +
+ 		" entry=" + _shaderConversionResultInfo.entryPoint.mtlFunctionName +
+ 		" bytes=" + to_string(msl.size()) + " lines=" + to_string(lines.size()) +
+@@ -733,8 +734,8 @@
+ 		p += len + (eol ? 1 : 0);
+ 	}
+ 	// Library compilation fails before a pipeline has a shader library to capture.
+-	// Apply the same replayable-source policy here, not just on pipeline failure.
+-	if (strlen(src) <= 65536 && lines.size() <= 1536) {
++	// Apply the same attachment-source budget as pipeline failures above.
++	if (strlen(src) <= 262144 && lines.size() <= 8192) {
+ 		string out = "[mvk-msl] // Library failure MSL bytes=" + to_string(strlen(src)) +
+ 			" lines=" + to_string(lines.size()) + " capture=full\n";
+ 		for (size_t i = 0; i < lines.size(); i++) {
+-- 
+2.50.1
