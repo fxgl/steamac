@@ -24,6 +24,8 @@ use crate::port::Port;
 
 #[path = "desktop_diagnostics.rs"]
 mod desktop_diagnostics;
+#[path = "collect_proton.rs"]
+mod collect_proton;
 
 /// Raw bytes per `logs` line (8192 base64 characters; the launcher splits
 /// lines at 16 KiB).
@@ -319,6 +321,12 @@ fn gather(dir: &Path, steam: &Path, home: &Path, game: Option<u32>) -> Result<()
         let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
         let note = copy_tail(p, &proton_dir.join(&name), PROTON_LOG_TAIL, &s);
         notes.push(format!("proton/{name}: {note}"));
+        let startup_name = format!("{}-startup.txt", name.trim_end_matches(".log"));
+        match collect_proton::copy_startup(p, &proton_dir.join(&startup_name), PROTON_LOG_TAIL, |text| s.scrub(text)) {
+            Ok(Some(note)) => notes.push(format!("proton/{startup_name}: {note}")),
+            Ok(None) => {}
+            Err(e) => notes.push(format!("proton/{startup_name}: not collected ({e})")),
+        }
     }
     let compat = steam.join("steamapps/compatdata");
     let mut prefixes = newest(&compat, |n| n.bytes().all(|b| b.is_ascii_digit()));
