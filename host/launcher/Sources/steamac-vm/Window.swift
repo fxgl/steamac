@@ -506,8 +506,12 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     /// Menu "Show Metal Performance HUD" / Ctrl+Cmd+P: flips the setting (persisted, Settings > Display).
     func toggleMetalHUD() {
-        guard settings.metalHUD || MetalHUD.confirmEnable(current: settings.metalHUD, nextDriver: settings.vulkanDriver) else { return }
-        settings.metalHUD.toggle()
+        // Both callers are AppKit's main-thread menu/event dispatch, even though this
+        // controller predates actor annotations.
+        MainActor.assumeIsolated {
+            guard settings.metalHUD || MetalHUD.confirmEnable(current: settings.metalHUD, nextDriver: settings.vulkanDriver) else { return }
+            settings.metalHUD.toggle()
+        }
     }
 
     private func applyMetalHUD(_ on: Bool) {
