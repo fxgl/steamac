@@ -2,7 +2,8 @@
  * helper-invocation state (also through nested callers). Check discarded pixels,
  * surviving colors, and storage writes after discard. STEAMAC-1R: a user helper
  * named log10 must not collide with metal::log10, or silently call the builtin.
- * Run: msl_helpers <spv dir> [log10] (optional compute-only case).
+ * STEAMAC-A9: rgb9e5(uint) must not collide with Metal's pixel-type template.
+ * Run: msl_helpers <spv dir> [log10|rgb9e5|link-log].
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -205,7 +206,7 @@ static void draw(VkShaderModule vs, VkShaderModule fs, const char *what)
 	fails += bad != 0;
 }
 
-static void dispatch(VkShaderModule mod)
+static void dispatch(VkShaderModule mod, const char *name, const float *want, size_t count)
 {
 	VkDescriptorSetLayoutBinding binding = { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL };
 	VkDescriptorSetLayoutCreateInfo slci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding };
@@ -219,11 +220,11 @@ static void dispatch(VkShaderModule mod)
 			.module = mod, .pName = "main" }, .layout = layout };
 	VkPipeline p;
 	VkResult r = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p);
-	printf("%-4s log10_helper: compute pipeline with a user-defined log10(float) (VkResult %d)\n", r ? "FAIL" : "OK", r);
+	printf("%-4s %s: compute pipeline with a user-defined helper (VkResult %d)\n", r ? "FAIL" : "OK", name, r);
 	if (r) { fails++; return; }
 	float *values;
-	VkBuffer buf = host_buffer(3 * sizeof(*values), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, (void **)&values);
-	memset(values, 0, 3 * sizeof(*values));
+	VkBuffer buf = host_buffer(count * sizeof(*values), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, (void **)&values);
+	memset(values, 0, count * sizeof(*values));
 	VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 };
 	VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &ps };
 	VkDescriptorPool dp;
@@ -240,19 +241,17 @@ static void dispatch(VkShaderModule mod)
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, NULL);
 	vkCmdDispatch(cmd, 1, 1, 1);
 	submit(cmd);
-	const float want[3] = { 1.125f, 2.125f, -0.875f };
 	int bad = 0;
-	for (int i = 0; i < 3; i++)
+	for (size_t i = 0; i < count; i++)
 		bad += !(values[i] >= want[i] - 0.0001f && values[i] <= want[i] + 0.0001f);
-	printf("%-4s log10_helper: values (%g %g %g), expected (1.125 2.125 -0.875), not Metal's builtin\n",
-		bad ? "FAIL" : "OK", values[0], values[1], values[2]);
+	printf("%-4s %s: all %zu output values match the user helper\n", bad ? "FAIL" : "OK", name, count);
 	fails += bad != 0;
 }
 
 int main(int argc, char **argv)
 {
-	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "log10") && strcmp(argv[2], "link-log"))) {
-		fprintf(stderr, "usage: %s <spv dir> [log10|link-log]\n", argv[0]); return 2;
+	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "log10") && strcmp(argv[2], "rgb9e5") && strcmp(argv[2], "link-log"))) {
+		fprintf(stderr, "usage: %s <spv dir> [log10|rgb9e5|link-log]\n", argv[0]); return 2;
 	}
 	VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO, .apiVersion = VK_API_VERSION_1_3 };
 	VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
@@ -283,8 +282,20 @@ int main(int argc, char **argv)
 		draw(vs, fs, "link-log");
 		vkDestroyShaderModule(dev, fs, NULL);
 	} else {
-		snprintf(path, sizeof(path), "%s/log10_helper.comp.spv", argv[1]);
-		dispatch(module(path));
+		const float log10_values[] = { 1.125f, 2.125f, -0.875f };
+		const float rgb9e5_values[] = { 0, 0, 0, 1, 1, 2, 3, 1, 65408, 65408, 65408, 1 };
+		if (argc == 2 || !strcmp(argv[2], "log10")) {
+			snprintf(path, sizeof(path), "%s/log10_helper.comp.spv", argv[1]);
+			VkShaderModule cs = module(path);
+			dispatch(cs, "log10_helper", log10_values, sizeof(log10_values) / sizeof(*log10_values));
+			vkDestroyShaderModule(dev, cs, NULL);
+		}
+		if (argc == 2 || !strcmp(argv[2], "rgb9e5")) {
+			snprintf(path, sizeof(path), "%s/rgb9e5_helper.comp.spv", argv[1]);
+			VkShaderModule cs = module(path);
+			dispatch(cs, "rgb9e5_helper", rgb9e5_values, sizeof(rgb9e5_values) / sizeof(*rgb9e5_values));
+			vkDestroyShaderModule(dev, cs, NULL);
+		}
 	}
 	CK(vkDeviceWaitIdle(dev));
 	vkDestroyDevice(dev, NULL);

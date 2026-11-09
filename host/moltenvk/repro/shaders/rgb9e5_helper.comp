@@ -1,0 +1,30 @@
+#version 450
+// STEAMAC-A9: the captured user helper conflicts with metal::rgb9e5<T>.
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer Output { float values[]; } output_data;
+
+vec4 rgb9e5(uint u)
+{
+    float scale = uintBitsToFloat(((u >> 27u) + 103u) << 23u);
+    return vec4(float(u & 511u) * scale,
+                float((u >> 9u) & 511u) * scale,
+                float((u >> 18u) & 511u) * scale, 1.0);
+}
+
+vec4 decode(uint packed_value)
+{
+    return rgb9e5(packed_value);
+}
+
+void main()
+{
+    const uint packed_values[3] = uint[3](0u,
+        (24u << 27u) | (3u << 18u) | (2u << 9u) | 1u,
+        (31u << 27u) | (511u << 18u) | (511u << 9u) | 511u);
+    for (uint i = 0u; i < 3u; ++i)
+    {
+        vec4 color = decode(packed_values[i]);
+        for (uint c = 0u; c < 4u; ++c)
+            output_data.values[4u * i + c] = color[c];
+    }
+}

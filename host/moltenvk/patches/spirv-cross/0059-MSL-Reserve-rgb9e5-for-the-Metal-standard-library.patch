@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000059 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@localhost>
+Date: Mon, 9 Nov 2026 16:00:00 +0300
+Subject: [PATCH] MSL: Reserve rgb9e5 for the Metal standard library
+
+STEAMAC-A9 retains a user-defined float4 rgb9e5(thread const uint&) and
+its call at lines 163/289. Metal's stdlib also exports the rgb9e5<T>
+pixel-type alias. With using namespace metal, lookup of the unqualified
+call is ambiguous, even though the competing declaration is not a
+function. The illegal-function-name set did not include that type name.
+
+Reserve rgb9e5 through the existing function/entry-point renaming path,
+so definitions and calls retain the user's unpacking implementation.
+The rgb9e5_helper compute regression checks zero, normal and maximum
+RGB9E5 values after nested user helper calls.
+---
+ spirv_msl.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -19524,6 +19524,7 @@ const std::unordered_set<std::string> &CompilerMSL::get_illegal_func_names()
+ 		"vertex",
+ 		"kernel",
+ 		"log10",
++		"rgb9e5",
+ 		"saturate",
+ 		"assert",
+ 		"fmin3",
