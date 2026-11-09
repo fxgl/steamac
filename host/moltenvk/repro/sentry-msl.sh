@@ -173,4 +173,7 @@ sh "$here/sentry-block-locations.sh" "$spvc" "$work/block-locations"
 
 # 41/R: exact captured object/mesh pipeline with the translator's shared payload ABI.
 sh "$here/sentry-mesh-payload.sh" "$spvc" "$work/mesh-payload"
+
+# A2: geometry mesh outputs retain native clipping and fragment-visible scalar copies.
+sh "$here/sentry-a2-clip-distance.sh" "$spvc" "$work/clip-distance"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'

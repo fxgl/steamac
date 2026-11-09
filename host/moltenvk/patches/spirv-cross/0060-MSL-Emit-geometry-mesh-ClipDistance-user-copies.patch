@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000060 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Mon, 9 Nov 2026 12:00:00 +0000
+Subject: [PATCH] MSL: Emit geometry mesh ClipDistance user copies (STEAMAC-A2)
+
+The full 1.9.13 capture b0f66732664f44a4b524a6b5b98fb53d has a
+geometry-to-mesh main0_out with float gl_ClipDistance [[clip_distance]]
+[1] (stage 3, line 145), but no user(clip0). The fragment stage requires
+float gl_ClipDistance_0 [[user(clip0)]] (stage 4, line 96), producing
+Metal's "Fragment input(s) user(clip0) mismatching mesh shader output"
+pipeline link error. The geometry stage writes its native array before
+each EmitVertex; the missing scalar interface is not an unwritten SPIR-V
+output or a fragment type mismatch.
+
+The standalone-variable mesh-output predicate admits CullDistance but
+omits ClipDistance. Consequently it bypasses the existing composite
+builder which retains the native clip_distance array, emits scalar
+user(clipN) members, and copies each native element at every EmitVertex.
+Admit ClipDistance to the same path. Block members already use their
+composite builder; leave that behavior, object payloads and native mesh
+shaders unchanged. The no-clip-distance-user-varying option still returns
+after declaring the native array.
+
+sentry-a2-clip-distance.sh covers captured-shaped standalone variables
+and gl_PerVertex blocks with one/two clip planes, mesh/fragment pipeline
+linking and per-EmitVertex scalar copies, plus native-only controls.
+Original SPIR-V was not retained; fixtures reconstruct the captured ABI.
+---
+ spirv_msl.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -5754,10 +5754,11 @@
+ 
+ 			// MSL does not allow matrices or arrays in input or output variables, so need to handle it specially.
+ 			// Mesh pipelines keep composites whole (stage I/O goes through buffers), except the user outputs of a
+-			// geometry shader: they are mesh vertex members, which cannot be arrays or matrices either.
++			// geometry shader. ClipDistance also needs scalar user copies alongside its native clip_distance array.
+ 			bool mesh_vertex_user_output = msl_options.for_mesh_pipeline && get_execution_model() == ExecutionModelGeometry &&
+ 			                               storage == StorageClassOutput &&
+-			                               (!is_builtin_variable(var) || builtin == BuiltInCullDistance);
++			                               (!is_builtin_variable(var) || builtin == BuiltInClipDistance ||
++			                                builtin == BuiltInCullDistance);
+ 			if ((!msl_options.for_mesh_pipeline || mesh_vertex_user_output) && (!is_builtin || attribute_load_store) &&
+ 			    storage_is_stage_io && is_composite_type)
+ 			{
+-- 
+2.50.1 (Apple Git-155)

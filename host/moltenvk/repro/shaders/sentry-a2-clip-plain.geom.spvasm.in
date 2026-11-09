@@ -1,0 +1,94 @@
+; STEAMAC-A2: zink-shaped standalone Position/ClipDistance geometry I/O.
+; sentry_a2_clip_distance.py substitutes @CLIP_COUNT@ with 1 (capture) or 2.
+OpCapability Geometry
+OpCapability ClipDistance
+OpMemoryModel Logical GLSL450
+OpEntryPoint Geometry %main "main" %position_in %clip_in %position_out %clip_out
+OpExecutionMode %main Triangles
+OpExecutionMode %main Invocations 1
+OpExecutionMode %main OutputTriangleStrip
+OpExecutionMode %main OutputVertices 3
+OpName %main "main"
+OpName %position_in "position_in"
+OpName %clip_in "clip_in"
+OpName %position_out "position_out"
+OpName %clip_out "clip_out"
+OpDecorate %position_in BuiltIn Position
+OpDecorate %clip_in BuiltIn ClipDistance
+OpDecorate %position_out BuiltIn Position
+OpDecorate %clip_out BuiltIn ClipDistance
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%bool = OpTypeBool
+%int = OpTypeInt 32 1
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%float4 = OpTypeVector %float 4
+%i0 = OpConstant %int 0
+%i1 = OpConstant %int 1
+%i3 = OpConstant %int 3
+%u3 = OpConstant %uint 3
+%count = OpConstant %uint @CLIP_COUNT@
+%count_i = OpConstant %int @CLIP_COUNT@
+%clip = OpTypeArray %float %count
+%positions = OpTypeArray %float4 %u3
+%clips = OpTypeArray %clip %u3
+%input_positions = OpTypePointer Input %positions
+%input_clips = OpTypePointer Input %clips
+%input_float4 = OpTypePointer Input %float4
+%input_float = OpTypePointer Input %float
+%output_float4 = OpTypePointer Output %float4
+%output_clip = OpTypePointer Output %clip
+%output_float = OpTypePointer Output %float
+%local_int = OpTypePointer Function %int
+%position_in = OpVariable %input_positions Input
+%clip_in = OpVariable %input_clips Input
+%position_out = OpVariable %output_float4 Output
+%clip_out = OpVariable %output_clip Output
+%main = OpFunction %void None %function
+%entry = OpLabel
+%vertex = OpVariable %local_int Function
+%plane = OpVariable %local_int Function
+OpStore %vertex %i0
+OpBranch %vertex_header
+%vertex_header = OpLabel
+OpLoopMerge %vertex_end %vertex_continue None
+OpBranch %vertex_condition
+%vertex_condition = OpLabel
+%v = OpLoad %int %vertex
+%has_vertex = OpSLessThan %bool %v %i3
+OpBranchConditional %has_vertex %vertex_body %vertex_end
+%vertex_body = OpLabel
+%position_ptr = OpAccessChain %input_float4 %position_in %v
+%position = OpLoad %float4 %position_ptr
+OpStore %position_out %position
+OpStore %plane %i0
+OpBranch %plane_header
+%plane_header = OpLabel
+OpLoopMerge %plane_end %plane_continue None
+OpBranch %plane_condition
+%plane_condition = OpLabel
+%p = OpLoad %int %plane
+%has_plane = OpSLessThan %bool %p %count_i
+OpBranchConditional %has_plane %plane_body %plane_end
+%plane_body = OpLabel
+%clip_input_ptr = OpAccessChain %input_float %clip_in %v %p
+%distance = OpLoad %float %clip_input_ptr
+%clip_output_ptr = OpAccessChain %output_float %clip_out %p
+OpStore %clip_output_ptr %distance
+OpBranch %plane_continue
+%plane_continue = OpLabel
+%next_plane = OpIAdd %int %p %i1
+OpStore %plane %next_plane
+OpBranch %plane_header
+%plane_end = OpLabel
+OpEmitVertex
+OpBranch %vertex_continue
+%vertex_continue = OpLabel
+%next_vertex = OpIAdd %int %v %i1
+OpStore %vertex %next_vertex
+OpBranch %vertex_header
+%vertex_end = OpLabel
+OpEndPrimitive
+OpReturn
+OpFunctionEnd
