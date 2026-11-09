@@ -2,54 +2,6 @@
   "sourceLanguage" : "en",
   "strings" : {
     "" : {},
-    "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "При следующем запуске создаёт SteamLibrary в общей папке и добавляет её в Steam один раз для каждого пути, чтобы позже вы могли удалить её из Steam. Для Proton нужна поддержка символических ссылок: рекомендуется APFS; exFAT не поддерживается. Общие папки без поддержки символических ссылок не добавляются автоматически."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下次启动时在共享文件夹中创建 SteamLibrary 并将其添加到 Steam，每个路径仅添加一次，因此你之后可以在 Steam 中将其移除。Proton 需要符号链接支持：推荐使用 APFS；不支持 exFAT。缺少符号链接支持的共享文件夹不会被自动添加。"
-          }
-        }
-      }
-    },
-    "This controller needs Input Monitoring to pass through as itself. Enable FX Steam Launcher in Mac System Settings › Privacy & Security › Input Monitoring. If access is already enabled but the controller is still unavailable, restart the launcher." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для этого контроллера нужен доступ «Мониторинг ввода», чтобы передавать его в SteamOS как исходное устройство. Включите FX Steam Launcher в Системных настройках Mac › Конфиденциальность и безопасность › Мониторинг ввода. Если доступ уже включён, но контроллер всё ещё недоступен, перезапустите лаунчер."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此控制器需要“输入监控”权限才能以自身身份传入 SteamOS。请在 Mac 系统设置 › 隐私与安全性 › 输入监控中启用 FX Steam Launcher。如果已启用访问权限但控制器仍不可用，请重新启动启动器。"
-          }
-        }
-      }
-    },
-    "Mac Input Monitoring Settings…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac: Мониторинг ввода…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac 输入监控设置…"
-          }
-        }
-      }
-    },
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
@@ -610,24 +562,24 @@
         }
       }
     },
-    "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."
+    "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."
           }
         },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Отдельные ошибки: потеря контекста GPU в SteamOS, ошибки компиляции шейдерных конвейеров (исходный код сбойных Metal-шейдеров: не более двух вложений до 256 КиБ на процесс, с удалёнными личными данными), паники libkrun, ошибки создания диска или первоначальной настройки, неожиданная остановка или принудительное завершение ВМ (с данными об использовании памяти Mac), зависание SteamOS."
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отдельные ошибки: потеря контекста GPU в SteamOS, ошибки компиляции шейдерных конвейеров (исходный код сбойных Metal-шейдеров: не более двух вложений до 256 КиБ на процесс, с удалёнными личными данными), паники libkrun, ошибки создания диска или первоначальной настройки, неожиданная остановка или принудительное завершение ВМ (с данными об использовании памяти Mac), зависание SteamOS."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "少量错误：来宾 GPU 上下文丢失、着色器管线编译失败（附失败的 Metal 着色器源码：每进程最多两个已脱敏的附件，每个不超过 256 KiB）、libkrun panic、磁盘创建或首次启动设置失败、VM 意外停止或被终止（含 Mac 内存使用情况）、SteamOS 无响应。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "少量错误：来宾 GPU 上下文丢失、着色器管线编译失败（附失败的 Metal 着色器源码：每进程最多两个已脱敏的附件，每个不超过 256 KiB）、libkrun panic、磁盘创建或首次启动设置失败、VM 意外停止或被终止（含 Mac 内存使用情况）、SteamOS 无响应。"
           }
         }
       }
@@ -740,6 +692,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "高级"
+          }
+        }
+      }
+    },
+    "Allocated size went from %@ to %@ (about %@ less). APFS clones and snapshots may retain this space on the Mac." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allocated size went from %1$@ to %2$@ (about %3$@ less). APFS clones and snapshots may retain this space on the Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выделенный размер уменьшился с %@ до %@ (примерно на %@). Клоны и снимки APFS могут удерживать это место на Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已分配大小从 %@ 降到 %@（约减少 %@）。APFS 克隆和快照可能仍在 Mac 上占用这部分空间。"
           }
         }
       }
@@ -905,6 +879,22 @@
         }
       }
     },
+    "Apple's Metal HUD can crash the VM with KosmicKrisp (Metal 4), even when the overlay is hidden. As an alternative, use Settings > General > Log frame-pacing statistics (guest display timing, not game FPS). Restart the VM after turning the HUD off to unload Apple's HUD library." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HUD Metal от Apple может вызвать сбой ВМ с KosmicKrisp (Metal 4), даже когда панель скрыта. В качестве альтернативы включите «Настройки > Основные > Записывать статистику равномерности кадров в журнал» (тайминги экрана гостевой системы, а не FPS игры). После выключения HUD перезапустите ВМ, чтобы выгрузить библиотеку HUD от Apple."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 KosmicKrisp（Metal 4）时，即使叠加层已隐藏，Apple 的 Metal HUD 也可能导致虚拟机崩溃。可改用“设置 > 通用 > 记录帧节奏统计”（客户机显示时序，并非游戏 FPS）。关闭 HUD 后请重启虚拟机，以卸载 Apple 的 HUD 库。"
+          }
+        }
+      }
+    },
     "Apple's MetalFX upscaler sharpens the guest picture when the window has more pixels than the guest (2× on Retina screens, scaled or fullscreen windows) instead of plain scaling." : {
       "localizations" : {
         "ru" : {
@@ -997,23 +987,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最多每 6 小时向 GitHub（api.github.com）查询一次最新版本；仅发送应用版本号。"
-          }
-        }
-      }
-    },
-    "Unavailable with KosmicKrisp: Apple's HUD hooks Metal 4 command encoders and can crash the VM even when hidden. To use the HUD, select MoltenVK in Graphics and restart (DXMT may remain enabled)." : {},
-    "Enabling requires a VM restart. Turning it off hides the overlay now; restart to unload Apple's HUD library." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для включения нужно перезапустить ВМ. Выключение сразу скрывает панель; перезапустите ВМ, чтобы выгрузить библиотеку HUD от Apple."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "启用后需重启虚拟机。关闭会立即隐藏叠加层；重启后才会卸载 Apple 的 HUD 库。"
           }
         }
       }
@@ -1912,6 +1885,22 @@
         }
       }
     },
+    "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При следующем запуске создаёт SteamLibrary в общей папке и добавляет её в Steam один раз для каждого пути, чтобы позже вы могли удалить её из Steam. Для Proton нужна поддержка символических ссылок: рекомендуется APFS; exFAT не поддерживается. Общие папки без поддержки символических ссылок не добавляются автоматически."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下次启动时在共享文件夹中创建 SteamLibrary 并将其添加到 Steam，每个路径仅添加一次，因此你之后可以在 Steam 中将其移除。Proton 需要符号链接支持：推荐使用 APFS；不支持 exFAT。缺少符号链接支持的共享文件夹不会被自动添加。"
+          }
+        }
+      }
+    },
     "Ctrl+Option  (Ctrl+Cmd+G toggles)" : {
       "localizations" : {
         "ru" : {
@@ -2522,6 +2511,22 @@
         }
       }
     },
+    "Enable Apple's Metal HUD?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить HUD Metal от Apple?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用 Apple 的 Metal HUD？"
+          }
+        }
+      }
+    },
     "Enable Moonlight streaming" : {
       "localizations" : {
         "ru" : {
@@ -2550,6 +2555,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "启用 SSH"
+          }
+        }
+      }
+    },
+    "Enabling requires a VM restart. Turning it off hides the overlay now; restart to unload Apple's HUD library." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для включения нужно перезапустить ВМ. Выключение сразу скрывает панель; перезапустите ВМ, чтобы выгрузить библиотеку HUD от Apple."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用后需重启虚拟机。关闭会立即隐藏叠加层；重启后才会卸载 Apple 的 HUD 库。"
           }
         }
       }
@@ -3937,6 +3958,22 @@
         }
       }
     },
+    "Mac Input Monitoring Settings…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac: Мониторинг ввода…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 输入监控设置…"
+          }
+        }
+      }
+    },
     "Memory" : {
       "localizations" : {
         "ru" : {
@@ -5231,6 +5268,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "回收磁盘空间"
+          }
+        }
+      }
+    },
+    "Reclaim Disk Space requires the disk image to be on an APFS volume. HFS+, exFAT and other filesystems cannot reclaim space this way." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Освободить место на диске» работает, только если образ диска лежит на томе APFS. HFS+, exFAT и другие файловые системы так место не освобождают."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“回收磁盘空间”要求磁盘映像位于 APFS 卷上。HFS+、exFAT 等文件系统无法以这种方式回收空间。"
           }
         }
       }
@@ -6907,6 +6960,22 @@
         }
       }
     },
+    "SteamOS could not trim free blocks. See the log for details." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS не смогла освободить свободные блоки. Подробности — в логе."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 未能修剪空闲块。详情请查看日志。"
+          }
+        }
+      }
+    },
     "SteamOS disk could not be grown" : {
       "localizations" : {
         "ru" : {
@@ -7132,6 +7201,22 @@
         }
       }
     },
+    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диск SteamOS (raw GPT), используется на месте, без копирования. Если Steam пишет, что не хватает места, «Увеличить диск…» добавит место для игр без пересоздания диска. После удаления игр «Освободить место на диске…» может уменьшить выделенный размер образа, но только на APFS (ёмкость не меняется). Клоны и снимки могут удерживать место на Mac. Свободное место на Mac само по себе не увеличивает ёмкость SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 原始 GPT 磁盘，原地使用（不会复制）。如果 Steam 提示空间不足，“扩展磁盘…”可在不重建的情况下为游戏增加空间。卸载游戏后，“回收磁盘空间…”仅在 APFS 上可以减小映像的已分配大小（容量不变）。克隆和快照可能仍在 Mac 上占用空间。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
+          }
+        }
+      }
+    },
     "SteamOS set up" : {
       "localizations" : {
         "ru" : {
@@ -7193,6 +7278,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SteamOS 已挂起 — FX Steam Launcher"
+          }
+        }
+      }
+    },
+    "SteamOS trimmed free blocks. Allocated size is still about %@; little or nothing changed this time. The image may already be compact." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS освободила свободные блоки. Выделенный размер по-прежнему около %@; на этот раз почти ничего не изменилось. Возможно, образ уже компактный."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 已修剪空闲块。已分配大小仍约为 %@；这次几乎没有变化，映像可能已经很紧凑。"
           }
         }
       }
@@ -7974,6 +8075,22 @@
         }
       }
     },
+    "This controller needs Input Monitoring to pass through as itself. Enable FX Steam Launcher in Mac System Settings › Privacy & Security › Input Monitoring. If access is already enabled but the controller is still unavailable, restart the launcher." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого контроллера нужен доступ «Мониторинг ввода», чтобы передавать его в SteamOS как исходное устройство. Включите FX Steam Launcher в Системных настройках Mac › Конфиденциальность и безопасность › Мониторинг ввода. Если доступ уже включён, но контроллер всё ещё недоступен, перезапустите лаунчер."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此控制器需要“输入监控”权限才能以自身身份传入 SteamOS。请在 Mac 系统设置 › 隐私与安全性 › 输入监控中启用 FX Steam Launcher。如果已启用访问权限但控制器仍不可用，请重新启动启动器。"
+          }
+        }
+      }
+    },
     "This development build does not send statistics." : {
       "localizations" : {
         "ru" : {
@@ -8050,6 +8167,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换全屏（Ctrl+Cmd+F）"
+          }
+        }
+      }
+    },
+    "Trim free blocks inside SteamOS to reduce the sparse disk image's allocated size. Games and saves are not deleted. Capacity stays the same. This works only when the image is on APFS; clones and snapshots may retain space on the Mac. Currently %@ allocated. This can take several minutes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Освободить свободные блоки внутри SteamOS, чтобы уменьшить выделенный размер разреженного образа диска. Игры и сохранения не удаляются, ёмкость не меняется. Работает, только если образ лежит на APFS; клоны и снимки могут удерживать место на Mac. Сейчас выделено %@. Это может занять несколько минут."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 SteamOS 内修剪空闲块，以减小稀疏磁盘映像的已分配大小。游戏和存档不会被删除，容量不变。仅当映像位于 APFS 上时有效；克隆和快照可能仍在 Mac 上占用空间。当前已分配 %@。这可能需要几分钟。"
           }
         }
       }
@@ -9663,108 +9796,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "you@example.com"
-          }
-        }
-      }
-    },
-    "Allocated size went from %@ to %@ (about %@ less). APFS clones and snapshots may retain this space on the Mac." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Allocated size went from %1$@ to %2$@ (about %3$@ less). APFS clones and snapshots may retain this space on the Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выделенный размер уменьшился с %@ до %@ (примерно на %@). Клоны и снимки APFS могут удерживать это место на Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已分配大小从 %@ 降到 %@（约减少 %@）。APFS 克隆和快照可能仍在 Mac 上占用这部分空间。"
-          }
-        }
-      }
-    },
-    "Reclaim Disk Space requires the disk image to be on an APFS volume. HFS+, exFAT and other filesystems cannot reclaim space this way." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "«Освободить место на диске» работает, только если образ диска лежит на томе APFS. HFS+, exFAT и другие файловые системы так место не освобождают."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“回收磁盘空间”要求磁盘映像位于 APFS 卷上。HFS+、exFAT 等文件系统无法以这种方式回收空间。"
-          }
-        }
-      }
-    },
-    "SteamOS could not trim free blocks. See the log for details." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS не смогла освободить свободные блоки. Подробности — в логе."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 未能修剪空闲块。详情请查看日志。"
-          }
-        }
-      }
-    },
-    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Диск SteamOS (raw GPT), используется на месте, без копирования. Если Steam пишет, что не хватает места, «Увеличить диск…» добавит место для игр без пересоздания диска. После удаления игр «Освободить место на диске…» может уменьшить выделенный размер образа, но только на APFS (ёмкость не меняется). Клоны и снимки могут удерживать место на Mac. Свободное место на Mac само по себе не увеличивает ёмкость SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 原始 GPT 磁盘，原地使用（不会复制）。如果 Steam 提示空间不足，“扩展磁盘…”可在不重建的情况下为游戏增加空间。卸载游戏后，“回收磁盘空间…”仅在 APFS 上可以减小映像的已分配大小（容量不变）。克隆和快照可能仍在 Mac 上占用空间。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
-          }
-        }
-      }
-    },
-    "SteamOS trimmed free blocks. Allocated size is still about %@; little or nothing changed this time. The image may already be compact." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS освободила свободные блоки. Выделенный размер по-прежнему около %@; на этот раз почти ничего не изменилось. Возможно, образ уже компактный."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 已修剪空闲块。已分配大小仍约为 %@；这次几乎没有变化，映像可能已经很紧凑。"
-          }
-        }
-      }
-    },
-    "Trim free blocks inside SteamOS to reduce the sparse disk image's allocated size. Games and saves are not deleted. Capacity stays the same. This works only when the image is on APFS; clones and snapshots may retain space on the Mac. Currently %@ allocated. This can take several minutes." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Освободить свободные блоки внутри SteamOS, чтобы уменьшить выделенный размер разреженного образа диска. Игры и сохранения не удаляются, ёмкость не меняется. Работает, только если образ лежит на APFS; клоны и снимки могут удерживать место на Mac. Сейчас выделено %@. Это может занять несколько минут."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在 SteamOS 内修剪空闲块，以减小稀疏磁盘映像的已分配大小。游戏和存档不会被删除，容量不变。仅当映像位于 APFS 上时有效；克隆和快照可能仍在 Mac 上占用空间。当前已分配 %@。这可能需要几分钟。"
           }
         }
       }
