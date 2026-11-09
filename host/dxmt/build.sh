@@ -2,6 +2,8 @@
 # Build the DXMT graphics path from pinned sources: the host executor library and the guest payload.
 #
 #   host/dxmt/build.sh [step...]     steps: fetch llvm native host pe client payload (default: all, in order)
+#   host/dxmt/build.sh pe-arm64ec client-arm64 payload-arm64ec
+#                                  optional native Proton 11 ARM64EC guest payload (same host executor)
 #   host/dxmt/build.sh clean         drop work/build/dxmt* and the unpacked source (keeps work/cache downloads
 #                                    and the installed LLVM 15 under work/out/host/llvm15)
 #
@@ -69,6 +71,11 @@ DXHEADERS_SHA256=9c1b8bbfd2d6c758fac4d93c2808a46bc1eee429fe656b4f21b29e02615aa8a
 # Toolchains of DXMT's CI (.github/workflows/ci.yml: WINE_URL, LLVM_MINGW_VERSION)
 WINE_URL=https://github.com/3Shain/wine/releases/download/v8.16-3shain/wine.tar.gz
 WINE_SHA256=289c7f19e270a3d3d0a6fdb07691b176c70a0795f6811e5255cba82425de4f10
+WINE_ARM64EC_URL=https://github.com/3Shain/wine/releases/download/wine-11.2/wine-11.2.tar.gz
+WINE_ARM64EC_SHA256=834ec0d4f1dff94de187f29891dc9938306ea2602d0fff603b407225c916d881
+# The ARM64X winemetal.dll links that build's winecrt0 (tag wine-11.2 = upstream "Release 11.2", 87ba10bb).
+WINE_ARM64EC_SOURCE_URL=https://dl.winehq.org/wine/source/11.x/wine-11.2.tar.xz
+WINE_ARM64EC_SOURCE_SHA256=1756227bdb3feb41750afa97b44ac50a22890a88704a1f0fa14d88c4f921e183
 LLVM_MINGW="llvm-mingw-20260908-ucrt-macos-universal"
 LLVM_MINGW_URL=https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/$LLVM_MINGW.tar.xz
 LLVM_MINGW_SHA256=d1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149
@@ -77,6 +84,7 @@ LLVM_MINGW_SHA256=d1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a1
 # and an existing arm64 copy of that index must not collide with the amd64 pull. GCC 14 accepts DXMT's
 # C23 fixed-underlying-type enums; wmtr_glibc_compat.h keeps the resulting symbols <= 2.14.
 CLIENT_IMAGE=docker.io/library/debian@sha256:bcf83fd8af414eda0c0a99d25a4e61dedd88e7aac7f7bc519d04555ff0c40ec5
+CLIENT_ARM64_IMAGE=docker.io/library/debian@sha256:39f862f398f8ea1a2ffee9bbe02c649be6779244bd6a834c4f71155172f801f2
 BREW_DEPS="meson ninja cmake pkgconf zstd"
 # Like libepoxy, virglrenderer and libkrun: the launcher's floor, whatever the build host's SDK is
 # (host/launcher/bundle.sh rejects a library with a higher LC_BUILD_VERSION minos).
@@ -171,7 +179,7 @@ step_pe() {
     fetch_file "$WINE_URL" "$WINE_SHA256" "$cache/wine-8.16-3shain.tar.gz"
     fetch_file "$LLVM_MINGW_URL" "$LLVM_MINGW_SHA256" "$cache/$LLVM_MINGW.tar.xz"
     if [ "$(cat "$toolchains/.pin" 2>/dev/null)" != "$WINE_SHA256 $LLVM_MINGW_SHA256" ]; then
-        rm -rf "$toolchains"; mkdir -p "$toolchains/wine"
+        rm -rf "$toolchains/wine" "$toolchains/$LLVM_MINGW"; mkdir -p "$toolchains/wine"
         tar -xzf "$cache/wine-8.16-3shain.tar.gz" -C "$toolchains/wine"
         tar -xJf "$cache/$LLVM_MINGW.tar.xz" -C "$toolchains"
         echo "$WINE_SHA256 $LLVM_MINGW_SHA256" > "$toolchains/.pin"
@@ -206,6 +214,47 @@ step_payload() {
     (cd "$root/work/out/dxmt" && find . -type f | sort | xargs shasum -a 256)
 }
 
+step_pe_arm64ec() {
+    log "DXMT ARM64EC/ARM64X PE dlls (native Proton 11 Wine)"
+    local wine=$toolchains/wine-arm64ec b=$root/work/build/dxmt-arm64ec
+    local dest=$root/work/out/dxmt-arm64ec
+    fetch_file "$WINE_ARM64EC_URL" "$WINE_ARM64EC_SHA256" "$cache/wine-11.2-arm64ec.tar.gz"
+    fetch_file "$LLVM_MINGW_URL" "$LLVM_MINGW_SHA256" "$cache/$LLVM_MINGW.tar.xz"
+    if [ "$(cat "$wine/.pin" 2>/dev/null)" != "$WINE_ARM64EC_SHA256" ]; then
+        rm -rf "$wine"; mkdir -p "$wine"
+        tar -xzf "$cache/wine-11.2-arm64ec.tar.gz" --strip-components 2 -C "$wine"
+        echo "$WINE_ARM64EC_SHA256" > "$wine/.pin"
+    fi
+    if [ ! -x "$toolchains/$LLVM_MINGW/bin/arm64ec-w64-mingw32-gcc" ]; then
+        mkdir -p "$toolchains"
+        tar -xJf "$cache/$LLVM_MINGW.tar.xz" -C "$toolchains"
+    fi
+    # Use upstream's ARM64X cross file unchanged. Wine 8.16's x86-only winecrt0
+    # cannot initialize the native Unix call dispatcher for this target.
+    # shellcheck disable=SC2046
+    PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson setup --wipe "$b" "$src" \
+        --cross-file "$src/build-arm64ec.txt" --buildtype release --strip --prefix "$dest" \
+        -Dwine_install_path="$wine" -Dbuild_unixlib=false $(metal_opts) >/dev/null
+    PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson compile -C "$b" -j "$jobs"
+    PATH="$toolchains/$LLVM_MINGW/bin:$PATH" meson install -C "$b" >/dev/null
+    for dll in d3d11 dxgi d3d10core winemetal; do
+        grep -q 'Wine builtin DLL' "$dest/aarch64-windows/$dll.dll" || die "$dll.dll is not a Wine builtin"
+    done
+}
+
+step_client_arm64() {
+    log "native guest winemetal.so (linux/arm64 container)"
+    command -v docker >/dev/null || die "the client-arm64 step needs Docker (OrbStack)"
+    docker run --rm --platform linux/arm64 -e DEBIAN_FRONTEND=noninteractive -e OWNER="$(id -u):$(id -g)" \
+        -v "$root/wmtr:/wmtr" -v "$src:/dxmt:ro" "$CLIENT_ARM64_IMAGE" sh -euc '
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev make binutils >/dev/null
+        make -C /wmtr CC=gcc DXMT=/dxmt client-linux test-linux; chown -R "$OWNER" /wmtr/build'
+}
+
+step_payload_arm64ec() {
+    make -C "$root/wmtr" PAYLOAD="$root/work/out/dxmt" dxmt-payload-arm64ec
+}
+
 if [ "${1:-}" = clean ]; then
     rm -rf "$src" "$native" "$pebuild" "$root/wmtr/build" "$root/work/build/llvm15"
     exit 0
@@ -213,7 +262,7 @@ fi
 steps=("$@")
 [ ${#steps[@]} -gt 0 ] || steps=(fetch llvm native host pe client payload)
 # fetch, client and payload also run on a Linux host (the guest half of a build split over two machines)
-case " ${steps[*]} " in *" llvm "*|*" native "*|*" host "*|*" pe "*)
+case " ${steps[*]} " in *" llvm "*|*" native "*|*" host "*|*" pe "*|*" pe-arm64ec "*)
     for dep in $BREW_DEPS; do
         brew list --versions "$dep" >/dev/null 2>&1 || brew install "$dep"
     done ;;
@@ -221,7 +270,10 @@ esac
 for s in "${steps[@]}"; do
     case $s in
         fetch|llvm|native|host|pe|client|payload) "step_$s" ;;
-        *) die "unknown step: $s (fetch llvm native host pe client payload | clean)" ;;
+        pe-arm64ec) step_pe_arm64ec ;;
+        client-arm64) step_client_arm64 ;;
+        payload-arm64ec) step_payload_arm64ec ;;
+        *) die "unknown step: $s (fetch llvm native host pe client payload | pe-arm64ec client-arm64 payload-arm64ec | clean)" ;;
     esac
 done
 log "done"

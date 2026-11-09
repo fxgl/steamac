@@ -54,7 +54,7 @@ struct GameProfile: Codable, Equatable {
         return ([graphics] + (driverName.map { [$0] } ?? []) + (env.isEmpty ? [] : [env])).joined(separator: " · ")
     }
 
-    static let securityText = String(localized: "Games use DXMT only when their profile selects it. Their D3D11 and D3D10 draw through DXMT directly with the Mac's Metal using Proton 10.0 (x86-64); games with Default graphics stay on Vulkan. DXMT has compatibility gaps, including no D3D11 stream output. Allowing DXMT takes effect on the next VM start. Security risk: while on, programs in SteamOS can run code on the Mac with your user's rights. The executor runs inside the VM process and trusts the guest; a fault can stop the VM.")
+    static let securityText = String(localized: "Games use DXMT only when their profile selects it. Their D3D11 and D3D10 draw through DXMT directly with the Mac's Metal using native ARM64EC Proton when installed, or Proton 10.0 (x86-64) otherwise; games with Default graphics stay on Vulkan. DXMT has compatibility gaps, including no D3D11 stream output. Allowing DXMT takes effect on the next VM start. Security risk: while on, programs in SteamOS can run code on the Mac with your user's rights. The executor runs inside the VM process and trusts the guest; a fault can stop the VM.")
     static func selfCheck() -> [String] {
         var failures: [String] = []
         if sanitizedEnv("DXVK_A=1 PROTON_B=2 DXVK_A=3 BAD=secret WINE_X=$(id)") != "DXVK_A=3 PROTON_B=2" { failures.append("profiles: env canonicalization") }

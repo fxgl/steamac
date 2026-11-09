@@ -370,7 +370,7 @@ Recommendations are never automatic: only **Apply** changes the profile.
 
 DXMT requires **Settings → Advanced → Allow DXMT (D3D11 on the Mac's Metal)** and a VM boot with
 that permission. While it is off, a DXMT profile is shown as not in effect and offers **Allow DXMT…**
-with the existing security warning; it cannot map a game to Proton 10.0 on a Vulkan-only boot.
+with the existing security warning; it cannot select a DXMT compatibility tool on a Vulkan-only boot.
 The Vulkan driver is selected **per VM boot**, not per process. When a game starts or gains focus
 with another profile driver, the launcher offers to restart the VM with that driver and relaunch
 the game once Steam is ready. This one-shot override does not change the global driver setting.
@@ -1064,12 +1064,19 @@ continues with the next drawable. With the toggle on, the launcher offers
 libkrun's wmtr virtio-gpu context (patch 0018, capset 30) and boots with `steamac.gfx=dxmt`.
 The guest's `steam-gfx-path` swaps DXMT into every installed x86-64 Proton and watches for Proton
 installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and restores Proton's
-original files. DXMT's dlls are x86-64 with a Wine unixlib, which only an x86-64 Proton loads (in Proton
-11.0 (ARM64)'s ARM64EC Wine, winemetal's unix side does not come up and games report "could not load
-d3d11.dll"), while this Steam client maps every Windows title to Proton 11.0 (ARM64) (`proton-stable`,
-priority 85). Before Steam starts, `steam-compat-default` gives **only games whose profile selects DXMT**
-a per-game `CompatToolMapping` entry for **Proton 10.0** at priority 250, and only on a DXMT-enabled
-boot. Eligible titles are installed Windows games (`libraryfolders.vdf` and `appcache/appinfo.vdf`:
+original files. With the optional ARM64EC payload, `steam-dxmt-arm64ec` prepares a separate
+**SteamMac DXMT (ARM64EC)** compatibility tool from installed **Proton 11.0 (ARM64)**. It uses
+upstream DXMT's ARM64X DLLs and an AArch64 ELF `winemetal.so`, keeping Wine and DXMT native while
+FEX translates the game's x86-64 code. The original Proton files stay untouched. The copy takes
+about 2 GB and is refreshed before Steam starts when the source version or payload changes;
+updates are deferred while a game is using it. Its nested `tool/` directory keeps the legacy
+x86-64 installer from replacing its native DLLs.
+
+Before Steam starts, `steam-compat-default` gives **only games whose profile selects DXMT** a
+per-game mapping to the native tool when available, or **Proton 10.0** otherwise, at priority 250,
+and only on a DXMT-enabled boot. The old x86-64-only payload cannot initialize winemetal under
+ARM64EC Wine; both the native PE DLLs and the native Unix library are required.
+Eligible titles are installed Windows games (`libraryfolders.vdf` and `appcache/appinfo.vdf`:
 type game/demo/application, oslist with windows but not linux) without a user-owned tool choice.
 Every other game keeps Steam's default tool, **Proton 11.0 ARM64**, with DXVK/vkd3d-proton on Venus.
 The old blanket mappings are removed on the first Steam start; subsequent profile changes or
@@ -1077,7 +1084,7 @@ newly installed games are applied at the next Steam start. User edits in Steam r
 This is not just a DLL choice: some games crash under x86-64 Proton 10.0 + FEX regardless of the
 DLLs used. Stellar Blade Demo (3564860), for example, ends SEH recursion with
 `virtual_setup_exception stack overflow` there, but runs on Proton 11.0 ARM64.
-Steam downloads Proton 10.0 (x86-64, under FEX in Steam Linux Runtime 3.0) on the first DXMT game
+For the fallback path, Steam downloads Proton 10.0 (x86-64, under FEX in Steam Linux Runtime 3.0) on the first DXMT game
 launch, and `steam-gfx-path --watch` puts DXMT into it. The **x86-64** builds of Proton Experimental
 and Proton 11.0 need the x86-64 Steam Linux Runtime 4.0 (`SteamLinuxRuntime_4`, app 4183110).
 Do not confuse them with **Proton Experimental (ARM64)** or **Proton 11.0 (ARM64)**: these use
@@ -1095,6 +1102,16 @@ screen ~41 FPS on the default Proton 11.0 (ARM64) + DXVK path, ~117 on DXMT (hel
 d3d11bench with 100 draws and 16 full-screen passes 44 / 50 (Proton 10.0 + DXVK) / 100 FPS, with 2000
 draws and 4 passes 133 / 139 / 115 (DXMT stops at the display's 120 Hz, the Vulkan path goes past it).
 Medians of three 20 s runs launched through Steam (DXMT: six over two boots); details on the site.
+Native ARM64EC tool vs Proton 10.0 + DXMT, M5 Max (macOS 27, VM with 12 vCPUs / 32 GB at 120 Hz,
+KosmicKrisp, FX Steam Launcher 1.9.13 with the ARM64EC layer; frames shown from `WMTR_FRAMES`, three
+interleaved runs per tool). Death's Door gameplay (scripted keyboard input through uinput: walking,
+rolling, sword and bow, 26 s from the same save) holds 120 FPS on both with no frame over 50 ms; VM
+CPU was 330-345% native and 406-432% on Proton 10.0 (median 342% vs 406%, about 16% less), worst
+frame 17-32 ms vs 19-49 ms. Super Battle Golf (Unity 6000.3.10f1) holds 120 FPS on its title screen
+on both (VM CPU 251-279% vs 239-254%: the title screen does not separate them). d3d11bench (x86-64,
+launched through Steam, 20 s, medians) 140 / 138 FPS with 100 draws and 16 passes, 270 / 267 with
+2000 draws and 4 render passes. The native tool starts a game about 1.5 s sooner.
+Unity logs an unsupported `ID3D11Fence` creation on both tools and keeps running.
 DXMT's winemetal calls cross virtio-gpu to an
 executor **inside the VM process on the Mac**, which presents a `CAMetalLayer` in the VM view.
 That layer would cover the guest compositor's cursor; the launcher draws the game's own cursor above
@@ -1126,6 +1143,7 @@ The script installs `meson ninja cmake pkgconf zstd`. If Metal tools are unavail
 
 ```sh
 host/dxmt/build.sh fetch llvm native host pe client payload  # default steps, in order
+host/dxmt/build.sh pe-arm64ec client-arm64 payload-arm64ec    # add native Proton 11 support
 scripts/build-image.sh layer                               # include the guest payload
 host/launcher/build.sh                                     # bundle executor + refreshed layer
 ```
@@ -1136,7 +1154,15 @@ host/launcher/build.sh                                     # bundle executor + r
 `work/out/host/lib/libwmtr_host.dylib`. `pe` cross-builds the four DLLs into `work/out/dxmt-pe`;
 `client` builds/tests `wmtr/build/x86_64-linux/winemetal.so` in Docker; `payload` stages
 `work/out/dxmt/{x86_64-windows,x86_64-unix}` for `/usr/lib/steamac/dxmt/` in the guest layer.
-Steps can be rerun individually; `host/dxmt/build.sh` with no arguments runs them all.
+Steps can be rerun individually; `host/dxmt/build.sh` with no arguments runs the default x86-64 steps.
+The three optional ARM64EC steps use the pinned Wine 11.2 build tools and upstream
+`build-arm64ec.txt`, build/test the Unix client in a native ARM64 container, and stage
+`work/out/dxmt/{aarch64-windows,aarch64-unix}` alongside the x86-64 payload. The host executor
+is shared by both architectures. Packaging and mapping checks:
+`python3 scripts/test/steam-dxmt-arm64ec.py`, `python3 scripts/test/steam-compat-default.py`,
+and `bash scripts/test/steam-gfx-path.sh`. The device/readback smoke test is
+`wmtr/tests/d3d11_device_test.c`; run its x86-64 executable under the native DXMT tool on a
+boot with the wmtr executor enabled.
 
 Credits: [StonkGuy](https://github.com/StonkGuy/steamac) for the wmtr remoting path and integration;
 [DXMT by 3Shain (Feifan He)](https://github.com/3Shain/dxmt) for D3D11/D3D10 on Metal.

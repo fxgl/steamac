@@ -1,7 +1,7 @@
 /* wmtr client: a drop-in winemetal unixlib (exports __wine_unix_call_funcs) that forwards every
  * DXMT winemetal unix call to a host executor over shared memory instead of calling Metal.
- * Built as winemetal.so for the Wine side (x86-64 Linux in the VM guest; x86-64 macOS for the
- * two-process prototype). The transport (shared memory + wake/wait) is pluggable. */
+ * Built as winemetal.so for the Wine side (x86-64 Linux, or AArch64 Linux for native ARM64EC
+ * Wine; x86-64 macOS for the two-process prototype). The transport is pluggable. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>

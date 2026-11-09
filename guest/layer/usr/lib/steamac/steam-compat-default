@@ -1,20 +1,15 @@
 #!/usr/bin/python3
-"""steamac: an x86-64 Proton for installed Windows games whose profiles request DXMT.
+"""steamac: select a DXMT tool only for installed Windows games whose profiles request it.
 
-DXMT's dlls are x86-64 Windows builds with a Wine unixlib, which only an x86-64 Proton can load (in
-Proton 11.0 (ARM64), ARM64EC Wine, d3d11.dll loads but winemetal's unix side does not come up and
-the game reports "could not load d3d11.dll"). The Steam client of this SteamOS maps every Windows
-title to "proton-stable", Proton 11.0 (ARM64), at priority 85. With the launcher's setting on
-(steamac.gfx=dxmt), steam-gfx-path runs `steam-compat-default dxmt` before Steam starts: an
-installed Windows game (libraryfolders.vdf's apps whose appinfo.vdf entry has type game/demo/
-application and an oslist with windows but not linux) with profile gfx=dxmt and no tool of its own
-gets a per-game CompatToolMapping entry in config.vdf for Proton 10.0 at priority 250, the entry Steam
-writes for a game set to a tool in its Properties. Steam downloads Proton 10.0 when such a game first
-needs it, and steam-gfx-path --watch fills it with DXMT. Proton 10.0 (proton_10, appid 3658110) is
-the newest x86-64 Proton this client installs: it runs in Steam Linux Runtime 3.0 under the FEX tool;
-Proton Experimental and the x86-64 Proton 11.0 need Steam Linux Runtime 4.0, which the arm64 client
-refuses ("Failed installing AppID 4183110 (Invalid platform)"). A game installed while Steam runs is
-mapped at the next Steam start.
+Prefer the separate native ARM64EC tool prepared by steam-dxmt-arm64ec. Without
+that payload/tool, fall back to Proton 10.0 (x86-64 under FEX, appid 3658110).
+Stock Proton 11 ARM64 stays on DXVK/Venus for all other games. Selection runs
+before Steam starts, only on a steamac.gfx=dxmt boot, using priority 250 (the
+priority of a tool chosen in Steam's Properties). Eligible appinfo entries are
+game/demo/application with Windows but not Linux in oslist. Installed games are
+read from libraryfolders.vdf. A game installed while Steam runs is mapped at the
+next Steam start. Existing managed Proton 10 mappings migrate to native DXMT
+when it becomes available; a user's explicit tool choice is preserved.
 
 Never the wildcard ("0"): Steam applies a high-priority wildcard to its tools too, mapped the FEX
 tool (3127680) to Proton, "updated" it to zero depots and emptied it, after which every x86-64 Proton
@@ -37,6 +32,7 @@ import sys
 import tempfile
 
 TOOL = "proton_10"
+NATIVE_TOOL = "steamac_dxmt_arm64ec"
 # What Steam writes for a game set to a tool in its Properties (above its own mapping's 85).
 OURS = {"name": TOOL, "config": "", "priority": "250"}
 MAPPING = ("InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping")
@@ -257,7 +253,12 @@ def main(mode):
                      or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "steamac/gfx-path")
     config = steam / "config/config.vdf"
     marker = state_dir / "compat-default.json"
-    mapped = set(json.loads(marker.read_text()).get("mapped", [])) if marker.exists() else set()
+    previous = json.loads(marker.read_text()) if marker.exists() else {}
+    mapped = set(previous.get("mapped", []))
+    previous_mapping = {**OURS, "name": previous.get("tool", TOOL)}
+    native = steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
+    tool = NATIVE_TOOL if (native / ".steamac-arm64ec.json").is_file() and (native / "tool/files/lib/wine/aarch64-unix/winemetal.so").is_file() else TOOL
+    desired = {**OURS, "name": tool}
     if not config.exists():
         if mode == "dxmt":
             log("no " + str(config) + " yet; games are mapped at the next start")
@@ -266,7 +267,7 @@ def main(mode):
     current = mappings(text)
     # Entries changed in Steam since we wrote them belong to the user now.
     for appid in sorted(mapped):
-        if current.get(appid) != OURS:
+        if current.get(appid) != previous_mapping:
             log("compatibility tool of " + appid + " changed in Steam; leaving it")
             mapped.discard(appid)
 
@@ -277,17 +278,20 @@ def main(mode):
         mapped.remove(appid)
     if removed:
         log("Steam's own compatibility tool again for " + " ".join(removed))
+    migrated = sorted(mapped & wanted) if previous_mapping != desired else []
+    for appid in migrated:
+        text = set_mapping(text, appid, desired)
     added = sorted(wanted - set(current))
     for appid in added:
-        text = set_mapping(text, appid, OURS)
+        text = set_mapping(text, appid, desired)
         mapped.add(appid)
-    if added:
-        log(TOOL + " for " + " ".join(added))
-    changed = added + removed
+    if added or migrated:
+        log(tool + " for " + " ".join(added + migrated))
+    changed = added + removed + migrated
     if changed:
         atomic_write(config, text)
     if mapped:
-        atomic_write(marker, json.dumps({"mapped": sorted(mapped)}) + "\n")
+        atomic_write(marker, json.dumps({"mapped": sorted(mapped), "tool": tool}) + "\n")
     elif marker.exists():
         marker.unlink()
 
