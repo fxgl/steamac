@@ -399,6 +399,14 @@
 #              Repro: sentry-g-brackets.sh (384 divergent invocations, all 387 output words checked;
 #              nested loops, break/continue/return, post-if merges, a 2048-operation ALU control).
 #              The event's MSL was not retained, so its exact shader shape is not claimed.
+#   0091       steamac: skip vkCmdCopyBuffer[2] with NULL source/destination buffer handles, with at
+#              most two warnings per process. STEAMAC-9S/9T (Dota 2, M4, 1.9.13) fault at
+#              kk_CmdCopyBuffer2+80: the matching dylib UUID's instruction loads destination->metal at
+#              +0x68 from x22=0; the source VkBuffer and its Metal buffer are non-NULL. Only invalid
+#              NULL handles are skipped, before acquiring an encoder; non-NULL operands, including
+#              unbound sparse buffers, keep the existing path. Repro: test/copy-buffer-null.py <dylib>
+#              (six NULL-source/destination/both cases crash before; after, 1024 calls per case log
+#              once, then a valid copy succeeds; dense and unbound-sparse controls pass before/after).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -625,6 +633,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0088 = steamac: explicitly shared host-memory images use imported pages (temporary mesa!44929 workaround, #58)"
 	echo "  0089 = steamac: opt-in MESA_KK_DEBUG=syncs traces queue synchronization and CPU waits past 1 s (STEAMAC-94)"
 	echo "  0090 = steamac: materialize deep MSL selection predicates past depth 128 (Metal's 256 bracket limit, STEAMAC-G)"
+	echo "  0091 = steamac: skip vkCmdCopyBuffer[2] with NULL buffer handles, bounded warning (STEAMAC-9S/9T)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000091 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Mon, 9 Nov 2026 21:00:00 +0000
+Subject: [PATCH] kosmickrisp: skip null buffer copy operands (STEAMAC-9S/9T)
+
+STEAMAC-9T event 8b61b0326f434c719eaa5ea2e60644f3 faults at
+kk_CmdCopyBuffer2+80, KERN_INVALID_ADDRESS 0x68. The staged driver
+UUID 632D1882-1FCA-36D6-B695-FAC5EC96A7DB matches the event. Its +24
+loads src/dst into x21/x22; +80 is ldp x3,x12,[x22,#0x68]. The event
+has x22=0, x21=0x7993c67780 and the already-loaded source Metal buffer
+x1=0x797da99a40. It is a NULL destination VkBuffer, not a NULL Metal
+allocation or a non-resident sparse page. STEAMAC-9S is the supervisor's
+report of the same crash. Why the guest supplied the missing handle is
+not established by the report.
+
+VkCopyBufferInfo2's srcBuffer/dstBuffer parameters are non-optional
+valid VkBuffer handles (VUID-VkCopyBufferInfo2-{src,dst}Buffer-parameter).
+Reject only their NULL form before recording an operation or acquiring
+an encoder. Warn at most twice per process, once for each newly seen
+missing operand, using a relaxed atomic bitmask. Non-NULL handles,
+including fully unbound sparse-residency buffers, take the old path.
+This does not attempt to validate dangling handles or freed memory.
+
+Private release build, Metal API validation enabled:
+- Before: legacy vkCmdCopyBuffer and vkCmdCopyBuffer2 each SIGSEGV
+  for NULL source, destination and both (six processes).
+- After: each records 1024 invalid copies, emits one bounded warning,
+  then executes a valid two-region copy and checks every destination byte.
+- Dense copies with nonzero memory bindings and fully unbound sparse
+  read-zero/write-drop controls pass before and after, via both APIs.
+Regression: host/kosmickrisp/test/copy-buffer-null.py <private dylib>
+(before: add --expect-null-crashes).
+---
+ src/kosmickrisp/vulkan/kk_cmd_copy.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_copy.c b/src/kosmickrisp/vulkan/kk_cmd_copy.c
+--- a/src/kosmickrisp/vulkan/kk_cmd_copy.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_copy.c
+@@ -17,6 +17,9 @@
+ #include "kosmickrisp/bridge/vk_to_mtl_map.h"
+ 
+ #include "util/format/u_format.h"
++#include "util/log.h"
++
++#include <stdatomic.h>
+ 
+ VKAPI_ATTR void VKAPI_CALL
+ kk_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
+@@ -25,6 +28,23 @@
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
+    VK_FROM_HANDLE(kk_buffer, src, pCopyBufferInfo->srcBuffer);
+    VK_FROM_HANDLE(kk_buffer, dst, pCopyBufferInfo->dstBuffer);
++   /* Both handles are required by VkCopyBufferInfo2, also for the legacy
++    * vkCmdCopyBuffer wrapper. A sparse buffer with no resident pages still
++    * has a valid handle and must not be skipped. */
++   if (unlikely(src == NULL || dst == NULL)) {
++      static atomic_uint warned;
++      const unsigned missing = (src == NULL ? 1u : 0u) |
++                               (dst == NULL ? 2u : 0u);
++      if ((atomic_fetch_or_explicit(&warned, missing, memory_order_relaxed) &
++           missing) != missing) {
++         mesa_logw("kk: skipping invalid vkCmdCopyBuffer2: NULL buffer handle "
++                   "(src=%p dst=%p regions=%u); further warnings for these "
++                   "missing operands are suppressed",
++                   (void *)src, (void *)dst, pCopyBufferInfo->regionCount);
++      }
++      return;
++   }
++
+    kk_cb_record_op(&cmd->record, KK_CB_OP_COPY);
+ 
+    mtl_compute_encoder *encoder = cs_get_compute(cmd);
+-- 
+2.50.1
