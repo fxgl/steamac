@@ -101,6 +101,21 @@
 #   losing written lanes or changing logical types. Cache keys include the adapter.
 #   stage_widths checks pixels and serialized-cache reuse. Current 11-07 events
 #   instead have missing locations or float/uint mismatches and remain unresolved.
+#   SPIRV-Cross 0059 (STEAMAC-A9): a captured user-defined rgb9e5(uint) collided
+#   with metal::rgb9e5<T>, a pixel-type alias missing from reserved function names.
+#   Rename user definitions/calls through the normal path; rgb9e5_helper checks
+#   every decoded channel for zero, ordinary and maximum packed RGB9E5 values.
+#   SPIRV-Cross 0060 (STEAMAC-A2): standalone geometry ClipDistance outputs
+#   bypassed composite lowering, retaining native clipping but omitting
+#   fragment-visible user(clipN) outputs. Reuse the builder's per-EmitVertex copies.
+#   sentry-a2-clip-distance.sh checks plain/block one/two-plane interfaces, native
+#   clipping and user copies, including the native-only option, in MSL 3 and 4.
+#   MoltenVK 0054 (STEAMAC-AD diagnostics): the 112824-byte/1137-line compute
+#   shader exceeded the old 64 KiB source cap, omitting the kernel and preventing
+#   compiler-crash replay. Preserve up to 256 KiB/8192 lines for up to two scrubbed,
+#   hash-deduplicated .metal event attachments per process; Sentry truncates extra
+#   fields at 16 KiB. sentry-ad-capture.sh checks exact recovery and byte/line
+#   boundaries through real failures. No Bodycam compiler workaround is claimed.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -386,6 +401,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         lazy Metal descriptor creation (STEAMAC-9E/79: width 536346624 > 268435456)"
 	echo "  0053 = steamac: link same-type ordinary vertex/fragment vector widths without losing"
 	echo "         producer lanes, and key/cache the interface adapter (historical STEAMAC-2M/88)"
+	echo "  0054 = steamac: retain failed shader source up to 256 KiB / 8192 lines for bounded"
+	echo "         replayable event attachments (STEAMAC-AD diagnostics, not a compiler workaround)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"
@@ -492,6 +509,10 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         (STEAMAC-57: 30976-byte std430 upper bound became 46464 in Metal; now 19360)"
 	echo "  0058 = steamac: preserve logical shader types while adapting ordinary raster varying"
 	echo "         widths, including arrays/blocks/components (historical STEAMAC-2M/88)"
+	echo "  0059 = steamac: reserve Metal's rgb9e5 pixel-type name for user functions"
+	echo "         (STEAMAC-A9); nested unpacking helpers preserve all decoded channels"
+	echo "  0060 = steamac: emit geometry mesh ClipDistance user(clipN) copies alongside"
+	echo "         native clip_distance arrays (STEAMAC-A2); block/native-only paths preserved"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

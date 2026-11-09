@@ -99,7 +99,8 @@
 #    inline array<T, 1000000> and program, ~100 MB per pipeline).
 # 17. msl_helpers.c: fragment helpers with an OpKill-only block, directly and through a nested caller
 #    (STEAMAC-1Q): discard left-half pixels, render right-half colors, suppress writes after discard;
-#    a compute helper named log10(float) (STEAMAC-1R), its implementation's values read back.
+#    user helpers named log10(float) (STEAMAC-1R) and rgb9e5(uint) (STEAMAC-A9)
+#    preserve their own implementations, checking all decoded RGB9E5 channels.
 #    a graphics link failure with a missing varying (STEAMAC-2M/41) must retain reflected stage diagnostics.
 #    texture_helpers.c (STEAMAC-3W): robust sampling through a sampler2D helper with an immutable YCbCr
 #    conversion must compile, and sampling a null descriptor must return four zeros.
@@ -493,6 +494,9 @@ if [ "$driver" = moltenvk ]; then
 		echo "FAIL graphics pipeline failure lacks stage interfaces"
 		exit 1
 	fi
+	# STEAMAC-AD: retain replayable source at 112824 bytes / 1137 lines and at the
+	# inclusive byte/line limits, while keeping oversized diagnostics bounded.
+	sh "$here/sentry-ad-capture.sh" "$libdir" "$work/ad-capture" "$inc"
 fi
 
 if [ "$driver" = moltenvk ]; then
