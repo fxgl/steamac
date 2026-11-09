@@ -172,7 +172,7 @@ start over.
 |---|---|
 | Ctrl+Cmd+F | full screen (macOS turns on Game Mode: Info.plist declares a game — `LSApplicationCategoryType` `public.app-category.games`, `GCSupportsGameMode`, `LSSupportsGameMode`; `gamepolicyd` logs “Game mode status is now on”) |
 | Ctrl+Cmd+G | manually capture / release the mouse |
-| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display. The HUD library is loaded only if the HUD is on when the VM boots: turning it on takes effect after a restart, turning it off hides it at once and unloads it at the next restart. Apple's HUD has crashed the VM on macOS 26 (26.5.2, 26.6.2; STEAMAC-59/9J), so leave it off there if that happens |
+| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display. The HUD library is loaded only if the HUD is on when the VM boots: turning it on takes effect after a restart, turning it off hides it at once and unloads it at the next restart. Apple's HUD has crashed the VM with KosmicKrisp (Metal 4) on macOS 26, even with the overlay hidden (STEAMAC-59/7K/7Q/9X/9Y), so turning it on with KosmicKrisp asks for confirmation; as an alternative without Apple's HUD, Settings > General > Log frame-pacing statistics records guest display timing (not game FPS). Crash reports carry the requested and effective HUD state, whether its library was injected, and the driver |
 | Ctrl+Option | release the captured mouse |
 | close window | shut down the guest (power button) |
 
@@ -862,6 +862,9 @@ not executable (STEAMAC-8K), the window explains that the installation is incomp
 official DMG into Applications and check security software. One warning per installation records
 translocation, desync's presence and permissions, the code-signature result and bundle-relative
 Resources names and sizes; the bundle's absolute path stays in the local log and no crash-report dialog opens.
+The warning also records whether the bundle, `Contents` and `Resources` still exist (type and errno): an
+app moved, deleted or replaced while running loses all three (STEAMAC-AE), so the guidance asks to quit
+FX Steam Launcher completely before replacing or moving it, then reopen it from Applications.
 The launcher logs the target/cache filesystem type. A chunk-cache rename collision is retried once with a
 single worker and no cache. A rootfs hash mismatch is checked again with a sequential read to distinguish bad
 sparse-extent metadata from bad file bytes. If the bytes are bad, the temporary rootfs and chunk cache are
@@ -1006,6 +1009,8 @@ are emitted as guarded sibling blocks, because Metal rejects source nested past 
 STEAMAC-G report; `sentry-g-brackets.sh` checks a 320-case divergent ladder on the GPU). For a repeatable
 KosmicKrisp stall, `MESA_KK_DEBUG=syncs,cbs` set when starting the macOS launcher (not as a game
 argument) traces queue synchronization and every CPU wait longer than one second (STEAMAC-94).
+A buffer copy with a NULL source or destination buffer is skipped with one warning instead of crashing the
+VM process (Dota 2, STEAMAC-9S/9T; `host/kosmickrisp/test/copy-buffer-null.py`).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -1026,6 +1031,9 @@ stores into `uint4 locations[32]`, reported as an internal error or an interrupt
 968-element `{float; vec3; float}` array needs 19360 bytes instead of Metal's 46464 > 32768 (STEAMAC-57).
 A vertex output narrower than the fragment input at the same Location (float3 → float4) is widened to
 the input's width; missing varyings and different numeric types remain unsupported (STEAMAC-2M/88).
+A shader function named `rgb9e5` is renamed so it no longer collides with Metal's `rgb9e5` pixel type
+(STEAMAC-A9), and a geometry/mesh stage writing only `ClipDistance` also writes the `user(clip0)` copy
+the fragment shader reads (STEAMAC-A2).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
@@ -1248,7 +1256,9 @@ What is sent:
   guest GPU context becomes fatal/device lost (vkr “fatal decoder state”, “device lost”), MoltenVK
   pipeline compilation errors (`[mvk-error] … compile failed`; if MoltenVK printed MSL source
   (`[mvk-msl] …`: the first 40 lines and lines around the error), it is sent in extra `msl_source`,
-  not in breadcrumbs; the vkr line “pipeline … creation failed on host” is a breadcrumb only), a
+  not in breadcrumbs; the complete failing shader, up to 256 KiB and scrubbed, is attached as a `.metal`
+  file, at most two different shaders per process, deduplicated by content hash (STEAMAC-AD); the vkr
+  line “pipeline … creation failed on host” is a breadcrumb only), a
   Rust panic in libkrun (`thread … panicked at`), failure of initial disk provisioning (`provision
   failed`), failure to create a disk, unexpected VM exit (nonzero exit code or signal when shutdown
   was not requested by the user), and the idle indicator's “SteamOS is not responding”. For a VM
@@ -1503,6 +1513,12 @@ what you expected, what happened), and checkboxes for attachments:
   Simulator's `game.log.txt`. For an ATS emulator crash, set its Steam launch options to
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`, reproduce, and report;
   the collector includes the last 512 KiB of that log. Remove the launch options afterwards.
+  Proton logs larger than 1 MiB are collected as a scrubbed first-1 MiB startup excerpt plus the last
+  1 MiB, with the middle omitted, so the runtime header and the first exception survive crash-handler
+  spam (STEAMAC-AA). Desktop Mode reports record whether `plasmashell`, KWin and Discover are running and
+  allowlisted renderer flags, without process arguments or environment values (STEAMAC-9P). Launcher logs
+  record Game Mode eligibility (Info.plist keys at runtime and on disk), native fullscreen state and
+  filtered `gamepolicyd` messages (STEAMAC-9V).
   Without Proton logs the archive notes that `PROTON_LOG=1 %command%` as a game's launch options,
   one reproduction and a new report are needed to see a Windows game's own failure. Unity Player and
   Easy Anti-Cheat text logs are collected from the running or last-launched game's Proton prefix and the
@@ -1706,7 +1722,12 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
 ## Limitations
 
 - DirectX 12 (vkd3d-proton): feature level 12_0 on KosmicKrisp (tiled resources tier 2: sparse binding and
-  residency on Metal 4 placement sparse resources), 11_0 on MoltenVK; SM 6.0 on both (no SM 6.2+ on Apple GPUs).
+  residency on Metal 4 placement sparse resources), 11_0 on MoltenVK; SM 6.0 on both (no SM 6.2+ on Apple GPUs:
+  vkd3d-proton needs both FP32 denormal flush-to-zero and preservation, and Metal does not preserve denormals).
+  virglrenderer logs the SM 6.0 prerequisites and SM 6.2 denormal properties each device reports. Age of
+  Mythology: Retold stops with "Shader model too low (Shader_Model_60)" (STEAMAC-AB/AC/A0); on an M5 Max with
+  KosmicKrisp the launch options `VKD3D_DISABLE_EXTENSIONS= VKD3D_SHADER_MODEL=6_6 %command%` got past this
+  check to the menu; this only overrides the reported shader model, and matches may still exit.
   Within one render pass, depth written to unbound tiles of a sparse depth attachment stays in Apple's tile memory.
   Stellar Blade Demo (UE4) runs at 1280×800, 60 FPS on an M4 Max; the first run spends minutes compiling shaders. The
   x86 emulator in Proton ARM64 (FEX) stopped it once after 20 minutes (DEP check in its protected .exe).
