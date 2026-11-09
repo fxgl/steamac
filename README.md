@@ -747,6 +747,49 @@ GameController controller, and a new GameController controller waits if BLE alre
 and `pad state` (the guest's pads, their last rumble level, whether the guest takes HID devices,
 connected DualSenses and Steam Controllers, and input reports passed through).
 
+### Switch2Bridge (mando Pro de Switch 2 por socket local)
+
+Requiere el proyecto externo [Switch2Bridge](https://github.com/SwonDev/Switch2Bridge)
+instalado y su daemon en marcha. Este launcher incluye un consumidor **de solo lectura**
+del socket que ese daemon publica (`~/Library/Application Support/Switch2Bridge/estado.sock`).
+No crea servidores, no escribe en el puente, no lanza ni repara el daemon y no pide permisos
+adicionales; el puente sigue funcionando igual para Wine y la copia instalada no se modifica.
+El consumidor no depende del estado privado de una instalación concreta.
+
+- **Requisito**: el daemon de Switch2Bridge en marcha, con el mando emparejado por Bluetooth.
+  Steamac y el puente deben ejecutarse con el mismo usuario. El típico `pad state` muestra
+  `Switch2Bridge: pad, player N` (o `no pad`).
+- **Contrato**: tramas `S2P1` de 20 bytes little-endian, unidireccionales: magia
+  `0x53325031`, máscara Nintendo, cuatro ejes `i16` (`-32768…32767`), ZL/ZR, conectado y
+  relleno. El consumidor recompone lecturas parciales/agrupadas y tolera la reconexión.
+- **Qué llega**: botones, D-pad, sticks y ZL/ZR digitales, mapeados por **posición física**
+  a un pad Xbox 360 dentro de SteamOS. X arriba llega a `BTN_WEST` y Y a la izquierda a
+  `BTN_NORTH`, con una sola inversión de Y y sin overflow en los extremos.
+- **Retorno que no viaja**: el ABI no transporta rumble HD, giroscopio, batería ni LEDs;
+  no se simulan.
+- **Botones extra**: Captura, C, GL y GR sí están en la máscara del ABI, pero la emulación
+  Xbox/uinput del guest solo expone 11 botones y no los presenta; no se finge esa función.
+- **Prioridad**: GameController, Moonlight y los mandos HID conservan sus jugadores; esta
+  fuente toma el primer jugador libre. La única supresión implementada es por HID exacto
+  `057e:2069` (modo cable del puente). No se infiere por nombres de GameController: sin
+  identidad fiable, un Pro de Switch 1, un Joy-Con u otro mando deben conservar su jugador.
+- **Cambios de estado**: al desconectarse/dormir el mando o cerrarse el socket se sueltan
+  botones y se centran los ejes; al volver se reasigna el pad sin reiniciar la VM.
+- **Pruebas aisladas**: la suite incluye contrato/framing/mapeo/lifecycle/asignación y un
+  socket Unix temporal real (lectura, desconexión y reconexión). Se ejecuta sin VM, ventanas,
+  PNG ni socket del usuario, con un dominio de preferencias de prueba y la fuente de
+  producción desactivada:
+
+  ```bash
+  STEAMAC_DEFAULTS_DOMAIN=es.fxgam.steamac.selftest-switch2bridge \
+  STEAMAC_SWITCH2BRIDGE=0 \
+  steamac-vm --headless --selftest-settings
+  ```
+
+El funcionamiento inalámbrico fue confirmado por el usuario en su integración personalizada
+anterior (`FX Steam Launcher Switch2Bridge`). No se repitió una prueba física de esta rama,
+no se afirma aceptación upstream y no se deduce soporte para juegos nativos de macOS.
+
 ## FX Steam Launcher.app
 
 `host/launcher/build.sh` (and `./build.sh host`) builds `work/out/FX Steam Launcher.app` in

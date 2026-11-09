@@ -1,18 +1,21 @@
 import AppKit
+import Darwin
 import SwiftUI
 
-/// `--selftest-settings [--selftest-out DIR]`: open the Settings window without a VM, write
-/// DIR/settings-<tab>.png for every tab (command-line overrides of this run are shown as in a
-/// real run), then DIR/settings-create-disk.png of the "Create New Disk…" window,
+/// `--selftest-settings [--headless] [--selftest-out DIR]`: open the Settings window without a
+/// VM, write DIR/settings-<tab>.png for every tab (command-line overrides of this run are shown
+/// as in a real run), then DIR/settings-create-disk.png of the "Create New Disk…" window,
 /// DIR/settings-first-run.png of the first-run alert, DIR/settings-what-is-sent.png (the crash
 /// reports popover), DIR/settings-display-presets.png (window size popup open; screen capture),
 /// DIR/settings-display-custom.png (Custom… fields) and DIR/settings-advanced-custom.png (custom VM
 /// size with its warnings), and check that each capture has content.
-/// Also checks that crash-report scrubbing redacts the user, host, computer and Bonjour names,
-/// that a guest process's GPU teardown is no crash report (LineScanner), and the automatic VM size
-/// (VMSizing) on simulated Macs, the update check's version ordering and release selection,
-/// the Mac time zone and clock format kernel parameters (MacTime), and the clipboard port's frame codec and
-/// concealed-item filter (ClipboardSync), plus shared-library preferences and boot arguments.
+/// With `--headless`, the same pure checks run before touching the UI/profile fixture: no
+/// NSApplication, window, PNG, VM or focus. Also checks that crash-report scrubbing redacts the
+/// user, host, computer and Bonjour names, that a guest process's GPU teardown is no crash report
+/// (LineScanner), and the automatic VM size (VMSizing) on simulated Macs, the update check's
+/// version ordering and release selection, the Mac time zone and clock format kernel parameters
+/// (MacTime), and the clipboard port's frame codec and concealed-item filter (ClipboardSync),
+/// plus shared-library preferences and boot arguments.
 enum SettingsSelfTest {
     /// Use a private preferences domain, like ProvisionSelfTest's disk-selection checks.
     private static func sharedLibrarySelfCheck() -> [String] {
@@ -103,6 +106,19 @@ enum SettingsSelfTest {
 
     static func run(_ o: Options, overrides: [LauncherSettings.Key: String]) -> Never {
         let settings = LauncherSettings.shared
+        if o.headless {
+            // Antes de tocar el perfil/nombre 2147483646 o el fixture UI: sin NSApplication,
+            // ventanas, PNG, VM ni foco, y sin dejar el fixture mutado en el dominio real.
+            let failures = CrashReporting.scrubSelfCheck() + CrashReporting.scannerSelfCheck() + CrashReporting.exitSelfCheck()
+                + VMSizing.selfCheck() + UpdateChecker.selfCheck() + MacTime.selfCheck()
+                + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck()
+                + GameProfile.selfCheck() + sharedLibrarySelfCheck()
+                + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+                + Switch2BridgeInput.selfCheck() + Switch2BridgeInput.lifecycleSelfCheck()
+                + Switch2BridgeInput.socketSelfCheck() + GamepadBridge.remoteRestorationSelfCheck()
+            log("selftest-settings-headless: \(failures.isEmpty ? "PASS" : "FAIL: " + failures.joined(separator: ", "))")
+            exit(failures.isEmpty ? 0 : 1)
+        }
         let profileID = 2147483646
         let profileTestEnv = "STEAMAC_SELFTEST=\(profileID)"
         let savedProfile = settings.profile(for: profileID)
@@ -127,6 +143,8 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+            + Switch2BridgeInput.selfCheck() + Switch2BridgeInput.lifecycleSelfCheck()
+            + Switch2BridgeInput.socketSelfCheck() + GamepadBridge.remoteRestorationSelfCheck()
             + sharedLibrarySelfCheck()
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType
