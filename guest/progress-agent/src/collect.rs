@@ -22,6 +22,9 @@ use std::time::Duration;
 use crate::codec;
 use crate::port::Port;
 
+#[path = "desktop_diagnostics.rs"]
+mod desktop_diagnostics;
+
 /// Raw bytes per `logs` line (8192 base64 characters; the launcher splits
 /// lines at 16 KiB).
 const CHUNK: usize = 6144;
@@ -239,6 +242,10 @@ fn gather(dir: &Path, steam: &Path, home: &Path, game: Option<u32>) -> Result<()
     out("network-routes.txt", &["ip", "route"], 16 << 10);
     out("network-devices.txt", &["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"], 16 << 10);
     out("network-listeners.txt", &["ss", "-lntu"], 64 << 10);
+    // STEAMAC-9P: distinguish a lost Plasma shell from KWin/Discover failure,
+    // and verify the existing gamescope-WSI exclusion in the actual processes.
+    std::fs::write(dir.join("desktop-diagnostics.txt"), desktop_diagnostics::snapshot(Path::new("/proc")))
+        .map_err(|e| format!("desktop diagnostics: {e}"))?;
     for (name, path) in [
         ("os-release.txt", "/etc/os-release"),
         ("layer-release.txt", "/usr/lib/steamac/layer-release"),
