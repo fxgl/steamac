@@ -506,14 +506,16 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     /// Menu "Show Metal Performance HUD" / Ctrl+Cmd+P: flips the setting (persisted, Settings > Display).
     func toggleMetalHUD() {
+        guard settings.metalHUD || MetalHUD.confirmEnable(current: settings.metalHUD, nextDriver: settings.vulkanDriver) else { return }
         settings.metalHUD.toggle()
     }
 
     private func applyMetalHUD(_ on: Bool) {
         let shown = MetalHUD.visible(requested: on)
         view.metalHUD = shown
-        CrashReporting.metalHUDChanged(shown)
+        CrashReporting.metalHUDChanged()
         log("display: Metal Performance HUD \(shown ? "on" : "off") (library \(MetalHUD.loaded ? "loaded" : "not loaded"))")
+        if on && MetalHUD.driver == .kosmickrisp { log("display: \(MetalHUD.kosmicKrispNote)") }
         if on && !shown { log("display: enabling the Metal Performance HUD requires a VM restart") }
         view.redraw()   // the HUD changes with the next present; an idle guest sends none
     }

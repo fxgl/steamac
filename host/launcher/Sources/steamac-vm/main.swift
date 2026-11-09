@@ -28,7 +28,8 @@ settings.bootedDXMT = Supervisor.isChild ? options.wmtrLibrary != nil : nil
 
 // Decide before anything can initialise Metal: off means no Apple HUD completion handlers,
 // not just a hidden overlay. Enabling the HUD later takes effect on the next VM boot.
-MetalHUD.configure(isChild: Supervisor.isChild, headless: options.headless, requested: settings.metalHUD)
+MetalHUD.configure(isChild: Supervisor.isChild, headless: options.headless, requested: settings.metalHUD,
+                   driver: options.vulkanDriver)
 
 if options.selftestMetalCache { MetalCompilerCache.selfTest() }
 // Before CrashReporting's GPU tags, the window or either Vulkan driver can initialise Metal.
@@ -275,6 +276,7 @@ extension Lifecycle: NSMenuItemValidation {
             item.state = LauncherSettings.shared.metalHUD ? .on : .off
             // libMTLHud's own item (MainMenu.adoptHUDMenuItems): titled and ticked like the View menu item.
             if item.tag == MainMenu.adoptedHUDItemTag { item.title = String(localized: "Show Metal Performance HUD (Ctrl+Cmd+P)") }
+            item.toolTip = MetalHUD.driver == .kosmickrisp ? MetalHUD.kosmicKrispNote : MetalHUD.restartNote
         }
         if item.action == #selector(menuCheckForUpdates) {
             item.title = UpdateChecker.shared.menuTitle

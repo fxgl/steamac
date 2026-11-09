@@ -634,11 +634,14 @@ private struct DisplayTab: View {
                 }
             }
             Section {
-                Toggle(isOn: $settings.metalHUD) {
+                Toggle(isOn: Binding(get: { settings.metalHUD }, set: { on in
+                    guard !on || MetalHUD.confirmEnable(current: settings.metalHUD, nextDriver: settings.vulkanDriver) else { return }
+                    settings.metalHUD = on
+                })) {
                     Label2(title: "Metal Performance HUD",
                            detail: String(localized: "Apple's frame-rate overlay in the top-right corner of the window: FPS, frame interval, GPU time, memory (Ctrl+Cmd+P, View menu).")
                                + " " + MetalHUD.restartNote
-                               + (ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26 ? " " + MetalHUD.macOS26Warning : ""),
+                               + (MetalHUD.driver == .kosmickrisp || settings.vulkanDriver == .kosmickrisp ? " " + MetalHUD.kosmicKrispNote : ""),
                            now: false, key: .metalHUD)
                 }
                 Toggle(isOn: $settings.superResolution) {

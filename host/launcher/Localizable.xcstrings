@@ -995,22 +995,7 @@
         }
       }
     },
-    "Apple's Metal HUD can crash the VM on macOS 26 (observed on 26.5.2 and 26.6.2). Leave it off if this happens." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Панель Metal от Apple может вызвать сбой ВМ на macOS 26 (наблюдалось на 26.5.2 и 26.6.2). Если это происходит, оставьте её выключенной."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apple 的 Metal HUD 可能导致 macOS 26 上的虚拟机崩溃（已在 26.5.2 和 26.6.2 上观察到）。如果发生此问题，请将其关闭。"
-          }
-        }
-      }
-    },
+    "Unavailable with KosmicKrisp: Apple's HUD hooks Metal 4 command encoders and can crash the VM even when hidden. To use the HUD, select MoltenVK in Graphics and restart (DXMT may remain enabled)." : {},
     "Enabling requires a VM restart. Turning it off hides the overlay now; restart to unload Apple's HUD library." : {
       "localizations" : {
         "ru" : {

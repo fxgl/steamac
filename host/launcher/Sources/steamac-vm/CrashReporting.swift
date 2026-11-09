@@ -352,7 +352,7 @@ enum CrashReporting {
 
     /// VM process: boot settings, kernel version (scanned from the Image in the background).
     private static func vmTags(options: Options) {
-        vmContext([
+        var context = [
             "boot": String(Supervisor.bootNumber),
             "display_mode": options.headless ? "headless"
                 : "\(options.guestSize.0)x\(options.guestSize.1)@\(options.refreshRate) \(options.fullscreen ? "fullscreen" : "windowed")"
@@ -361,9 +361,9 @@ enum CrashReporting {
             "network": options.network ? "on" : "off",
             "sound": options.sound ? "on" : "off",
             "metal_cache": MetalCompilerCache.outcome,
-            "metal_hud": MetalHUD.visible(requested: LauncherSettings.shared.metalHUD) ? "on" : "off",
-            "metal_hud_injected": MetalHUD.loaded ? "on" : "off",
-        ])
+        ]
+        context.merge(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD)) { _, new in new }
+        vmContext(context)
         let kernel = options.kernel
         guard !kernel.isEmpty else { return }
         DispatchQueue.global(qos: .utility).async {
@@ -380,7 +380,7 @@ enum CrashReporting {
         }
         guard role == .vm, let dir = Supervisor.runDir else { return }
         let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache",
-                    "metal_hud", "metal_hud_injected"]
+                    "metal_hud", "metal_hud_injected", "metal_hud_requested", "metal_hud_driver"]
         let snapshot = locked { tags.filter { keys.contains($0.key) } }
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) {
             try? data.write(to: URL(fileURLWithPath: dir + "/sentry-tags.json"), options: .atomic)
@@ -389,9 +389,9 @@ enum CrashReporting {
 
     /// Persist independently of the breadcrumb ring: shader/encoder logs can evict the HUD
     /// toggle long before a crash (STEAMAC-3). The supervisor copies these tags at report time.
-    static func metalHUDChanged(_ shown: Bool) {
+    static func metalHUDChanged() {
         guard configured, role == .vm else { return }
-        vmContext(["metal_hud": shown ? "on" : "off", "metal_hud_injected": MetalHUD.loaded ? "on" : "off"])
+        vmContext(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD))
     }
 
     /// VM process: the game that has the guest's focus (`appid` tag of both processes' events
