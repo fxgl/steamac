@@ -238,6 +238,10 @@ final class ReportBundle: @unchecked Sendable {
         if choices.launcherLogs, let diagnostics = context.controllerDiagnostics {
             b.write("controllers.txt", CrashReporting.scrub(diagnostics()))
         }
+        if choices.launcherLogs {
+            let window = NSApp.windows.first { $0.contentView is VMView }
+            b.write("game-mode.txt", GameModeDiagnostics.snapshot(window: window))
+        }
         status(choices.launcherLogs ? String(localized: "Collecting launcher logs…") : String(localized: "Collecting system information…"))
         await Task.detached { b.writeHostFiles() }.value
         if choices.screenshot {
@@ -303,6 +307,7 @@ final class ReportBundle: @unchecked Sendable {
             return
         }
         if choices.launcherLogs {
+            write("game-policy.log", ReportBundle.scrub(GameModeDiagnostics.policyLog(in: dir)))
             if let data = RollingLog.tail(dir: runDir, name: "remote-play-status.txt", maxBytes: 16 << 10) {
                 write("remote-play-status.txt", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
             }

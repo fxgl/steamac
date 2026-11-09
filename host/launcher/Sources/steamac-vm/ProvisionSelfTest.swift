@@ -16,6 +16,8 @@ enum ProvisionSelfTest {
         }
         let memoryFailures = MemoryRegionDiagnostics.selfCheck()
         check(memoryFailures.isEmpty, "host memory-region diagnostics: \(memoryFailures)")
+        let gameModeFailures = GameModeDiagnostics.selfCheck()
+        check(gameModeFailures.isEmpty, "Game Mode eligibility diagnostics (STEAMAC-9V): \(gameModeFailures)")
         attempt("incomplete app installation (STEAMAC-8K)") {
             let fm = FileManager.default
             let bundle = fm.temporaryDirectory.appendingPathComponent("steamac-incomplete-\(UUID().uuidString).app")
@@ -52,6 +54,9 @@ enum ProvisionSelfTest {
                       "missing-tool fixture records resource availability and non-translocated state")
                 check(detail["code_signature_validity_status"] == "0" && detail["code_signature_valid"] == "true",
                       "missing required tool is still diagnosed when the fixture's code signature is valid")
+                check(detail["bundle_presence"] == "present" && detail["contents_presence"] == "present"
+                      && detail["resources_presence"] == "present" && detail["resources_directory"] == "true",
+                      "missing-tool diagnostics distinguish a present app and Resources from a moved/deleted bundle (STEAMAC-AE)")
                 check(detail["resources_listing"]?.contains("\"Contents/Resources/Image\" size=16") == true
                       && detail.values.allSatisfy { !$0.contains(bundle.path) && !$0.contains(NSHomeDirectory()) },
                       "installation diagnostics contain relative resource names and sizes, not user paths")
@@ -84,6 +89,18 @@ enum ProvisionSelfTest {
             check(AppBundle.isTranslocated(URL(fileURLWithPath: "/private/var/folders/test/AppTranslocation/id/d/FX Steam Launcher.app"))
                   && !AppBundle.isTranslocated(URL(fileURLWithPath: "/Applications/NotAppTranslocation.app")),
                   "translocation diagnostic uses an exact path component")
+            try fm.removeItem(at: resources)
+            let absentResources = AppBundle.installationFailure(bundleURL: bundle, desync: AppBundle.ResourceStatus(path: helper.path))
+            check(absentResources.diagnostics["bundle_presence"] == "present"
+                  && absentResources.diagnostics["resources_presence"] == "missing",
+                  "removed Resources directory is distinguished from one missing helper (STEAMAC-AE)")
+            try fm.removeItem(at: bundle)
+            let absentBundle = AppBundle.installationFailure(bundleURL: bundle, desync: AppBundle.ResourceStatus(path: helper.path))
+            check(absentBundle.diagnostics["bundle_presence"] == "missing"
+                  && absentBundle.diagnostics["contents_presence"] == "missing"
+                  && absentBundle.diagnostics["resources_presence"] == "missing"
+                  && absentBundle.localizedDescription.contains(String(localized: "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications.")),
+                  "moved/deleted app preserves parent-directory evidence and tells the user to quit and reopen (STEAMAC-AE)")
         }
         // hvc0 is available before fx.progress (the initramfs can fail before the agent starts).
         let boot = BootProgress()

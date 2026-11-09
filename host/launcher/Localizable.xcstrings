@@ -5132,6 +5132,22 @@
         }
       }
     },
+    "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перед заменой или перемещением FX Steam Launcher полностью завершите его работу, затем откройте копию из папки «Программы»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替换或移动 FX Steam Launcher 前，请将其完全退出，然后打开“应用程序”中的副本。"
+          }
+        }
+      }
+    },
     "Quitting FX Steam Launcher shuts SteamOS down: it resumes and shuts down cleanly. The suspended state (and a running game's unsaved progress) is not kept." : {
       "localizations" : {
         "ru" : {

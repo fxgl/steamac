@@ -25,11 +25,13 @@ enum AppBundle {
     struct InstallationFailure: LocalizedError, CustomStringConvertible {
         let diagnostics: [String: String]
         var description: String {
-            "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again."
+            "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again. " + Self.reopenGuidance
         }
         var errorDescription: String? {
             String(localized: "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again.")
+                + " " + String(localized: "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications.")
         }
+        private static let reopenGuidance = "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications."
     }
 
     struct ResourceStatus {
@@ -68,6 +70,19 @@ enum AppBundle {
             "desync_readable": String(desync.readable),
             "desync_executable": String(desync.executable),
         ]
+        // ENOENT on desync alone does not prove a partial copy or security-software removal:
+        // STEAMAC-AE could not list Resources or even create a static-code object for the app.
+        // Retain parent availability without sending the installation's absolute path.
+        for (name, url) in [("bundle", bundleURL),
+                            ("contents", bundleURL.appendingPathComponent("Contents", isDirectory: true)),
+                            ("resources", resources)] {
+            var st = stat()
+            let result = stat(url.path, &st)
+            let code = result == 0 ? 0 : errno
+            diagnostics[name + "_presence"] = code == 0 ? "present" : (code == ENOENT ? "missing" : "unavailable")
+            diagnostics[name + "_stat_errno"] = String(code)
+            diagnostics[name + "_directory"] = String(result == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        }
         do {
             let entries = try FileManager.default.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
