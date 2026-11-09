@@ -203,7 +203,7 @@ class CompatDefaultTests(unittest.TestCase):
 
     def native_tool(self):
         root = self.steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
-        lib = root / "tool/files/lib/wine/aarch64-unix/winemetal.so"
+        lib = root / "tool/dxmt/aarch64-unix/winemetal.so"
         lib.parent.mkdir(parents=True)
         lib.write_bytes(b"native")
         (root / ".steamac-arm64ec.json").write_text('{}')

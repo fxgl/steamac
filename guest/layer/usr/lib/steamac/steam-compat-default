@@ -257,7 +257,7 @@ def main(mode):
     mapped = set(previous.get("mapped", []))
     previous_mapping = {**OURS, "name": previous.get("tool", TOOL)}
     native = steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
-    tool = NATIVE_TOOL if (native / ".steamac-arm64ec.json").is_file() and (native / "tool/files/lib/wine/aarch64-unix/winemetal.so").is_file() else TOOL
+    tool = NATIVE_TOOL if (native / ".steamac-arm64ec.json").is_file() and (native / "tool/dxmt/aarch64-unix/winemetal.so").is_file() else TOOL
     desired = {**OURS, "name": tool}
     if not config.exists():
         if mode == "dxmt":
