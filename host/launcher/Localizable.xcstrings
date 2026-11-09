@@ -610,18 +610,24 @@
         }
       }
     },
-    "A few errors: guest GPU context lost, shader pipeline compile failures (with an excerpt of the failing Metal shader source), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Некоторые ошибки: потеря контекста GPU гостевой системы, ошибки компиляции графического конвейера (с фрагментом исходного кода проблемного шейдера Metal), паники libkrun, ошибки создания диска или настройки при первом запуске, неожиданная остановка или принудительное завершение ВМ (с данными об использовании памяти Mac), отсутствие ответа от SteamOS."
+    "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A few errors: guest GPU context lost, shader pipeline compile failures (with failing Metal shader source: up to two scrubbed attachments of 256 KiB per process), libkrun panics, failed disk creation or first-start setup, VM stopped unexpectedly or killed (with the Mac's memory use), SteamOS not responding."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "部分错误：客户机 GPU 上下文丢失、着色器管线编译失败（附出错的 Metal 着色器源代码片段）、libkrun 严重错误、磁盘创建或首次启动设置失败、虚拟机意外停止或被终止（附 Mac 内存使用情况）、SteamOS 无响应。"
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отдельные ошибки: потеря контекста GPU в SteamOS, ошибки компиляции шейдерных конвейеров (исходный код сбойных Metal-шейдеров: не более двух вложений до 256 КиБ на процесс, с удалёнными личными данными), паники libkrun, ошибки создания диска или первоначальной настройки, неожиданная остановка или принудительное завершение ВМ (с данными об использовании памяти Mac), зависание SteamOS."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "少量错误：来宾 GPU 上下文丢失、着色器管线编译失败（附失败的 Metal 着色器源码：每进程最多两个已脱敏的附件，每个不超过 256 KiB）、libkrun panic、磁盘创建或首次启动设置失败、VM 意外停止或被终止（含 Mac 内存使用情况）、SteamOS 无响应。"
           }
         }
       }
