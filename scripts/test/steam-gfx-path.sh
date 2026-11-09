@@ -165,5 +165,15 @@ run "steamac.gfx=dxmt" "$DB"; rm -rf "$T/state/orig"; echo 9 > "$P1/version"; : 
 run "steamac.gfx=vulkan" "$DA"
 grep -q dxmt "$D1/dxgi.dll" || fail oldlayer "stale stock copy (older Proton version) restored"
 grep -q "WARNING: no original of" "$T/log" || fail oldlayer "no warning for a stale stock copy"
+# A native tool's prefix must keep its ARM64X placeholder on every legacy
+# reconciliation, including the watcher while a game is already running.
+N=$ST/steamapps/compatdata/300
+mkdir -p "$N/pfx/drive_c/windows/system32"
+printf '%s\n' "$ST/compatibilitytools.d/steamac-dxmt-arm64ec/tool/files/lib/" > "$N/config_info"
+printf 'native ARM64X winemetal' > "$N/pfx/drive_c/windows/system32/winemetal.dll"
+native_sum=$(cksum < "$N/pfx/drive_c/windows/system32/winemetal.dll")
+run "steamac.gfx=dxmt" "$DB"
+[ "$(cksum < "$N/pfx/drive_c/windows/system32/winemetal.dll")" = "$native_sum" ] || fail native "ARM64X builtin overwritten by x86-64 payload"
+[ ! -e "$N/pfx/.steamac-dxmt" ] || fail native "native prefix marked as a legacy prefix"
 echo "steam-gfx-path: $([ $fails = 0 ] && echo passed || echo FAILED)"
 exit $((fails > 0))

@@ -1,0 +1,158 @@
+#!/usr/bin/python3
+"""Build a separate, native DXMT compatibility tool from an installed ARM64 Proton.
+
+Run before Steam starts. The stock Proton stays byte-for-byte intact, so Vulkan
+profiles retain native DXVK. The nested tool directory also keeps the legacy
+steam-gfx-path installer from rewriting this tool's ARM64X DLLs as x86-64 DLLs.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import struct
+import sys
+import tempfile
+
+NAME = "steamac_dxmt_arm64ec"
+DIRECTORY = "steamac-dxmt-arm64ec"
+DLLS = ("d3d11", "dxgi", "d3d10core", "winemetal")
+RECEIPT = ".steamac-arm64ec.json"
+
+
+def digest(path):
+    with path.open("rb") as src:
+        return hashlib.file_digest(src, "sha256").hexdigest()
+
+
+def payload_files(payload):
+    files = [payload / "aarch64-windows" / (dll + ".dll") for dll in DLLS]
+    files.append(payload / "aarch64-unix/winemetal.so")
+    for path in files:
+        if not path.is_file():
+            raise ValueError("missing native DXMT payload: " + str(path))
+        with path.open("rb") as src:
+            header = src.read(64)
+            if path.suffix == ".so":
+                if len(header) < 20 or header[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", header, 18)[0] != 183:
+                    raise ValueError("not an AArch64 ELF unixlib: " + str(path))
+            else:
+                if len(header) < 64 or header[:2] != b"MZ":
+                    raise ValueError("not a PE DLL: " + str(path))
+                src.seek(struct.unpack_from("<I", header, 60)[0])
+                pe = src.read(6)
+                if len(pe) != 6 or pe[:4] != b"PE\0\0" or struct.unpack_from("<H", pe, 4)[0] not in (0xaa64, 0xa641):
+                    raise ValueError("not an ARM64X/ARM64EC DLL: " + str(path))
+    return files
+
+
+def in_use(target):
+    needle = str(target).encode()
+    for process in Path("/proc").glob("[0-9]*"):
+        if process.name == str(os.getpid()):
+            continue
+        try:
+            if needle in (process / "maps").read_bytes():
+                return True
+        except (OSError, PermissionError):
+            pass
+    return False
+
+
+def install(source, payload, destination):
+    source, payload, destination = source.resolve(), payload.resolve(), destination.absolute()
+    required = ("proton", "version", "toolmanifest.vdf", "files/bin-arm64/wine",
+                "files/lib/wine/aarch64-unix/ntdll.so",
+                "files/lib/wine/dxvk/aarch64-windows/d3d11.dll")
+    for relative in required:
+        if not (source / relative).is_file():
+            raise ValueError("incomplete ARM64 Proton: " + str(source / relative))
+    template = "files/share/default_pfx_arm64/drive_c/windows/system32"
+    if not (source / template).is_dir():
+        raise ValueError("ARM64 Proton has no default prefix: " + str(source))
+    files = payload_files(payload)
+    receipt = {"v": 1, "source": str(source),
+               "proton": {name: digest(source / name) for name in ("version", "proton", "toolmanifest.vdf")},
+               "payload": {str(f.relative_to(payload)): digest(f) for f in files}}
+    existing = destination / RECEIPT
+    if destination.exists():
+        if not existing.is_file():
+            raise ValueError("refusing to replace an unmanaged compatibility tool: " + str(destination))
+        if json.loads(existing.read_text()) == receipt:
+            return False
+        if in_use(destination):
+            raise ValueError("close games using the native DXMT tool before updating it")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".dxmt-arm64ec-", dir=destination.parent))
+    old = None
+    try:
+        tool = stage / "tool"
+        # Never hardlink: Proton and Steam can update files in place.
+        shutil.copytree(source, tool, symlinks=True)
+        wine = tool / "files/lib/wine"
+        for arch in ("aarch64", "x86_64"):
+            pe_dir = wine / (arch + "-windows")
+            dxvk_dir = wine / "dxvk" / (arch + "-windows")
+            pe_dir.mkdir(exist_ok=True)
+            for dll in DLLS:
+                target = pe_dir / "winemetal.dll" if dll == "winemetal" else dxvk_dir / (dll + ".dll")
+                if dll != "winemetal" and not dxvk_dir.is_dir():
+                    continue
+                target.unlink(missing_ok=True)
+                data = (payload / "aarch64-windows" / (dll + ".dll")).read_bytes()
+                if dll != "winemetal":
+                    data = data[:64] + bytes(16) + data[80:]
+                target.write_bytes(data)
+        unixlib = wine / "aarch64-unix/winemetal.so"
+        unixlib.unlink(missing_ok=True)
+        shutil.copyfile(payload / "aarch64-unix/winemetal.so", unixlib)
+        placeholder = tool / template / "winemetal.dll"
+        placeholder.unlink(missing_ok=True)
+        placeholder.symlink_to("../../../../../lib/wine/aarch64-windows/winemetal.dll")
+        (wine / ".steamac-dxmt").touch()
+        # A different version makes Proton refresh existing prefixes too.
+        version = tool / "version"
+        contents = version.read_text()
+        version.unlink()
+        version.write_text(contents.rstrip() + "\nsteamac-arm64ec-" + hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()[:16] + "\n")
+        (stage / "compatibilitytool.vdf").write_text(
+            '"compatibilitytools" { "compat_tools" { "' + NAME + '" {\n'
+            '"install_path" "tool"\n"display_name" "SteamMac DXMT (ARM64EC)"\n'
+            '"from_oslist" "windows"\n"to_oslist" "linux"\n} } }\n')
+        (stage / RECEIPT).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        if destination.exists():
+            old = stage / "previous"
+            destination.rename(old)
+        try:
+            stage.rename(destination)
+        except BaseException:
+            if old is not None:
+                old.rename(destination)
+            raise
+        if old is not None:
+            shutil.rmtree(destination / "previous")
+        return True
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+
+
+def main():
+    steam = Path(os.environ.get("STEAMAC_STEAM_ROOT", str(Path.home() / ".local/share/Steam")))
+    payload = Path(os.environ.get("STEAMAC_DXMT_DIR", "/usr/lib/steamac/dxmt"))
+    if not (payload / "aarch64-unix/winemetal.so").exists():
+        return
+    source = Path(sys.argv[1]) if len(sys.argv) > 1 else steam / "steamapps/common/Proton 11.0 (ARM64)"
+    if not source.exists():
+        print("steam-dxmt-arm64ec: install Proton 11.0 (ARM64) first", file=sys.stderr)
+        return
+    if install(source, payload, steam / "compatibilitytools.d" / DIRECTORY):
+        print("steam-dxmt-arm64ec: native compatibility tool ready", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        print("steam-dxmt-arm64ec: " + str(error), file=sys.stderr)
+        sys.exit(1)

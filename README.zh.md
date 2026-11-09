@@ -307,7 +307,7 @@ KosmicKrisp / MoltenVK（仅提供可用的驱动）；**启动选项**——放
 
 DXMT 需要启用**设置 → 高级 → 允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**并以此权限启动虚拟机。
 关闭时，DXMT 配置会标为未生效，并提供**允许 DXMT…**操作，保留原有安全警告；
-仅启用 Vulkan 的启动中不会因此将游戏映射到 Proton 10.0。
+仅启用 Vulkan 的启动中不会因此为游戏选择 DXMT 兼容工具。
 Vulkan 驱动按**每次虚拟机启动**选择，而非按进程选择。游戏启动或获得焦点时，若配置的驱动与本次启动不同，
 启动器会提议使用该驱动重启虚拟机，并在 Steam 就绪后重新启动游戏。
 此覆盖仅限下一次启动，不更改全局驱动设置。
@@ -642,18 +642,17 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 `{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。若 macOS 无法提供 Metal drawable（例如图层尺寸为零或 drawable 超时），DXMT 会跳过该帧，而不是提交 `nil`（Metal 会因此断言并终止虚拟机，STEAMAC-98）；日志中有限次记录此事，渲染从下一个 drawable 继续。开启时，启动器提供 libkrun 的
 wmtr virtio-gpu 上下文（补丁 0018，capset 30），并以 `steamac.gfx=dxmt` 启动虚拟机。
 客户机的 `steam-gfx-path` 将每个已安装的 x86-64 Proton 的库替换为 DXMT，并监视 Proton
-的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。DXMT 的 dll 是带 Wine unixlib 的
-x86-64 版本，只有 x86-64 Proton 能加载（在 Proton 11.0 (ARM64) 的 ARM64EC Wine 中，winemetal 的 unix 部分无法启动，游戏报告
-“could not load d3d11.dll”），而此 Steam 客户端把所有 Windows 游戏映射到 Proton 11.0 (ARM64)（`proton-stable`，优先级 85）。
-Steam 启动前，`steam-compat-default` **仅为配置中选择 DXMT 的游戏**写入单独的 `CompatToolMapping` 条目，
-指向 **Proton 10.0**，优先级 250，且仅限启用 DXMT 的启动。适用对象为未被用户指定兼容工具的已安装 Windows
+的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。启用可选的 ARM64EC 载荷后，`steam-dxmt-arm64ec` 会从已安装的 **Proton 11.0 (ARM64)** 准备一个单独的兼容工具 **SteamMac DXMT (ARM64EC)**。它使用 DXMT 上游的 ARM64X DLL 与 AArch64 ELF 格式的 `winemetal.so`，让 Wine 与 DXMT 原生运行，FEX 只转换游戏的 x86-64 代码。原 Proton 文件保持不变。副本约占 2 GB，当源 Proton 版本或载荷变化时于 Steam 启动前刷新；有游戏正在使用时推迟更新。嵌套的 `tool/` 目录可防止旧的 x86-64 安装程序替换其原生 DLL。
+
+Steam 启动前，`steam-compat-default` **仅为配置中选择 DXMT 的游戏**写入单独的映射：有原生工具时指向它，否则指向 **Proton 10.0**，优先级 250，且仅限启用 DXMT 的启动。旧的仅 x86-64 载荷无法在 ARM64EC Wine 下初始化 winemetal；原生 PE DLL 与原生 Unix 库缺一不可。
+适用对象为未被用户指定兼容工具的已安装 Windows
 游戏（依据 `libraryfolders.vdf` 与 `appcache/appinfo.vdf`：类型为 game/demo/application，oslist 含 windows
 不含 linux）。其余游戏保持 Steam 默认工具 **Proton 11.0 ARM64**，使用 Venus 上的 DXVK/vkd3d-proton。
 原先将所有游戏统一映射到 Proton 10.0 的条目会在首次 Steam 启动时移除；之后的配置更改及新安装游戏在下次
 Steam 启动时应用，用户在 Steam 中的修改保持不变。这不只是 DLL 的选择：某些游戏在 x86-64 Proton 10.0 + FEX
 下无论使用什么 DLL 都会崩溃。例如 Stellar Blade Demo（3564860）的 SEH 递归最终导致
 `virtual_setup_exception stack overflow`，但它能在 Proton 11.0 ARM64 上运行。
-Steam 在首次启动 DXMT 游戏时下载 Proton 10.0（x86-64，在 Steam Linux Runtime 3.0 中经 FEX 运行），
+走回退路径时，Steam 在首次启动 DXMT 游戏时下载 Proton 10.0（x86-64，在 Steam Linux Runtime 3.0 中经 FEX 运行），
 `steam-gfx-path --watch` 随后放入 DXMT。**x86-64** 版 Proton Experimental 与 Proton 11.0 需要
 x86-64 Steam Linux Runtime 4.0（`SteamLinuxRuntime_4`，应用 4183110）。不要将它们与
 **Proton Experimental (ARM64)** 或 **Proton 11.0 (ARM64)** 混淆：后两者使用单独的 ARM64
@@ -668,6 +667,7 @@ Death's Door 标题画面在默认 Proton 11.0 (ARM64) + DXVK 路径约 41 FPS�
 d3d11bench 100 次绘制 + 16 次全屏通道为 44 / 50（Proton 10.0 + DXVK）/ 100 FPS，2000 次绘制 + 4 次通道为
 133 / 139 / 115（DXMT 止于显示器 120 Hz，Vulkan 路径可超过）。经 Steam 启动的三次 20 秒运行取中位数
 （DXMT 取两次启动共六次）；详见网站。
+原生 ARM64EC 工具对比 Proton 10.0 + DXMT，M5 Max（macOS 27，虚拟机 12 vCPU / 32 GB，120 Hz，KosmicKrisp，FX Steam Launcher 1.9.13 加 ARM64EC 层；显示帧数来自 `WMTR_FRAMES`，每个工具三次交替运行）。Death's Door 实际游玩（经 uinput 的脚本化键盘输入：行走、翻滚、剑与弓，从同一存档开始 26 秒）两者都保持 120 FPS，没有超过 50 ms 的帧；虚拟机 CPU 占用原生为 330–345%，Proton 10.0 为 406–432%（中位数 342% 对 406%，约少 16%），最差帧 17–32 ms 对 19–49 ms。Super Battle Golf（Unity 6000.3.10f1）在标题画面上两者都保持 120 FPS（CPU 251–279% 对 239–254%：标题画面无法区分两者）。d3d11bench（x86-64，经 Steam 启动，20 秒，中位数）100 次绘制 + 16 次通道为 140 / 138 FPS，2000 次绘制 + 4 个渲染通道为 270 / 267。原生工具启动游戏约快 1.5 秒。Unity 在两个工具上都记录 `ID3D11Fence` 创建不受支持，并继续运行。
 DXMT 的 winemetal 调用通过 virtio-gpu 到达 **Mac 上虚拟机进程内部**的执行器，
 由其在虚拟机视图内呈现 `CAMetalLayer`。该图层会遮住客户机合成器的光标；启动器改为在其上绘制
 游戏自己的光标，尺寸与 gamescope 一致。跟踪由宿主控制，仅用于 DXMT：只有游戏焦点允许显示覆盖层，
@@ -696,6 +696,7 @@ Docker/OrbStack。脚本安装 `meson ninja cmake pkgconf zstd`。没有 Metal �
 
 ```sh
 host/dxmt/build.sh fetch llvm native host pe client payload  # 默认步骤，按顺序执行
+host/dxmt/build.sh pe-arm64ec client-arm64 payload-arm64ec    # 增加原生 Proton 11 支持
 scripts/build-image.sh layer                               # 纳入客户机载荷
 host/launcher/build.sh                                     # 捆绑执行器与更新后的层
 ```
@@ -707,7 +708,7 @@ host/launcher/build.sh                                     # 捆绑执行器与�
 `client` 在 Docker 内构建/测试 `wmtr/build/x86_64-linux/winemetal.so`；
 `payload` 将两者放到 `work/out/dxmt/{x86_64-windows,x86_64-unix}`，
 供客户机层的 `/usr/lib/steamac/dxmt/` 使用。各步骤可单独重跑；无参数的
-`host/dxmt/build.sh` 会执行全部步骤。
+`host/dxmt/build.sh` 会执行默认的 x86-64 步骤。三个可选的 ARM64EC 步骤使用锁定的 Wine 11.2 构建工具与 DXMT 上游的 `build-arm64ec.txt`，在原生 ARM64 容器中构建/测试 Unix 客户端，并把 `work/out/dxmt/{aarch64-windows,aarch64-unix}` 与 x86-64 载荷并列放置。主机执行器由两种架构共用。打包与映射检查：`python3 scripts/test/steam-dxmt-arm64ec.py`、`python3 scripts/test/steam-compat-default.py` 与 `bash scripts/test/steam-gfx-path.sh`。设备创建与缓冲区回读冒烟测试为 `wmtr/tests/d3d11_device_test.c`；在启用 wmtr 执行器的启动中，用原生 DXMT 工具运行其 x86-64 可执行文件。
 
 致谢：[StonkGuy](https://github.com/StonkGuy/steamac) 提供 wmtr 远程调用路径及集成；
 [3Shain（Feifan He）的 DXMT](https://github.com/3Shain/dxmt) 提供 Metal 上的 D3D11/D3D10。

@@ -201,5 +201,35 @@ class CompatDefaultTests(unittest.TestCase):
         self.run_mode("dxmt")
         self.assertEqual(self.mapped(), {"3564860": compat.OURS})
 
+    def native_tool(self):
+        root = self.steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
+        lib = root / "tool/files/lib/wine/aarch64-unix/winemetal.so"
+        lib.parent.mkdir(parents=True)
+        lib.write_bytes(b"native")
+        (root / ".steamac-arm64ec.json").write_text('{}')
+        return root
+
+    def test_native_tool_migrates_our_mappings_and_restores(self):
+        self.write(CONFIG % USER_TOOL)
+        self.run_mode("dxmt")
+        self.native_tool()
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"]["name"], compat.NATIVE_TOOL)
+        self.assertEqual(self.mapped()["883710"]["name"], "proton_9")
+        self.assertEqual(json.loads(self.marker.read_text())["tool"], compat.NATIVE_TOOL)
+        self.run_mode("vulkan")
+        self.assertEqual(set(self.mapped()), {"883710"})
+
+    def test_native_tool_preserves_user_edit_and_falls_back_if_removed(self):
+        self.write(CONFIG % "")
+        native = self.native_tool()
+        self.run_mode("dxmt")
+        own = {"name": "proton_9", "config": "", "priority": "250"}
+        self.write(compat.set_mapping(self.config.read_text(), "894020", own))
+        (native / ".steamac-arm64ec.json").unlink()
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"], own)
+        self.assertEqual(self.mapped()["3564860"], compat.OURS)
+
 if __name__ == "__main__":
     unittest.main()

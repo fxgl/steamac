@@ -9,9 +9,10 @@
 #           replaced files are kept in $STATE and Proton updates are followed (--watch re-applies).
 #   vulkan  (or no steamac.gfx=) restores Proton's own files byte for byte and removes everything added,
 #           also the winemetal.dll placeholder in prefixes; Proton puts its DXVK back into each prefix.
-# The DXMT files ship in the steamac layer ($PAYLOAD, read-only). DXMT's dlls are x86-64, so only an x86-64
-# Proton can use them: before Steam starts, steam-compat-default sets only installed Windows games
-# with a DXMT profile and no tool of their own to Proton 10.0 (see that script).
+# The layer can ship both x86-64 and ARM64EC payloads. Native DXMT uses a separate
+# nested Proton tool prepared by steam-dxmt-arm64ec; this script manages only the
+# legacy x86-64 payload in place. steam-compat-default selects the native tool
+# for DXMT profiles when available, falling back to Proton 10.0 otherwise.
 # Idempotent; run as an ExecStartPre of steam.service (Steam is not running then) and, with --watch, while
 # the session runs (Steam downloading Proton 10.0 is followed there).
 # Usage: steam-gfx-path [--watch]
@@ -31,7 +32,7 @@ log() { echo "steam-gfx-path: $*" >&2; }
 mode=vulkan
 cmdline=$(cat "$CMDLINE" 2>/dev/null)
 [[ $cmdline =~ (^|[[:space:]])steamac\.gfx=dxmt($|[[:space:]]) ]] && mode=dxmt
-if [[ $mode == dxmt && ! -f $PAYLOAD/x86_64-unix/winemetal.so ]]; then
+if [[ $mode == dxmt && ! -f $PAYLOAD/x86_64-unix/winemetal.so && ! -f $PAYLOAD/aarch64-unix/winemetal.so ]]; then
     log "no DXMT files in $PAYLOAD; using Vulkan"; mode=vulkan
 fi
 
@@ -98,6 +99,7 @@ original() { # proton, dll name
 apply_dxmt() {
     local p=$1 W=$1/files/lib/wine B; B=$STATE/orig/$(key "$p")
     local D f d changed=0
+    [[ -f $PAYLOAD/x86_64-unix/winemetal.so ]] || return 0
     # a Proton without an x86-64 Wine (an ARM64 build) cannot load DXMT: leave it stock (undo an earlier
     # partial setup) instead of replacing files and failing halfway
     if [[ ! -d $W/x86_64-unix || ! -d $W/x86_64-windows ]]; then
@@ -217,6 +219,10 @@ reconcile() {
         while read -r p; do apply_dxmt "$p" || log "cannot set up DXMT in $p"; done < <(protons)
         # winemetal is not in Proton's prefix template: Wine finds that builtin only through system32
         while read -r x; do
+            # Native DXMT's own Proton template supplies its ARM64X builtin. A
+            # legacy watcher must never replace it with the x86-only payload.
+            grep -qF '/steamac-dxmt-arm64ec/tool/' "$x/../config_info" 2>/dev/null && continue
+            [[ -f $PAYLOAD/x86_64-windows/winemetal.dll ]] || continue
             install_file "$PAYLOAD/x86_64-windows/winemetal.dll" "$x/drive_c/windows/system32/winemetal.dll"
             touch "$x/$MARK"
         done < <(prefixes)
@@ -249,6 +255,13 @@ reconcile() {
 
 # Steam's default tool only while Steam is stopped (ExecStartPre): it rewrites config.vdf when it exits.
 if [[ ${1:-} != --watch ]]; then
+    if [[ $mode == dxmt && -f $PAYLOAD/aarch64-unix/winemetal.so ]]; then
+        "${STEAMAC_DXMT_ARM64EC:-$(dirname "$0")/steam-dxmt-arm64ec}" || log "native DXMT tool update deferred"
+        if [[ ! -f $PAYLOAD/x86_64-unix/winemetal.so && ! -f $STEAM/compatibilitytools.d/steamac-dxmt-arm64ec/tool/files/lib/wine/aarch64-unix/winemetal.so ]]; then
+            log "native DXMT tool not ready; keeping Steam's default until the next start"
+            mode=vulkan
+        fi
+    fi
     "${STEAMAC_COMPAT_DEFAULT:-$(dirname "$0")/steam-compat-default}" "$mode" || log "default compatibility tool left as it is"
 fi
 reconcile

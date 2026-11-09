@@ -100,10 +100,23 @@ if [[ -f $ST/repo/host/dxmt/pin.env ]]; then
     copy_source "$ROOT/work/cache/dxmt/mingw-directx-headers-$headers_commit.tar.gz" \
         "https://github.com/misyltoad/mingw-directx-headers/archive/$headers_commit.tar.gz" \
         "$headers_sha" "mingw-directx-headers-$headers_commit.tar.gz"
+    # The ARM64X winemetal.dll links Wine 11.2's winecrt0.
+    wine_record=$(awk -F= '/^WINE_ARM64EC_SOURCE_(URL|SHA256)=/ { print $1, $2 }' "$ST/repo/host/dxmt/build.sh")
+    wine_url=$(printf '%s\n' "$wine_record" | awk '$1 == "WINE_ARM64EC_SOURCE_URL" { print $2 }')
+    wine_sha=$(printf '%s\n' "$wine_record" | awk '$1 == "WINE_ARM64EC_SOURCE_SHA256" { print $2 }')
+    wine_notes=
+    if [[ $wine_url == https://* && $wine_sha =~ ^[[:xdigit:]]{64}$ ]]; then
+        copy_source "$ROOT/work/cache/dxmt/wine-11.2.tar.xz" "$wine_url" "$wine_sha" "wine-11.2.tar.xz"
+        wine_notes="
+The optional ARM64EC payload adds aarch64-windows/{d3d11,dxgi,d3d10core,winemetal}.dll
+and aarch64-unix/winemetal.so from the same DXMT source (build steps pe-arm64ec,
+client-arm64, payload-arm64ec). Its winemetal.dll links Wine 11.2's winecrt0
+(LGPL-2.1-or-later): sources/wine-11.2.tar.xz (SHA-256 $wine_sha)."
+    fi
     dxmt_notes="
 DXMT graphics path (LGPL-2.1-or-later): libwmtr_host.dylib and the guest layer's
 /usr/lib/steamac/dxmt/x86_64-windows/{d3d11,dxgi,d3d10core,winemetal}.dll and
-x86_64-unix/winemetal.so. Complete DXMT source:
+x86_64-unix/winemetal.so.$wine_notes Complete DXMT source:
 sources/dxmt-$DXMT_COMMIT.tar.gz ($DXMT_REPO at that commit, SHA-256
 $DXMT_SHA256). Apply repo/host/dxmt/patches/*.patch in filename order with
 git apply. Extract sources/mingw-directx-headers-$headers_commit.tar.gz into

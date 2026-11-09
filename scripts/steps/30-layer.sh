@@ -34,17 +34,18 @@ fi
 # d3d11, dxgi, d3d10core, winemetal) and the wmtr guest client winemetal.so, staged in /work/out/dxmt by
 # host/dxmt/build.sh. Optional: without it the layer offers only the Vulkan path.
 DXMT=/work/out/dxmt
-if [[ -f $DXMT/x86_64-unix/winemetal.so ]]; then
-    install -d "$ST/usr/lib/steamac/dxmt/x86_64-windows" "$ST/usr/lib/steamac/dxmt/x86_64-unix"
+dxmt_info=ABSENT
+for arch in x86_64 aarch64; do
+if [[ -f $DXMT/$arch-unix/winemetal.so ]]; then
+    install -d "$ST/usr/lib/steamac/dxmt/$arch-windows" "$ST/usr/lib/steamac/dxmt/$arch-unix"
     for f in d3d11 dxgi d3d10core winemetal; do
-        install -m 0644 "$DXMT/x86_64-windows/$f.dll" "$ST/usr/lib/steamac/dxmt/x86_64-windows/$f.dll"
+        install -m 0644 "$DXMT/$arch-windows/$f.dll" "$ST/usr/lib/steamac/dxmt/$arch-windows/$f.dll"
     done
-    install -m 0644 "$DXMT/x86_64-unix/winemetal.so" "$ST/usr/lib/steamac/dxmt/x86_64-unix/winemetal.so"
+    install -m 0644 "$DXMT/$arch-unix/winemetal.so" "$ST/usr/lib/steamac/dxmt/$arch-unix/winemetal.so"
     dxmt_info=$(cd "$DXMT" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
     echo "[layer] included DXMT from $DXMT ($dxmt_info)"
-else
-    dxmt_info=ABSENT
 fi
+done
 
 AGENT=/work/cache/progress-agent/fx-progress-agent
 [[ -x $AGENT ]] || { echo "[layer] $AGENT missing: run step 25 (scripts/build-image.sh layer does)" >&2; exit 1; }
@@ -102,6 +103,8 @@ done
 # steam-gfx-path's Python helper (Proton Experimental as Steam's default tool while DXMT is on).
 [[ -x $ST/usr/lib/steamac/steam-compat-default ]] \
     || { echo "[layer] usr/lib/steamac/steam-compat-default missing or not executable" >&2; exit 1; }
+[[ -x $ST/usr/lib/steamac/steam-dxmt-arm64ec ]] \
+    || { echo "[layer] usr/lib/steamac/steam-dxmt-arm64ec missing or not executable" >&2; exit 1; }
 [[ -f $ST/usr/lib/systemd/user/steam.service.d/50-steamac.conf ]] \
     || { echo "[layer] steam.service drop-in missing" >&2; exit 1; }
 [[ ! -e $ST/usr/lib/systemd/user/steam.service && ! -e $ST/usr/share/deckard/RUNSTEAM.sh ]] \
