@@ -1,0 +1,87 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] vkr: retain shader-model prerequisites in host diagnostics
+
+STEAMAC-AC/AB/A0 report Shader_Model_60 refusal in Age of Mythology Retold.
+Both host drivers and Venus on M1 Max satisfy the exact Proton 11 vkd3d
+SM 6.0 predicate (subgroup 32, ops 0x6ff, stages 0x31/0x32, both cbuffer
+layouts and Int16), and its D3D12 probe reports 6.0, not 5.1. Neither driver
+supports the FP32 preserve/FTZ controls required by the next promotion.
+The game report does not reveal which shader model it really requested:
+A0 has no Proton log; AB/AC retained only the final 1 MiB of a 1.16 GiB
+exception-heavy log. The user-observed 6_6 override bypasses the check,
+but does not implement those float controls or fix the later match exit.
+
+Record the actual SM 6.0 gate and the three SM 6.2 denorm prerequisites
+once per physical device/instance, without changing any feature bits.
+The portable shader_model probe can compare the same values through Venus.
+The denorm Metal probe uses KK's exact MTL4 compiler/math settings; on M1
+Max its arithmetic flushes denormals even in safe/precise mode, so claiming
+preservation would be incorrect. No speculative SM 6.6 advertisement.
+
+diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+index 10bddba..9488f66 100644
+--- a/src/venus/vkr_physical_device.c
++++ b/src/venus/vkr_physical_device.c
+@@ -163,9 +163,19 @@ vkr_physical_device_init_id_properties(struct vkr_physical_device *physical_dev)
+    };
+    if (physical_dev->EXT_external_memory_host)
+       physical_dev->id_properties.pNext = &host_props;
++   VkPhysicalDeviceVulkan12Properties props12 = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES,
++      .pNext = physical_dev->id_properties.pNext,
++   };
++   VkPhysicalDeviceVulkan11Properties props11 = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES,
++      .pNext = &props12,
++   };
+    VkPhysicalDeviceDriverProperties driver_props = {
+       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+-      .pNext = physical_dev->id_properties.pNext,
++      .pNext = physical_dev->properties.apiVersion >= VK_API_VERSION_1_2
++                  ? &props11
++                  : physical_dev->id_properties.pNext,
+    };
+    physical_dev->id_properties.pNext = &driver_props;
+    VkPhysicalDeviceProperties2 props2 = {
+@@ -177,6 +187,41 @@ vkr_physical_device_init_id_properties(struct vkr_physical_device *physical_dev)
+    physical_dev->driver_id = driver_props.driverID;
+    physical_dev->min_imported_host_pointer_alignment =
+       host_props.minImportedHostPointerAlignment;
++
++   /* Keep the exact vkd3d-proton SM 6.0/6.2 prerequisites in host reports:
++    * exception-heavy Proton logs can lose their initialization to tail truncation.
++    * These are observations, not feature overrides or a claim of SM 6.6 support. */
++   if (physical_dev->properties.apiVersion >= VK_API_VERSION_1_2) {
++      VkPhysicalDeviceVulkan12Features feats12 = {
++         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
++      };
++      VkPhysicalDeviceFeatures2 feats2 = {
++         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
++         .pNext = &feats12,
++      };
++      vk->GetPhysicalDeviceFeatures2(handle, &feats2);
++      const VkSubgroupFeatureFlags ops = VK_SUBGROUP_FEATURE_BASIC_BIT |
++         VK_SUBGROUP_FEATURE_VOTE_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT |
++         VK_SUBGROUP_FEATURE_BALLOT_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT |
++         VK_SUBGROUP_FEATURE_QUAD_BIT;
++      const VkShaderStageFlags stages =
++         VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
++      const bool sm60 = props11.subgroupSize >= 4 &&
++         (props11.subgroupSupportedOperations & ops) == ops &&
++         (props11.subgroupSupportedStages & stages) == stages &&
++         (feats12.scalarBlockLayout || feats12.uniformBufferStandardLayout) &&
++         feats2.features.shaderInt16;
++      vkr_log("shader-model caps: device=\"%s\" SM60=%u subgroupSize=%u "
++              "ops=0x%x missingOps=0x%x stages=0x%x missingStages=0x%x "
++              "scalarBlockLayout=%u uniformBufferStandardLayout=%u shaderInt16=%u "
++              "denormIndependence=%u denormFTZ32=%u denormPreserve32=%u",
++              props2.properties.deviceName, sm60, props11.subgroupSize,
++              props11.subgroupSupportedOperations, ops & ~props11.subgroupSupportedOperations,
++              props11.subgroupSupportedStages, stages & ~props11.subgroupSupportedStages,
++              feats12.scalarBlockLayout, feats12.uniformBufferStandardLayout,
++              feats2.features.shaderInt16, props12.denormBehaviorIndependence,
++              props12.shaderDenormFlushToZeroFloat32, props12.shaderDenormPreserveFloat32);
++   }
+ }
+ /* Apple unified RAM also backs guest RAM. Report the launcher's GPU working-set
+  * allowance instead of the entire Mac's RAM, consistently for every Vulkan

@@ -33,6 +33,12 @@
 # Patch 0020 preserves the HOST_ALLOCATION external-image marker only for KosmicKrisp's
 # macOS dma-buf emulation and queries its real host-import limits (#58). KK 0088 needs it
 # to select shared-page backing. MoltenVK retains its existing non-external image path.
+# Patch 0021 logs the exact Proton 11 SM 6.0 wave/layout/Int16 gate and SM 6.2
+# FP32 denorm properties once per physical device/instance (STEAMAC-AC/AB/A0).
+# It changes no capabilities: both drivers report SM 6.0 here; the game's
+# Shader_Model_60 dialog is not proof of a missing SM 6.0 Vulkan feature.
+# Reprobes: test/shader_model.c compares host vs Venus; test/denorm.m measures
+# the Metal4 compiler's actual denorm behavior with KosmicKrisp's math flags.
 #
 # Installation never rewrites a file in place (a running VM may have the dylib mapped): meson
 # installs into a staging DESTDIR and every file is moved into work/out/host (new inode).
