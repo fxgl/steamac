@@ -179,7 +179,7 @@ step_pe() {
     fetch_file "$WINE_URL" "$WINE_SHA256" "$cache/wine-8.16-3shain.tar.gz"
     fetch_file "$LLVM_MINGW_URL" "$LLVM_MINGW_SHA256" "$cache/$LLVM_MINGW.tar.xz"
     if [ "$(cat "$toolchains/.pin" 2>/dev/null)" != "$WINE_SHA256 $LLVM_MINGW_SHA256" ]; then
-        rm -rf "$toolchains/wine" "$toolchains/$LLVM_MINGW"; mkdir -p "$toolchains/wine"
+        rm -rf "$toolchains/wine" "$toolchains/${LLVM_MINGW:?}"; mkdir -p "$toolchains/wine"
         tar -xzf "$cache/wine-8.16-3shain.tar.gz" -C "$toolchains/wine"
         tar -xJf "$cache/$LLVM_MINGW.tar.xz" -C "$toolchains"
         echo "$WINE_SHA256 $LLVM_MINGW_SHA256" > "$toolchains/.pin"
@@ -219,6 +219,7 @@ step_pe_arm64ec() {
     local wine=$toolchains/wine-arm64ec b=$root/work/build/dxmt-arm64ec
     local dest=$root/work/out/dxmt-arm64ec
     fetch_file "$WINE_ARM64EC_URL" "$WINE_ARM64EC_SHA256" "$cache/wine-11.2-arm64ec.tar.gz"
+    fetch_file "$WINE_ARM64EC_SOURCE_URL" "$WINE_ARM64EC_SOURCE_SHA256" "$cache/wine-11.2.tar.xz"
     fetch_file "$LLVM_MINGW_URL" "$LLVM_MINGW_SHA256" "$cache/$LLVM_MINGW.tar.xz"
     if [ "$(cat "$wine/.pin" 2>/dev/null)" != "$WINE_ARM64EC_SHA256" ]; then
         rm -rf "$wine"; mkdir -p "$wine"
@@ -256,7 +257,7 @@ step_payload_arm64ec() {
 }
 
 if [ "${1:-}" = clean ]; then
-    rm -rf "$src" "$native" "$pebuild" "$root/wmtr/build" "$root/work/build/llvm15"
+    rm -rf "$src" "$native" "$pebuild" "$root/work/build/dxmt-arm64ec" "$root/wmtr/build" "$root/work/build/llvm15"
     exit 0
 fi
 steps=("$@")

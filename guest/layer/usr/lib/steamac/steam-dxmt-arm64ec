@@ -1,9 +1,22 @@
 #!/usr/bin/python3
-"""Build a separate, native DXMT compatibility tool from an installed ARM64 Proton.
+"""Build a thin native DXMT compatibility tool over an installed ARM64 Proton.
 
-Run before Steam starts. The stock Proton stays byte-for-byte intact, so Vulkan
-profiles retain native DXVK. The nested tool directory also keeps the legacy
-steam-gfx-path installer from rewriting this tool's ARM64X DLLs as x86-64 DLLs.
+Run before Steam starts. The tool is a directory of symlinks into Proton 11.0 (ARM64) plus
+DXMT's own files; the stock Proton is never written, so Vulkan profiles keep native DXVK.
+
+- proton takes its directory from argv[0] without resolving symlinks and copies its DXVK set from
+  <directory>/files/lib/wine/dxvk/aarch64-windows into the prefix on every launch: DXMT's
+  d3d11/dxgi/d3d10core at that path in this tree reach the prefix, and a game set back to the
+  stock tool gets DXVK again at its next launch.
+- Wine finds its own files through realpath, so it stays the stock build. winemetal comes from
+  WINEDLLPATH (tool/dxmt), which proton appends to its own. Outside prefix creation Wine loads a
+  builtin only through a system32 entry, so `run` keeps a winemetal.dll entry in the prefix. Any
+  builtin-marked file will do, but Wine looks for the code in the WINEDLLPATH directory of that
+  file's architecture: steam-gfx-path's legacy watcher puts its x86-64 winemetal.dll there (in a
+  prefix that moved from Proton 10.0, before proton has rewritten its config_info), so the
+  ARM64X winemetal.dll is in both tool/dxmt/aarch64-windows and tool/dxmt/x86_64-windows.
+- The nested tool/ directory keeps steam-gfx-path's legacy x86-64 installer from taking this for
+  a Proton it manages.
 """
 import hashlib
 import json
@@ -16,13 +29,45 @@ import tempfile
 
 NAME = "steamac_dxmt_arm64ec"
 DIRECTORY = "steamac-dxmt-arm64ec"
-DLLS = ("d3d11", "dxgi", "d3d10core", "winemetal")
+DXVK = ("d3d11", "dxgi", "d3d10core")
+DLLS = DXVK + ("winemetal",)
 RECEIPT = ".steamac-arm64ec.json"
+# Real directories of the tool (parents first); every other entry is a symlink into the stock tool.
+REAL = ("files", "files/lib", "files/lib/wine", "files/lib/wine/dxvk", "files/lib/wine/dxvk/aarch64-windows")
+# Not linked: fixups are applied to private entries at build time; proton truncates dist.lock.
+# Omitting user_settings.py also suppresses Proton's existence guard: Python imports would otherwise
+# resolve from the stock script's directory (sys.path[0] follows the proton symlink).
+SKIP = {"toolmanifest.vdf", "steampipe_fixups.json", "user_settings.py", "dist.lock", "__pycache__"}
+REQUIRED = ("proton", "version", "toolmanifest.vdf", "files/bin-arm64/wine",
+            "files/lib/wine/aarch64-unix/ntdll.so",
+            "files/lib/wine/dxvk/aarch64-windows/d3d11.dll")
+# What this tool relies on in the stock proton script and manifest.
+ARGV0_BASE = "Proton(os.path.dirname(sys.argv[0]))"
+COMMANDLINE = '"/proton %verb%"'
+RUN = """#!/bin/sh
+# steamac native DXMT entry point, written by steam-dxmt-arm64ec. No realpath: proton takes its
+# directory from the path it is started as.
+here=${0%/*}
+export WINEDLLPATH="$here/dxmt${WINEDLLPATH:+:$WINEDLLPATH}"
+if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+    s=$STEAM_COMPAT_DATA_PATH/pfx/drive_c/windows/system32
+    # a new prefix: proton creates it first, then it gets the winemetal entry
+    [ -d "$s" ] || "$here/proton" getcompatpath / >/dev/null 2>&1
+    if [ -d "$s" ] && ! cmp -s "$here/dxmt/aarch64-windows/winemetal.dll" "$s/winemetal.dll"; then
+        # never write through an old entry: it can link into another tool
+        rm -f "$s/winemetal.dll" && cp "$here/dxmt/aarch64-windows/winemetal.dll" "$s/winemetal.dll"
+    fi
+fi
+exec "$here/proton" "$@"
+"""
 
 
 def digest(path):
+    checksum = hashlib.sha256()
     with path.open("rb") as src:
-        return hashlib.file_digest(src, "sha256").hexdigest()
+        for chunk in iter(lambda: src.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    return checksum.hexdigest()
 
 
 def payload_files(payload):
@@ -59,26 +104,105 @@ def in_use(target):
     return False
 
 
-def install(source, payload, destination):
-    source, payload, destination = source.resolve(), payload.resolve(), destination.absolute()
-    required = ("proton", "version", "toolmanifest.vdf", "files/bin-arm64/wine",
-                "files/lib/wine/aarch64-unix/ntdll.so",
-                "files/lib/wine/dxvk/aarch64-windows/d3d11.dll")
-    for relative in required:
+def source_receipt(source):
+    for relative in REQUIRED:
         if not (source / relative).is_file():
             raise ValueError("incomplete ARM64 Proton: " + str(source / relative))
-    template = "files/share/default_pfx_arm64/drive_c/windows/system32"
-    if not (source / template).is_dir():
-        raise ValueError("ARM64 Proton has no default prefix: " + str(source))
+    if ARGV0_BASE not in (source / "proton").read_text():
+        raise ValueError("this Proton does not take its directory from argv[0]: " + str(source))
+    if COMMANDLINE not in (source / "toolmanifest.vdf").read_text():
+        raise ValueError("unexpected toolmanifest.vdf commandline: " + str(source))
+    return {"source": str(source),
+            "proton": {name: digest(source / name) for name in ("version", "proton", "toolmanifest.vdf")},
+            "fixups": digest(source / "steampipe_fixups.json") if (source / "steampipe_fixups.json").is_file() else None,
+            "layout": {rel: sorted(p.name for p in (source / rel).iterdir()) for rel in ("",) + REAL}}
+
+
+def available(source, destination):
+    try:
+        receipt = json.loads((destination / RECEIPT).read_text())
+        if receipt.get("v") != 3 or any(receipt.get(k) != v for k, v in source_receipt(source.resolve()).items()):
+            return False
+        tool = destination / "tool"
+        paths = REQUIRED + ("run", "dxmt/aarch64-unix/winemetal.so",
+                           "dxmt/aarch64-windows/winemetal.dll", "dxmt/x86_64-windows/winemetal.dll")
+        paths += tuple("files/lib/wine/dxvk/aarch64-windows/" + dll + ".dll" for dll in DXVK)
+        return (destination / "compatibilitytool.vdf").is_file() and all((tool / p).is_file() for p in paths)
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def remove_managed(destination):
+    # Never traverse a user-provided directory symlink or remove an unreceipted tool.
+    if not destination.is_symlink() and (destination / RECEIPT).is_file():
+        shutil.rmtree(destination)
+
+
+def apply_fixups(source, tool):
+    manifest = source / "steampipe_fixups.json"
+    if not manifest.is_file():
+        return
+    fixups = json.loads(manifest.read_text())
+
+    def private(relative, directory):
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("invalid steampipe fixup path: " + relative)
+        current = tool
+        for part in path.parts:
+            current /= part
+            if current.is_symlink():
+                original = current.resolve()
+                current.unlink()
+                if original.is_dir():
+                    current.mkdir()
+                    for entry in original.iterdir():
+                        (current / entry.name).symlink_to(entry)
+                else:
+                    shutil.copy2(original, current)
+            elif not current.exists():
+                current.mkdir()
+        if directory and not current.is_dir():
+            raise ValueError("not a steampipe directory: " + relative)
+        return current
+
+    # Proton walks prefix templates without following directory links, and copies any links
+    # verbatim into the game prefix. Keep complete private template trees, not links to stock
+    # subdirectories that would make a game's writable windows/ point back into Proton.
+    for name in ("default_pfx", "default_pfx_arm64"):
+        original = source / "files/share" / name
+        if original.is_dir():
+            share = private("files/share", True)
+            target = share / name
+            target.unlink()
+            shutil.copytree(original, target, symlinks=True)
+
+    # Proton's steampipe_fixups.do_restore restores empty dirs and read-only file modes.
+    # Materialize only the affected paths, so a first launch never writes through stock links.
+    for relative in fixups["empty_dirs"]:
+        private(relative, True)
+    for relative in fixups["no_write_paths"]:
+        if (tool / relative).stat().st_mode & 0o222:
+            path = private(relative, False)
+            path.chmod(path.stat().st_mode & ~0o222)
+
+
+def install(source, payload, destination):
+    source, payload, destination = source.resolve(), payload.resolve(), destination.absolute()
+    try:
+        stock = source_receipt(source)
+    except (OSError, ValueError):
+        remove_managed(destination)
+        raise
+    manifest = (source / "toolmanifest.vdf").read_text()
     files = payload_files(payload)
-    receipt = {"v": 1, "source": str(source),
-               "proton": {name: digest(source / name) for name in ("version", "proton", "toolmanifest.vdf")},
+    receipt = {"v": 3, **stock,
                "payload": {str(f.relative_to(payload)): digest(f) for f in files}}
     existing = destination / RECEIPT
     if destination.exists():
         if not existing.is_file():
             raise ValueError("refusing to replace an unmanaged compatibility tool: " + str(destination))
-        if json.loads(existing.read_text()) == receipt:
+        if json.loads(existing.read_text()) == receipt and available(source, destination):
             return False
         if in_use(destination):
             raise ValueError("close games using the native DXMT tool before updating it")
@@ -87,34 +211,28 @@ def install(source, payload, destination):
     old = None
     try:
         tool = stage / "tool"
-        # Never hardlink: Proton and Steam can update files in place.
-        shutil.copytree(source, tool, symlinks=True)
-        wine = tool / "files/lib/wine"
-        for arch in ("aarch64", "x86_64"):
-            pe_dir = wine / (arch + "-windows")
-            dxvk_dir = wine / "dxvk" / (arch + "-windows")
-            pe_dir.mkdir(exist_ok=True)
-            for dll in DLLS:
-                target = pe_dir / "winemetal.dll" if dll == "winemetal" else dxvk_dir / (dll + ".dll")
-                if dll != "winemetal" and not dxvk_dir.is_dir():
-                    continue
-                target.unlink(missing_ok=True)
-                data = (payload / "aarch64-windows" / (dll + ".dll")).read_bytes()
-                if dll != "winemetal":
-                    data = data[:64] + bytes(16) + data[80:]
-                target.write_bytes(data)
-        unixlib = wine / "aarch64-unix/winemetal.so"
-        unixlib.unlink(missing_ok=True)
-        shutil.copyfile(payload / "aarch64-unix/winemetal.so", unixlib)
-        placeholder = tool / template / "winemetal.dll"
-        placeholder.unlink(missing_ok=True)
-        placeholder.symlink_to("../../../../../lib/wine/aarch64-windows/winemetal.dll")
-        (wine / ".steamac-dxmt").touch()
-        # A different version makes Proton refresh existing prefixes too.
-        version = tool / "version"
-        contents = version.read_text()
-        version.unlink()
-        version.write_text(contents.rstrip() + "\nsteamac-arm64ec-" + hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()[:16] + "\n")
+        for rel in ("",) + REAL:
+            (tool / rel).mkdir()
+            for entry in (source / rel).iterdir():
+                relative = (Path(rel) / entry.name).as_posix()
+                if relative not in REAL and (rel or entry.name not in SKIP):
+                    (tool / relative).symlink_to(entry)
+        dxvk = tool / "files/lib/wine/dxvk/aarch64-windows"
+        for dll in DXVK:
+            target = dxvk / (dll + ".dll")
+            target.unlink(missing_ok=True)
+            data = (payload / "aarch64-windows" / (dll + ".dll")).read_bytes()
+            # proton loads its DXVK set native (d3d11=n): drop the "Wine builtin DLL" marker
+            target.write_bytes(data[:64] + bytes(16) + data[80:])
+        for arch, source_arch, name in (("aarch64-windows", "aarch64-windows", "winemetal.dll"),
+                                        ("x86_64-windows", "aarch64-windows", "winemetal.dll"),
+                                        ("aarch64-unix", "aarch64-unix", "winemetal.so")):
+            (tool / "dxmt" / arch).mkdir(parents=True)
+            shutil.copyfile(payload / source_arch / name, tool / "dxmt" / arch / name)
+        apply_fixups(source, tool)
+        (tool / "run").write_text(RUN)
+        (tool / "run").chmod(0o755)
+        (tool / "toolmanifest.vdf").write_text(manifest.replace(COMMANDLINE, '"/run %verb%"'))
         (stage / "compatibilitytool.vdf").write_text(
             '"compatibilitytools" { "compat_tools" { "' + NAME + '" {\n'
             '"install_path" "tool"\n"display_name" "SteamMac DXMT (ARM64EC)"\n'
@@ -140,13 +258,15 @@ def install(source, payload, destination):
 def main():
     steam = Path(os.environ.get("STEAMAC_STEAM_ROOT", str(Path.home() / ".local/share/Steam")))
     payload = Path(os.environ.get("STEAMAC_DXMT_DIR", "/usr/lib/steamac/dxmt"))
-    if not (payload / "aarch64-unix/winemetal.so").exists():
+    source = steam / "steamapps/common/Proton 11.0 (ARM64)"
+    destination = steam / "compatibilitytools.d" / DIRECTORY
+    if sys.argv[1:] == ["--check"]:
+        sys.exit(0 if available(source, destination) else 1)
+    if not (payload / "aarch64-unix/winemetal.so").is_file():
         return
-    source = Path(sys.argv[1]) if len(sys.argv) > 1 else steam / "steamapps/common/Proton 11.0 (ARM64)"
-    if not source.exists():
-        print("steam-dxmt-arm64ec: install Proton 11.0 (ARM64) first", file=sys.stderr)
-        return
-    if install(source, payload, steam / "compatibilitytools.d" / DIRECTORY):
+    if len(sys.argv) > 1:
+        source = Path(sys.argv[1])
+    if install(source, payload, destination):
         print("steam-dxmt-arm64ec: native compatibility tool ready", file=sys.stderr)
 
 

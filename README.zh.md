@@ -679,7 +679,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 `{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。若 macOS 无法提供 Metal drawable（例如图层尺寸为零或 drawable 超时），DXMT 会跳过该帧，而不是提交 `nil`（Metal 会因此断言并终止虚拟机，STEAMAC-98）；日志中有限次记录此事，渲染从下一个 drawable 继续。开启时，启动器提供 libkrun 的
 wmtr virtio-gpu 上下文（补丁 0018，capset 30），并以 `steamac.gfx=dxmt` 启动虚拟机。
 客户机的 `steam-gfx-path` 将每个已安装的 x86-64 Proton 的库替换为 DXMT，并监视 Proton
-的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。启用可选的 ARM64EC 载荷后，`steam-dxmt-arm64ec` 会从已安装的 **Proton 11.0 (ARM64)** 准备一个单独的兼容工具 **SteamMac DXMT (ARM64EC)**。它使用 DXMT 上游的 ARM64X DLL 与 AArch64 ELF 格式的 `winemetal.so`，让 Wine 与 DXMT 原生运行，FEX 只转换游戏的 x86-64 代码。原 Proton 文件保持不变。副本约占 2 GB，当源 Proton 版本或载荷变化时于 Steam 启动前刷新；有游戏正在使用时推迟更新。嵌套的 `tool/` 目录可防止旧的 x86-64 安装程序替换其原生 DLL。
+的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。启用可选的 ARM64EC 载荷后，`steam-dxmt-arm64ec` 会从已安装的 **Proton 11.0 (ARM64)** 准备一个单独的兼容工具 **SteamMac DXMT (ARM64EC)**。它使用 DXMT 上游的 ARM64X DLL 与 AArch64 ELF 格式的 `winemetal.so`，让 Wine 与 DXMT 原生运行，FEX 只转换游戏的 x86-64 代码。这个轻量工具包含指向已安装 Proton 的符号链接、约 13 MB 的 DXMT 文件，以及私有前缀模板和需修复的条目，而不是完整的 1.9 GB 副本。原 Proton 文件保持不变，其更新直接通过链接生效。Proton 根据启动它时的路径确定自身目录，并在每次启动时把其 DXVK 组件复制到前缀中：工具中该位置上 DXMT 的 `d3d11`/`dxgi`/`d3d10core` 由此进入前缀；游戏改回 Steam 默认工具后，下次启动又会得到 DXVK。Wine 本身仍是原版；`winemetal` 通过 `WINEDLLPATH` 取自该工具，工具的 `run` 入口在游戏前缀中保留 `winemetal.dll` 条目。Proton 或载荷变化时，工具于 Steam 启动前重建；有游戏正在使用时推迟更新。源 Proton 被删除或不受支持时，托管工具不可用，映射会回退，而不会继续使用失效或不匹配的链接。即使原版 Proton 尚未首次运行，也会在私有前缀模板及需修复的条目中应用 SteamPipe 的空目录和只读权限修复（其他文件仅在需要修复权限时复制）。嵌套的 `tool/` 目录使旧的 x86-64 安装程序不会处理它。
 
 Steam 启动前，`steam-compat-default` **仅为配置中选择 DXMT 的游戏**写入单独的映射：有原生工具时指向它，否则指向 **Proton 10.0**，优先级 250，且仅限启用 DXMT 的启动。旧的仅 x86-64 载荷无法在 ARM64EC Wine 下初始化 winemetal；原生 PE DLL 与原生 Unix 库缺一不可。
 适用对象为未被用户指定兼容工具的已安装 Windows

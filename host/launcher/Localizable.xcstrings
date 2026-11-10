@@ -3171,18 +3171,18 @@
         }
       }
     },
-    "Games use DXMT only when their profile selects it. Their D3D11 and D3D10 draw through DXMT directly with the Mac's Metal using Proton 10.0 (x86-64); games with Default graphics stay on Vulkan. DXMT has compatibility gaps, including no D3D11 stream output. Allowing DXMT takes effect on the next VM start. Security risk: while on, programs in SteamOS can run code on the Mac with your user's rights. The executor runs inside the VM process and trusts the guest; a fault can stop the VM." : {
+    "Games use DXMT only when their profile selects it. Their D3D11 and D3D10 draw through DXMT directly with the Mac's Metal using native ARM64EC Proton when installed, or Proton 10.0 (x86-64) otherwise; games with Default graphics stay on Vulkan. DXMT has compatibility gaps, including no D3D11 stream output. Allowing DXMT takes effect on the next VM start. Security risk: while on, programs in SteamOS can run code on the Mac with your user's rights. The executor runs inside the VM process and trusts the guest; a fault can stop the VM." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Игры используют DXMT, только если он выбран в их профиле. D3D11 и D3D10 выводятся через DXMT напрямую в Metal на Mac с Proton 10.0 (x86-64); игры с графикой по умолчанию остаются на Vulkan. У DXMT есть ограничения совместимости, в том числе отсутствие D3D11 stream output. Разрешение DXMT действует со следующего запуска ВМ. Риск безопасности: пока он включён, программы в SteamOS могут выполнять код на Mac с правами вашего пользователя. Исполнитель работает внутри процесса ВМ и доверяет гостю; ошибка может остановить ВМ."
+            "value" : "Игры используют DXMT, только если он выбран в их профиле. D3D11 и D3D10 выводятся через DXMT напрямую в Metal на Mac с нативным ARM64EC Proton, если он установлен, иначе с Proton 10.0 (x86-64); игры с графикой по умолчанию остаются на Vulkan. У DXMT есть ограничения совместимости, в том числе отсутствие D3D11 stream output. Разрешение DXMT действует со следующего запуска ВМ. Риск безопасности: пока он включён, программы в SteamOS могут выполнять код на Mac с правами вашего пользователя. Исполнитель работает внутри процесса ВМ и доверяет гостю; ошибка может остановить ВМ."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "游戏仅在其配置选择 DXMT 时才会使用它。D3D11 和 D3D10 通过 Proton 10.0（x86-64）的 DXMT 直接使用 Mac 的 Metal 绘制；图形设为“默认”的游戏仍使用 Vulkan。DXMT 存在兼容性限制，包括不支持 D3D11 流输出。允许 DXMT 将在下次启动虚拟机时生效。安全风险：启用后，SteamOS 中的程序可以使用您的用户权限在 Mac 上执行代码。执行器运行于虚拟机进程内并信任客户机；故障可能导致虚拟机停止。"
+            "value" : "游戏仅在其配置选择 DXMT 时才会使用它。D3D11 和 D3D10 通过 DXMT 直接使用 Mac 的 Metal 绘制，已安装原生 ARM64EC Proton 时使用它，否则使用 Proton 10.0（x86-64）；图形设为“默认”的游戏仍使用 Vulkan。DXMT 存在兼容性限制，包括不支持 D3D11 流输出。允许 DXMT 将在下次启动虚拟机时生效。安全风险：启用后，SteamOS 中的程序可以使用您的用户权限在 Mac 上执行代码。执行器运行于虚拟机进程内并信任客户机；故障可能导致虚拟机停止。"
           }
         }
       }

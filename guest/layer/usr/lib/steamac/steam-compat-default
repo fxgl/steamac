@@ -28,6 +28,7 @@ import os
 from pathlib import Path
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 
@@ -256,8 +257,8 @@ def main(mode):
     previous = json.loads(marker.read_text()) if marker.exists() else {}
     mapped = set(previous.get("mapped", []))
     previous_mapping = {**OURS, "name": previous.get("tool", TOOL)}
-    native = steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
-    tool = NATIVE_TOOL if (native / ".steamac-arm64ec.json").is_file() and (native / "tool/files/lib/wine/aarch64-unix/winemetal.so").is_file() else TOOL
+    native_check = subprocess.run([sys.executable, str(Path(__file__).with_name("steam-dxmt-arm64ec")), "--check"]) if mode == "dxmt" else None
+    tool = NATIVE_TOOL if native_check is not None and native_check.returncode == 0 else TOOL
     desired = {**OURS, "name": tool}
     if not config.exists():
         if mode == "dxmt":

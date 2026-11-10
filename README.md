@@ -1067,10 +1067,20 @@ installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and
 original files. With the optional ARM64EC payload, `steam-dxmt-arm64ec` prepares a separate
 **SteamMac DXMT (ARM64EC)** compatibility tool from installed **Proton 11.0 (ARM64)**. It uses
 upstream DXMT's ARM64X DLLs and an AArch64 ELF `winemetal.so`, keeping Wine and DXMT native while
-FEX translates the game's x86-64 code. The original Proton files stay untouched. The copy takes
-about 2 GB and is refreshed before Steam starts when the source version or payload changes;
-updates are deferred while a game is using it. Its nested `tool/` directory keeps the legacy
-x86-64 installer from replacing its native DLLs.
+FEX translates the game's x86-64 code. The thin tool uses symlinks into the installed Proton,
+about 13 MB of DXMT files and private prefix/fixup entries, not a full 1.9 GB copy. The original
+Proton files stay untouched and updates reach the links directly. Proton takes its directory from
+the path it is started as and copies its DXVK set into
+the prefix on every launch, so DXMT's `d3d11`/`dxgi`/`d3d10core` at that path in the tool reach the
+prefix, and a game set back to Steam's default gets DXVK again at its next start. Wine itself stays
+the stock build; `winemetal` comes from the tool via `WINEDLLPATH`, and the tool's `run` entry point
+keeps a `winemetal.dll` entry in the game's prefix. The tool is rebuilt before Steam starts when the
+Proton or payload changes; updates are deferred while a game is using it. Missing or unsupported
+Proton sources invalidate the managed tool; mappings fall back instead of following dangling or
+mismatched links. SteamPipe's empty-directory and read-only fixups are applied to private prefix
+templates and affected entries (copying other files only when their permissions need fixing),
+even before stock Proton's first launch.
+Its nested `tool/` directory keeps the legacy x86-64 installer away from it.
 
 Before Steam starts, `steam-compat-default` gives **only games whose profile selects DXMT** a
 per-game mapping to the native tool when available, or **Proton 10.0** otherwise, at priority 250,

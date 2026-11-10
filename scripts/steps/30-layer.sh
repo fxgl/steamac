@@ -36,16 +36,18 @@ fi
 DXMT=/work/out/dxmt
 dxmt_info=ABSENT
 for arch in x86_64 aarch64; do
-if [[ -f $DXMT/$arch-unix/winemetal.so ]]; then
-    install -d "$ST/usr/lib/steamac/dxmt/$arch-windows" "$ST/usr/lib/steamac/dxmt/$arch-unix"
-    for f in d3d11 dxgi d3d10core winemetal; do
-        install -m 0644 "$DXMT/$arch-windows/$f.dll" "$ST/usr/lib/steamac/dxmt/$arch-windows/$f.dll"
-    done
-    install -m 0644 "$DXMT/$arch-unix/winemetal.so" "$ST/usr/lib/steamac/dxmt/$arch-unix/winemetal.so"
+    if [[ -f $DXMT/$arch-unix/winemetal.so ]]; then
+        install -d "$ST/usr/lib/steamac/dxmt/$arch-windows" "$ST/usr/lib/steamac/dxmt/$arch-unix"
+        for f in d3d11 dxgi d3d10core winemetal; do
+            install -m 0644 "$DXMT/$arch-windows/$f.dll" "$ST/usr/lib/steamac/dxmt/$arch-windows/$f.dll"
+        done
+        install -m 0644 "$DXMT/$arch-unix/winemetal.so" "$ST/usr/lib/steamac/dxmt/$arch-unix/winemetal.so"
+    fi
+done
+if [[ -d $ST/usr/lib/steamac/dxmt ]]; then
     dxmt_info=$(cd "$DXMT" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
     echo "[layer] included DXMT from $DXMT ($dxmt_info)"
 fi
-done
 
 AGENT=/work/cache/progress-agent/fx-progress-agent
 [[ -x $AGENT ]] || { echo "[layer] $AGENT missing: run step 25 (scripts/build-image.sh layer does)" >&2; exit 1; }

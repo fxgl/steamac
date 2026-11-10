@@ -219,7 +219,7 @@ reconcile() {
         while read -r p; do apply_dxmt "$p" || log "cannot set up DXMT in $p"; done < <(protons)
         # winemetal is not in Proton's prefix template: Wine finds that builtin only through system32
         while read -r x; do
-            # Native DXMT's own Proton template supplies its ARM64X builtin. A
+            # The native tool's `run` keeps its own winemetal entry in its prefixes. A
             # legacy watcher must never replace it with the x86-only payload.
             grep -qF '/steamac-dxmt-arm64ec/tool/' "$x/../config_info" 2>/dev/null && continue
             [[ -f $PAYLOAD/x86_64-windows/winemetal.dll ]] || continue
@@ -257,7 +257,7 @@ reconcile() {
 if [[ ${1:-} != --watch ]]; then
     if [[ $mode == dxmt && -f $PAYLOAD/aarch64-unix/winemetal.so ]]; then
         "${STEAMAC_DXMT_ARM64EC:-$(dirname "$0")/steam-dxmt-arm64ec}" || log "native DXMT tool update deferred"
-        if [[ ! -f $PAYLOAD/x86_64-unix/winemetal.so && ! -f $STEAM/compatibilitytools.d/steamac-dxmt-arm64ec/tool/files/lib/wine/aarch64-unix/winemetal.so ]]; then
+        if [[ ! -f $PAYLOAD/x86_64-unix/winemetal.so ]] && ! "${STEAMAC_DXMT_ARM64EC:-$(dirname "$0")/steam-dxmt-arm64ec}" --check; then
             log "native DXMT tool not ready; keeping Steam's default until the next start"
             mode=vulkan
         fi

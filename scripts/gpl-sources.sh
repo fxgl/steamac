@@ -100,7 +100,8 @@ if [[ -f $ST/repo/host/dxmt/pin.env ]]; then
     copy_source "$ROOT/work/cache/dxmt/mingw-directx-headers-$headers_commit.tar.gz" \
         "https://github.com/misyltoad/mingw-directx-headers/archive/$headers_commit.tar.gz" \
         "$headers_sha" "mingw-directx-headers-$headers_commit.tar.gz"
-    # The ARM64X winemetal.dll links Wine 11.2's winecrt0.
+    # The ARM64X winemetal.dll links Wine 11.2's winecrt0. Like the other optional DXMT
+    # sources above, include it regardless of local artifacts (also for historical refs).
     wine_record=$(awk -F= '/^WINE_ARM64EC_SOURCE_(URL|SHA256)=/ { print $1, $2 }' "$ST/repo/host/dxmt/build.sh")
     wine_url=$(printf '%s\n' "$wine_record" | awk '$1 == "WINE_ARM64EC_SOURCE_URL" { print $2 }')
     wine_sha=$(printf '%s\n' "$wine_record" | awk '$1 == "WINE_ARM64EC_SOURCE_SHA256" { print $2 }')

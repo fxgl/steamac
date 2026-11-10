@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import struct
+import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,8 @@ assert _spec is not None
 compat = importlib.util.module_from_spec(_spec)
 sys.dont_write_bytecode = True
 _loader.exec_module(compat)
+native_fixture = runpy.run_path(str(Path(__file__).with_name("steam-dxmt-arm64ec.py")))
+native_builder = native_fixture["native"]
 
 CONFIG = '''"InstallConfigStore"
 {
@@ -202,11 +206,10 @@ class CompatDefaultTests(unittest.TestCase):
         self.assertEqual(self.mapped(), {"3564860": compat.OURS})
 
     def native_tool(self):
-        root = self.steam / "compatibilitytools.d/steamac-dxmt-arm64ec"
-        lib = root / "tool/files/lib/wine/aarch64-unix/winemetal.so"
-        lib.parent.mkdir(parents=True)
-        lib.write_bytes(b"native")
-        (root / ".steamac-arm64ec.json").write_text('{}')
+        payload = Path(self.tmp.name) / "payload"
+        self.source = native_fixture["make_fixture"](self.steam, payload)
+        root = self.steam / "compatibilitytools.d" / native_builder.DIRECTORY
+        native_builder.install(self.source, payload, root)
         return root
 
     def test_native_tool_migrates_our_mappings_and_restores(self):
@@ -230,6 +233,49 @@ class CompatDefaultTests(unittest.TestCase):
         self.run_mode("dxmt")
         self.assertEqual(self.mapped()["894020"], own)
         self.assertEqual(self.mapped()["3564860"], compat.OURS)
+
+    def test_native_source_removed_falls_back_even_before_builder_runs(self):
+        self.write(CONFIG % "")
+        self.native_tool()
+        self.run_mode("dxmt")
+        shutil.rmtree(self.source)
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"], compat.OURS)
+
+    def test_rejected_update_falls_back_and_normal_rebuild_returns_to_native(self):
+        self.write(CONFIG % "")
+        tool = self.native_tool()
+        payload = Path(self.tmp.name) / "payload"
+        self.run_mode("dxmt")
+        proton = self.source / "proton"
+        original = proton.read_text()
+        proton.write_text("updated Proton with unsupported directory lookup")
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"], compat.OURS)
+        with self.assertRaises(ValueError):
+            native_builder.install(self.source, payload, tool)
+        self.assertFalse(tool.exists())
+        proton.write_text(original)
+        (self.source / "version").write_text("new supported version")
+        native_builder.install(self.source, payload, tool)
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"]["name"], compat.NATIVE_TOOL)
+        # A supported update is unavailable until its receipt is rebuilt too.
+        (self.source / "version").write_text("another supported version")
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"], compat.OURS)
+        native_builder.install(self.source, payload, tool)
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"]["name"], compat.NATIVE_TOOL)
+
+    def test_dangling_native_key_link_falls_back(self):
+        self.write(CONFIG % "")
+        tool = self.native_tool()
+        self.run_mode("dxmt")
+        (tool / "tool/proton").unlink()
+        (tool / "tool/proton").symlink_to(self.source / "missing-proton")
+        self.run_mode("dxmt")
+        self.assertEqual(self.mapped()["894020"], compat.OURS)
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,9 +45,44 @@ if [[ ${DXMT_PIN_OFFLINE:-0} != 1 ]]; then
     echo 'ok: pinned source + patches = the fork commit'
 fi
 
+# Exercise the source-offer block without downloading anything or building a release.
+# Keep Wine's upstream source pin distinct from the prebuilt ARM64EC Wine tools.
+python3 - "$ROOT" "$tmp" <<'PY'
+from pathlib import Path
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+root, stage = map(Path, sys.argv[1:])
+build = (root / "host/dxmt/build.sh").read_text()
+pins = dict(re.findall(r"^(WINE_ARM64EC(?:_SOURCE)?_(?:URL|SHA256))=(\S+)$", build, re.M))
+assert pins["WINE_ARM64EC_URL"].endswith("/wine-11.2/wine-11.2.tar.gz")
+assert pins["WINE_ARM64EC_SOURCE_URL"] == "https://dl.winehq.org/wine/source/11.x/wine-11.2.tar.xz"
+for key in ("WINE_ARM64EC_SHA256", "WINE_ARM64EC_SOURCE_SHA256"):
+    assert re.fullmatch(r"[0-9a-f]{64}", pins[key]), key
+assert 'fetch_file "$WINE_ARM64EC_SOURCE_URL" "$WINE_ARM64EC_SOURCE_SHA256" "$cache/wine-11.2.tar.xz"' in build
+repo = stage / "repo/host/dxmt"
+repo.mkdir(parents=True)
+for name in ("build.sh", "pin.env"):
+    shutil.copyfile(root / "host/dxmt" / name, repo / name)
+offer = (root / "scripts/gpl-sources.sh").read_text()
+block = offer[offer.index("dxmt_notes="):offer.index("# Resolve busybox-static")]
+script = 'set -euo pipefail\ncopy_source() { printf "%s|%s|%s\\n" "$2" "$3" "$4"; }\n'
+result = subprocess.run(["bash", "-c", script + block + '\nprintf "%s\\n" "$dxmt_notes"'],
+                        env=dict(os.environ, ROOT=str(root), ST=str(stage), REF="HEAD"),
+                        text=True, capture_output=True)
+assert result.returncode == 0, result.stderr
+expected = "|".join((pins["WINE_ARM64EC_SOURCE_URL"], pins["WINE_ARM64EC_SOURCE_SHA256"], "wine-11.2.tar.xz"))
+assert expected in result.stdout.splitlines(), result.stdout
+assert "sources/wine-11.2.tar.xz" in result.stdout
+print("ok: Wine 11.2 build/source pins and offline source offer agree")
+PY
+
 if [[ -n ${1:-} ]]; then
     listing=$(tar -tf "$1")
-    for want in "sources/dxmt-$DXMT_COMMIT.tar.gz" repo/host/dxmt/pin.env repo/host/dxmt/patches/ repo/wmtr/Makefile README.txt; do
+    for want in "sources/dxmt-$DXMT_COMMIT.tar.gz" sources/wine-11.2.tar.xz repo/host/dxmt/pin.env repo/host/dxmt/patches/ repo/wmtr/Makefile README.txt; do
         grep -qF "$want" <<<"$listing" || fail "$1 lacks $want"
     done
     tar -xOf "$1" README.txt | grep -q "dxmt-$DXMT_COMMIT" || fail 'README.txt does not describe the DXMT source'
