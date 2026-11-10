@@ -321,8 +321,82 @@ extension HIDPassthrough {
         lizard.emit([0x40, 0, 0, 0, 0, 0])
         check(HIDPassthrough.isLiveSteamController(lizardSlot),
               "Desktop Mode lizard report keeps the Puck slot alive")
-        hid.desktopFocus = false
         hid.stopPuckTimer()
+        var livenessChanges = 0
+        hid.onChange = { livenessChanges += 1 }
+        // Same-file access ages the production monotonic timestamp without sleeping.
+        lizardSlot.lastState = ProcessInfo.processInfo.systemUptime - 2.1
+        check(lizardSlot.live, "Desktop Mode Puck slot stays live after more than 2 seconds")
+        let desktopDiagnostics = hid.diagnosticLines().joined(separator: "\n")
+        check(desktopDiagnostics.contains("desktopFocus=true")
+              && desktopDiagnostics.contains("Puck slot=3 live=true state age="),
+              "HID diagnostics expose Desktop focus and each Puck slot's liveness/age")
+        lizardSlot.lastState = ProcessInfo.processInfo.systemUptime - 30.1
+        check(!lizardSlot.live, "Desktop Mode Puck slot expires after more than 30 seconds")
+        lizard.emit([0x40, 0, 0, 0, 0, 0])
+        lizardSlot.lastState = ProcessInfo.processInfo.systemUptime - 2.1
+        let changesBeforeSteam = livenessChanges
+        hid.desktopFocus = false
+        check(!lizardSlot.live && livenessChanges == changesBeforeSteam + 1,
+              "desktop to Steam focus immediately drops a lizard-only slot older than 2 seconds")
+        let changesBeforeDesktop = livenessChanges
+        hid.desktopFocus = true
+        check(!lizardSlot.live && lizardSlot.lastState == nil
+              && livenessChanges == changesBeforeDesktop + 1,
+              "Steam to desktop focus does not resurrect an expired lizard-only slot")
+        let expiredDiagnostics = hid.diagnosticLines().joined(separator: "\n")
+        check(expiredDiagnostics.contains("Puck slot=3 live=false state age=none"),
+              "HID diagnostics distinguish a slot with no liveness timestamp")
+        for reportID: UInt8 in [0x42, 0x45, 0x47] {
+            hid.desktopFocus = false
+            puck.emit([reportID, 0])
+            hid.desktopFocus = true
+            check(slot.live, "Steam to desktop focus preserves fresh state report \(reportID)")
+            hid.desktopFocus = false
+            slot.lastState = ProcessInfo.processInfo.systemUptime - 2.1
+            check(!slot.live, "Gaming Mode state report \(reportID) expires after 2 seconds")
+            hid.desktopFocus = true
+            check(!slot.live && slot.lastState == nil,
+                  "Steam to desktop focus does not resurrect expired state report \(reportID)")
+        }
+        for desktop in [false, true] {
+            hid.desktopFocus = desktop
+            let mode = desktop ? "Desktop" : "Gaming"
+            slot.lastState = nil
+            puck.emit([0x43, 0])
+            check(slot.live == desktop, "\(mode) Mode battery liveness follows the focus policy")
+            for reportID: UInt8 in [0x79, 0x46] {
+                slot.lastState = nil
+                let changesBeforeStatus = livenessChanges
+                puck.emit([reportID, 2]) // SDL's Connect status, not controller input.
+                check(!slot.live && slot.lastState == nil && livenessChanges == changesBeforeStatus,
+                      "\(mode) Mode wireless status \(reportID) does not activate an empty slot")
+                puck.emit([reportID]) // No state byte: cannot be a Disconnect.
+                check(slot.lastState == nil && livenessChanges == changesBeforeStatus,
+                      "\(mode) Mode truncated wireless status \(reportID) does not change liveness")
+                puck.emit([0x42, 0])
+                let lastState = slot.lastState
+                let changesBeforeConnect = livenessChanges
+                puck.emit([reportID, 2, 1]) // State is byte 1, not a later payload byte.
+                check(slot.live && slot.lastState == lastState && livenessChanges == changesBeforeConnect,
+                      "\(mode) Mode non-disconnect status \(reportID) does not refresh or clear state")
+                let expired = ProcessInfo.processInfo.systemUptime - (desktop ? 30.1 : 2.1)
+                slot.lastState = expired
+                puck.emit([reportID, 2])
+                check(!slot.live && slot.lastState == expired && livenessChanges == changesBeforeConnect,
+                      "\(mode) Mode non-disconnect status \(reportID) cannot keep an expired slot alive")
+                puck.emit([0x42, 0])
+                let changesBeforeDisconnect = livenessChanges
+                puck.emit([reportID, 1])
+                check(!slot.live && slot.lastState == nil && livenessChanges == changesBeforeDisconnect + 1,
+                      "\(mode) Mode Disconnect \(reportID) clears the slot and notifies immediately")
+                hid.desktopFocus = !desktop
+                check(!slot.live, "Disconnect \(reportID) stays dead after leaving \(mode) Mode")
+                hid.desktopFocus = desktop
+            }
+        }
+        hid.desktopFocus = false
+        hid.onChange = nil
         print("Original regressions: \(checks) checks, \(failures) failures")
 
         #if HAS_INDEPENDENT_DEVICES

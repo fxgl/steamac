@@ -702,13 +702,15 @@ DualSense on player 1) becomes the next free player instead of being dropped:
   number, which a uhid device does not have, so the slot that carries controller state goes to
   SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
   2 s is removed again (controller off, moved to another slot or to Bluetooth), and the
-  GameController pad of the Puck takes over. In **Desktop Mode** the grace is 30 s and lizard-mode
-  keyboard/mouse reports also keep the slot alive — otherwise Plasma's idle/lizard path dropped
-  Valve passthrough every few seconds and flapped through Xbox, often with a stuck cursor after
-  Options woke the controller. That player's Steam Controller is passed through
-  only when exactly one player's GameController controller is a Steam Controller and exactly one
-  Puck slot is live; otherwise those players keep uinput pads, since the slots cannot be matched
-  to their controllers reliably.
+  GameController pad of the Puck takes over. In **Desktop Mode** the grace is 30 s and all input
+  reports except wireless status keep the slot alive, including lizard-mode keyboard/mouse and
+  battery reports. This keeps Valve passthrough stable during desktop use, including after
+  Options wakes the controller. Wireless status never extends either timeout, and a Disconnect
+  status removes the slot immediately in both modes. Switching to Desktop Mode does not revive
+  a slot already expired under the 2 s Gaming Mode timeout. That player's Steam Controller is
+  passed through only when exactly one player's GameController controller is a Steam Controller
+  and exactly one Puck slot is live; otherwise those players keep uinput pads, since the slots
+  cannot be matched to their controllers reliably.
 
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks

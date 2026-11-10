@@ -26,11 +26,10 @@ final class HIDPassthrough {
     static let puckSlots = 2...5
     static let wiredSteamController: UInt16 = 0x1302
     /// The controller-state report IDs: USB/dongle (0x42), BLE (0x45) and the newer "Ibex" with
-    /// a trackpad timestamp (0x47). Outside Desktop Mode only these keep a Puck slot alive:
-    /// battery (0x43), wireless status (0x46/0x79) and lizard-mode keyboard/mouse reports do not
-    /// (SDL_hidapi_steam_triton.c). In Desktop Mode any input report refreshes liveness: Plasma
-    /// often leaves the controller in lizard mode, which would otherwise drop Valve passthrough
-    /// after `puckSlotTimeout` and flap through the Puck's Xbox 360 GameController pad.
+    /// a trackpad timestamp (0x47). Outside Desktop Mode only these keep a Puck slot alive.
+    /// Desktop Mode also accepts other input (including lizard keyboard/mouse and battery
+    /// 0x43), since Plasma can leave the controller in lizard mode. Wireless status 0x46/0x79
+    /// never refreshes liveness; Disconnect clears the slot immediately in either focus mode.
     static let stateReports: Set<UInt8> = [0x42, 0x45, 0x47]
     /// A slot without controller state for this long has no controller (Gaming Mode / Steam).
     static let puckSlotTimeout: TimeInterval = 2
@@ -76,7 +75,7 @@ final class HIDPassthrough {
         fileprivate let inputBuffer: UnsafeMutablePointer<UInt8>
         /// The Puck's USB interface (a controller slot), nil for a controller itself.
         let puckSlot: Int?
-        /// When the slot last carried controller state (Puck slots only, monotonic clock).
+        /// When the slot last carried qualifying controller activity (monotonic clock).
         fileprivate var lastState: TimeInterval?
         fileprivate weak var owner: HIDPassthrough?
         /// Where this device's input reports go while it is passed through (nil = not passed
@@ -133,6 +132,15 @@ final class HIDPassthrough {
     var desktopFocus = false {
         didSet {
             guard desktopFocus != oldValue else { return }
+            if desktopFocus {
+                // Extending the window must not revive a slot already dead in Gaming Mode.
+                let now = ProcessInfo.processInfo.systemUptime
+                for d in devices where d.puckSlot != nil {
+                    if let t = d.lastState, now - t >= HIDPassthrough.puckSlotTimeout {
+                        d.lastState = nil
+                    }
+                }
+            }
             onChange?()
         }
     }
@@ -444,7 +452,7 @@ final class HIDPassthrough {
     }
 
     /// A device's input reports for as long as it is connected: Puck-slot liveness from
-    /// controller-state reports, and delivery to `onInput` while some PadSlot has activated it.
+    /// controller activity, and delivery to `onInput` while some PadSlot has activated it.
     /// Registered for every matched device (DualSenses included); with passthrough off the
     /// handler is nil and the callback only updates Puck liveness when relevant.
     private func watch(_ d: Device) {
@@ -466,9 +474,16 @@ final class HIDPassthrough {
             let reportID = report[0]
             if d.puckSlot != nil {
                 let state = HIDPassthrough.stateReports.contains(reportID)
-                // Gaming Mode: only controller-state reports. Desktop: lizard keyboard/mouse
-                // activity also counts — otherwise a quiet 2 s drops Valve uhid for Xbox.
-                if state || me.desktopFocus {
+                let wireless = reportID == 0x46 || reportID == 0x79
+                if wireless {
+                    // SDL's steam/controller_structs.h: TritonWirelessStatus_t is a single
+                    // state byte after the report ID; Disconnect=1, Connect=2. Both IDs use
+                    // this layout in SDL_hidapi_steam_triton.c. Status is never activity.
+                    if length >= 2 && report[1] == 1 {
+                        d.lastState = nil
+                        me.onChange?()
+                    }
+                } else if state || me.desktopFocus {
                     let wasLive = d.live
                     d.lastState = ProcessInfo.processInfo.systemUptime
                     if !wasLive {
@@ -513,15 +528,20 @@ final class HIDPassthrough {
     /// scheduling callbacks, seizing it or asking for Input Monitoring. In particular,
     /// show devices the routing manager never matched, rather than only accepted pads.
     func diagnosticLines() -> [String] {
-        var lines = ["HID routing: generic=\(matchGenericControllers), Valve=\(matchSteamControllers)"]
+        let now = ProcessInfo.processInfo.systemUptime
+        var lines = ["HID routing: generic=\(matchGenericControllers), Valve=\(matchSteamControllers), desktopFocus=\(desktopFocus)"]
         for d in devices {
             let route = d.onInput == nil ? "not forwarding" : "forwarding"
             var line = String(format: "HID %04x:%04x", d.identity.vendor, d.identity.product)
                 + " \(d.identity.name), registry=\(d.registryID), \(route)"
+            if let slot = d.puckSlot {
+                let age = d.lastState.map { String(format: "%.3fs", now - $0) } ?? "none"
+                line += ", Puck slot=\(slot) live=\(d.live) state age=\(age)"
+            }
             if d.lastInputLength > 0 {
                 let report = UnsafeBufferPointer(start: d.inputBuffer, count: min(d.lastInputLength, d.maxInput))
                 line += String(format: ", input=%d bytes age=%.3fs", report.count,
-                               ProcessInfo.processInfo.systemUptime - d.lastInputTime)
+                               now - d.lastInputTime)
                 if Self.dualSenses.contains(where: { $0.vendor == Int(d.identity.vendor) && $0.product == Int(d.identity.product) }),
                    let decoded = Self.dualSenseDiagnostic(report, bus: d.identity.bus) {
                     line += ", " + decoded
