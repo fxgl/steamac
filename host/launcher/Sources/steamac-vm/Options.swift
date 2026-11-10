@@ -175,7 +175,7 @@ struct Options {
            steamac-vm --selftest-overlay [--selftest-out DIR] [--display WxH]
            steamac-vm --selftest-stall [--selftest-out DIR] [--display WxH]
            steamac-vm --selftest-pill [--selftest-out DIR] [--display WxH]
-           steamac-vm --selftest-settings [--selftest-out DIR]
+           steamac-vm --selftest-settings [--headless] [--selftest-out DIR]
            steamac-vm --selftest-provision [--reference-disk IMG]
            steamac-vm --selftest-remote-play
            steamac-vm --selftest-stream
@@ -326,7 +326,8 @@ struct Options {
       --selftest-pill      boot overlay vs progress pill (click / key / menu collapse, download stages keep
                            or re-expand the overlay, live download progress, window title, fade at
                            ready), then the no-picture guard with synthetic scanout states; captures + checks
-      --selftest-settings  open the Settings window and write a PNG of every tab to --selftest-out
+      --selftest-settings  open the Settings window and write a PNG of every tab to --selftest-out;
+                           with --headless, run pure checks without NSApplication/windows/PNGs/VM
       --selftest-provision unit tests of the disk creator: GPT writer vs the layout of --reference-disk
                            (default work/out/steamos.img, opened read-only), squashfs + CMS verification of
                            the cached bundle, cpio payload, SHA-512 crypt, desync progress parsing

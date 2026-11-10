@@ -108,6 +108,8 @@ final class PadPort {
     private static let maxPending = 256 * 1024
     private var writable: DispatchSourceWrite?
     private var writableArmed = false
+    /// El guest dejó de leer y hubo que descartar líneas: el llamador debe reenviar estado.
+    private var dropped = false
 
     init(player index: Int = 0) throws {
         name = PadPort.name(player: index)
@@ -121,12 +123,22 @@ final class PadPort {
         _ = fcntl(writeFd, F_SETFL, fcntl(writeFd, F_GETFL) | O_NONBLOCK)
     }
 
+    deinit {
+        // Un DispatchSource suspendido no puede liberarse: libdispatch aborta (SIGTRAP). Se
+        // reanuda antes de cancelar; en el uso normal esto solo ocurre al destruir el puerto.
+        if let source = writable {
+            if !writableArmed { source.resume() }
+            source.cancel()
+        }
+    }
+
     /// One host → guest line, after everything queued before it; false if it had to be dropped.
     @discardableResult
     func send(_ line: String) -> Bool {
         let bytes = Array((line + "\n").utf8)
         if pending.count + bytes.count > PadPort.maxPending {
             pending.removeAll()
+            dropped = true
             if bytes.count > PadPort.maxPending { return false }
             // A dropped partial line would merge with the next one: a newline ends it.
             pending.append(UInt8(ascii: "\n"))
@@ -134,6 +146,13 @@ final class PadPort {
         pending += bytes
         flush()
         return true
+    }
+
+    /// `true` una vez por cada descarte: `PadSlot` reenvía entonces el estado completo.
+    func consumeDropped() -> Bool {
+        let value = dropped
+        dropped = false
+        return value
     }
 
     /// A line that a newer one replaces (an input report: each carries the whole state): sent
@@ -159,6 +178,9 @@ final class PadPort {
     }
 
     private func armWritable(_ on: Bool) {
+        // Nada que esperar y ninguna fuente creada: no se crea un DispatchSource suspendido
+        // (liberarlo así aborta en libdispatch).
+        if !on && writable == nil { return }
         if writable == nil {
             let s = DispatchSource.makeWriteSource(fileDescriptor: writeFd, queue: .main)
             s.setEventHandler { [weak self] in self?.flush() }
@@ -214,6 +236,8 @@ private final class PadSlot {
     private var guestHID: HIDPassthrough.Device?
     /// What the guest last got (or, without a uinput pad, the controller's last state).
     private var state = GamepadBridge.PadState()
+    /// El próximo `apply` envía todos los botones y ejes, no solo las diferencias.
+    private var forceFull = false
     /// The guest's service of this port said `hello`: it can create a pad.
     private(set) var serviceReady = false
     /// ... and `caps hid`: it can create a uhid device.
@@ -389,7 +413,12 @@ private final class PadSlot {
     /// "Appears in SteamOS as" (`--pad`), Automatic = the controller's.
     private func wanted() -> (device: GuestDevice, why: String)? {
         guard settings.virtualPad else { return nil }
-        if let remote { return (.pad(remote.kind), "Moonlight controller \(remote.number + 1)") }
+        if let remote {
+            let why = remote.source == .switch2Bridge
+                ? "Switch2Bridge controller"
+                : "Moonlight controller \(remote.number + 1)"
+            return (.pad(remote.kind), why)
+        }
         let type = typeOverride ?? settings.padType
         // A Steam Controller goes through in Automatic / Steam Controller; a generic HID that
         // GameController does not publish goes through in Automatic only. Puck slots follow an
@@ -437,6 +466,7 @@ private final class PadSlot {
         if let d = guestHID { hid?.deactivate(d, owner: self) }
         guestPad = nil
         guestHID = nil
+        forceFull = false
         rumble.set(strong: 0, weak: 0)
     }
 
@@ -458,6 +488,7 @@ private final class PadSlot {
             log("\(tag): SteamOS sees a \(pad.logTitle) (\(want.why))")
             // The new device is at rest; send the controller's current state.
             state = GamepadBridge.rest(pad)
+            forceFull = false
             refresh()
         case .hid(let d):
             guard port.send(d.identity.createLine) else {
@@ -481,6 +512,59 @@ private final class PadSlot {
         }
     }
 
+    /// Fuerza que el próximo `apply` envíe todos los botones y ejes, incluidos los que se acaban
+    /// de soltar. No envía nada ahora: un fotograma en reposo ocultaría la liberación.
+    func keyframe() {
+        guard guestPad != nil else { return }
+        forceFull = true
+    }
+
+    static func keyframeSelfCheck() -> [String] {
+        do {
+            let port = try PadPort()
+            _ = fcntl(port.guestInputFd, F_SETFL, O_NONBLOCK)
+            let settings = LauncherSettings.shared
+            let savedVirtualPad = settings.virtualPad
+            let savedSwap = settings.swapABXY
+            let savedDeadzone = settings.stickDeadzone
+            settings.virtualPad = true
+            settings.swapABXY = false
+            settings.stickDeadzone = 0
+            defer {
+                settings.virtualPad = savedVirtualPad
+                settings.swapABXY = savedSwap
+                settings.stickDeadzone = savedDeadzone
+            }
+            let slot = PadSlot(index: 0, port: port, settings: settings, typeOverride: .xbox360, hid: nil)
+            var pressed = Switch2BridgeInput.neutralPad()
+            pressed.buttons = 0x1000
+            slot.setRemote(pressed)
+            slot.guestLine("hello")
+            func receive() -> String {
+                var bytes = [UInt8](repeating: 0, count: 4096)
+                let count = bytes.withUnsafeMutableBytes { Darwin.read(port.guestInputFd, $0.baseAddress, $0.count) }
+                return count > 0 ? String(decoding: bytes.prefix(count), as: UTF8.self) : ""
+            }
+            let initial = receive()
+            guard initial.contains("1:304:1") else {
+                return ["Switch2Bridge: el puerto no recibió la pulsación inicial"]
+            }
+            slot.keyframe()
+            let forcedNothing = receive()
+            guard forcedNothing.isEmpty else {
+                return ["Switch2Bridge: el keyframe no debe enviar un fotograma en reposo"]
+            }
+            slot.setRemote(Switch2BridgeInput.neutralPad())
+            let released = receive()
+            guard released.contains("1:304:0"), released.contains("3:0:0") else {
+                return ["Switch2Bridge: el fotograma completo debe soltar el botón y centrar el eje"]
+            }
+            return []
+        } catch {
+            return ["Switch2Bridge: prueba del puerto: \(error)"]
+        }
+    }
+
     private func update(from pad: GCExtendedGamepad) {
         apply(GamepadBridge.read(pad, as: guestPad ?? .xbox360, swapABXY: settings.swapABXY,
                                  deadzone: Float(settings.stickDeadzone) / 100))
@@ -494,24 +578,44 @@ private final class PadSlot {
             return
         }
         guard let pad = guestPad else {
+            forceFull = false
             state = next
             return
         }
         var events: [String] = []
-        for c in pad.buttonCodes where next.buttons[c] != state.buttons[c] {
-            events.append("\(EV.KEY):\(c):\(next.buttons[c] == true ? 1 : 0)")
-        }
-        for a in GamepadBridge.axisCodes where next.axes[a] != state.axes[a] {
-            events.append("\(EV.ABS):\(a):\(next.axes[a] ?? 0)")
+        if forceFull {
+            // Keyframe: también las liberaciones. `state` no se toca antes, así que un botón
+            // soltado en este mismo fotograma no puede perderse.
+            for c in pad.buttonCodes {
+                events.append("\(EV.KEY):\(c):\(next.buttons[c] == true ? 1 : 0)")
+            }
+            for a in GamepadBridge.axisCodes {
+                events.append("\(EV.ABS):\(a):\(next.axes[a] ?? 0)")
+            }
+            forceFull = false
+        } else {
+            for c in pad.buttonCodes where next.buttons[c] != state.buttons[c] {
+                events.append("\(EV.KEY):\(c):\(next.buttons[c] == true ? 1 : 0)")
+            }
+            for a in GamepadBridge.axisCodes where next.axes[a] != state.axes[a] {
+                events.append("\(EV.ABS):\(a):\(next.axes[a] ?? 0)")
+            }
         }
         let homeChanged = next.buttons[BTN.MODE] != state.buttons[BTN.MODE]
         state = next
         if !events.isEmpty {
             let accepted = port.send("ev " + events.joined(separator: " "))
+            if !accepted || port.consumeDropped() {
+                // El puerto descartó líneas: el siguiente fotograma reenvía todo para recuperar
+                // también las liberaciones que se hubieran perdido.
+                forceFull = true
+            }
             if homeChanged {
                 log("\(tag): Home/PS \(next.buttons[BTN.MODE] == true ? "pressed" : "released") "
                     + (accepted ? "queued for SteamOS" : "dropped before pad port"))
             }
+        } else {
+            _ = port.consumeDropped()
         }
     }
 
@@ -758,6 +862,13 @@ final class GamepadBridge {
     private var remotePads: [UInt16: RemotePad] = [:]
     private var remotePlayers: [UInt16: Int] = [:]
     private var remoteRumble: ((_ controller: UInt16, _ lowFrequency: UInt16, _ highFrequency: UInt16) -> Void)?
+    /// Switch2Bridge: el último estado recibido por el socket local y el jugador que lo usa.
+    /// Es una fuente propia, separada de `remotePads` (Moonlight): nunca reemplaza ese diccionario.
+    private var bridgePad: RemotePad?
+    private var bridgePlayer: Int?
+    private var bridgeInput: Switch2BridgeInput.Client?
+    /// Instante del último reenvío completo de la fuente Switch2Bridge.
+    private var lastBridgeKeyframe = ProcessInfo.processInfo.systemUptime
     private var observers: [NSObjectProtocol] = []
     private var subscriptions: [AnyCancellable] = []
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
@@ -784,6 +895,12 @@ final class GamepadBridge {
     }
 
     struct RemotePad: Equatable {
+        /// De dónde viene el pad, solo para diagnóstico y prioridad.
+        enum Source: Equatable {
+            case stream
+            case switch2Bridge
+        }
+
         let number: UInt16
         var kind: GuestPad = .xbox360
         var capabilities: UInt16 = 3
@@ -795,6 +912,7 @@ final class GamepadBridge {
         var leftY: Int16 = 0
         var rightX: Int16 = 0
         var rightY: Int16 = 0
+        var source: Source = .stream
     }
 
     /// Moonlight's controllers (by controller number). They take the first usable players ahead of
@@ -822,6 +940,54 @@ final class GamepadBridge {
         remoteRumble = nil
     }
 
+    /// Estado recibido del socket local de Switch2Bridge (o `nil` al cerrarse). Hilo principal:
+    /// el cliente funde las tramas antes de entregarlas. No toca `remotePads` ni `remotePlayers`.
+    func setBridgePad(_ pad: RemotePad?) {
+        let next: RemotePad? = switch2BridgeDuplicatePresent ? nil : pad
+        let wasPresent = bridgePad != nil
+        bridgePad = next
+        // Reenvío completo periódico: `PadSlot.apply` manda diferencias y el puerto puede
+        // descartar líneas si el guest se atasca; un keyframe recupera lo que siga pulsado.
+        if next != nil, ProcessInfo.processInfo.systemUptime - lastBridgeKeyframe > 5 {
+            lastBridgeKeyframe = ProcessInfo.processInfo.systemUptime
+            if let player = bridgePlayer, slots.indices.contains(player) {
+                slots[player].keyframe()
+            }
+        }
+        guard wasPresent != (next != nil) else {
+            // Sin cambio de presencia: basta con el diff al jugador ya asignado.
+            if let player = bridgePlayer, slots.indices.contains(player) {
+                slots[player].setRemote(next)
+                slots[player].remoteRumble = { _, _ in } // el ABI no tiene canal de vuelta
+            }
+            return
+        }
+        assignControllers()
+    }
+
+    /// `true` si el mismo mando ya llega a SteamOS por HID (el modo cable del propio puente,
+    /// VID/PID exactos 057e:2069): publicarlo también por el socket lo duplicaría. No se infiere
+    /// por nombres de GameController: no hay identidad fiable observada para el Switch 2 Pro y
+    /// otros Pro/Joy-Con deben conservar su jugador.
+    private var switch2BridgeDuplicatePresent: Bool {
+        Self.bridgeSuppressed(devices: hid.devices.map { ($0.identity.vendor, $0.identity.product) })
+    }
+
+    static func bridgeSuppressed(devices: [(UInt16, UInt16)]) -> Bool {
+        devices.contains { $0.0 == Switch2BridgeInput.vendorNintendo && $0.1 == Switch2BridgeInput.productSwitch2Pro }
+    }
+
+    /// Jugador libre de menor índice para Switch2Bridge. Cede siempre ante GameController,
+    /// Moonlight y las reservas HID: la fuente local nunca desplaza un mando existente.
+    static func bridgePlayerIndex(hasPad: Bool, usable: [Bool], controllers: [Bool],
+                                  remote: Set<Int>, rawHID: Set<Int>) -> Int? {
+        guard hasPad else { return nil }
+        return usable.indices.first {
+            usable[$0] && $0 < controllers.count && !controllers[$0]
+                && !remote.contains($0) && !rawHID.contains($0)
+        }
+    }
+
     private func saveLocalPlayers() {
         localPlayersBeforeStream = (slots.map(\.controller), rawPlayers)
     }
@@ -841,6 +1007,10 @@ final class GamepadBridge {
         }
         // assignControllers() filters disconnected HID reservations and fills free players with
         // controllers connected during the stream, without retaining their temporary player.
+    }
+
+    static func keyframeSelfCheck() -> [String] {
+        PadSlot.keyframeSelfCheck()
     }
 
     static func remoteRestorationSelfCheck() -> [String] {
@@ -1004,6 +1174,14 @@ final class GamepadBridge {
         hid.start()
         GCController.startWirelessControllerDiscovery(completionHandler: nil)
         assignControllers()
+        // Switch2Bridge: cliente de solo lectura del socket que el puente ya publica. No crea
+        // servidores, no escribe en él y no necesita permisos adicionales. Las pruebas aisladas
+        // pueden desactivarlo con STEAMAC_SWITCH2BRIDGE=0 sin tocar el puente.
+        if ProcessInfo.processInfo.environment["STEAMAC_SWITCH2BRIDGE"] != "0" {
+            let input = Switch2BridgeInput.Client { [weak self] pad in self?.setBridgePad(pad) }
+            bridgeInput = input
+            input.start()
+        }
     }
 
     /// The VM was paused (suspend, guest sleep) / runs again.
@@ -1111,6 +1289,26 @@ final class GamepadBridge {
             s.setController(nil)
         }
         for (i, s) in slots.enumerated() { s.setController(next[i]) }
+        // Switch2Bridge: última prioridad. GameController, Moonlight y las reservas HID ya
+        // tienen jugador; esta fuente toma el libre más bajo y no reemplaza ningún diccionario
+        // ajeno (su pad vive en `bridgePad`, no en `remotePads`).
+        updateRawPlayers()
+        let bridgeSlot = Self.bridgePlayerIndex(
+            hasPad: bridgePad != nil && !switch2BridgeDuplicatePresent,
+            usable: slots.map { usable($0.index) },
+            controllers: next.map { $0 != nil },
+            remote: Set(remotePlayers.values),
+            rawHID: Set(rawPlayers.values))
+        bridgePlayer = bridgeSlot
+        for slot in slots {
+            if slot.index == bridgeSlot {
+                slot.setRemote(bridgePad)
+                slot.remoteRumble = { _, _ in } // sin vibración: el ABI no la transporta
+            } else if let remote = slot.remote, remote.source == .switch2Bridge {
+                slot.setRemote(nil)
+                slot.remoteRumble = nil
+            }
+        }
         // Preserve raw HID reservations while filling free players, then route every HID kind.
         reconcileAll()
         let players = Dictionary(uniqueKeysWithValues: slots.compactMap { s in s.controller.map { (ObjectIdentifier($0), s.index + 1) } })
@@ -1221,6 +1419,9 @@ final class GamepadBridge {
             lines.append(String(format: "generic HID %04x:%04x", d.identity.vendor, d.identity.product)
                 + " \(d.identity.name), registry \(d.registryID), player \(player)")
         }
+        lines.append("Switch2Bridge: \(bridgePad == nil ? "no pad" : "pad")"
+            + (bridgePlayer.map { ", player \($0 + 1)" } ?? ", no free player")
+            + (switch2BridgeDuplicatePresent ? " (suppressed: 057e:2069 is published as HID)" : ""))
         lines += hid.diagnosticLines()
         return lines
     }
@@ -1240,6 +1441,10 @@ final class GamepadBridge {
         default:
             log(usage)
         }
+    }
+
+    deinit {
+        bridgeInput?.stop()
     }
 }
 
