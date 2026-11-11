@@ -30,6 +30,10 @@
 #    cleared depth/stencil values.
 # 4. linear_pitch.c: LINEAR image with VkImageDrmFormatModifierExplicitCreateInfoEXT rowPitch
 #    (virglrenderer dma-buf imports): layouts, memory size and pixel data use that pitch.
+#    sentry_ag.c (STEAMAC-AG/G, MoltenVK): RDR2's invalid statistics pools keep
+#    the feature disabled but return deterministic zero counters with availability;
+#    8192 timestamps sample and resolve across Metal's 4096-entry buffer limit.
+#    Mapped/imported and host-copy 1D/2D images check CPU pitches and every byte.
 # 5. xfb.c: transform feedback captured by geometry shaders (DXVK stream-output style without
 #    position and with rasterizer discard, strips with varying vertex counts, lines, 2 buffers,
 #    buffer offsets/sizes, counter buffers), buffer contents checked; transform feedback queries
@@ -197,10 +201,10 @@
 # 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
-# image_views.c (KosmicKrisp only; STEAMAC-62/64/3): empty and out-of-bounds
-# image-view slice ranges (explicit, REMAINING_ARRAY_LAYERS, 3D slices, narrowed
-# counts) and incompatible RGBA8 -> R8 views fail cleanly before Metal; valid
-# remaining-layer and 3D-slice controls still create.
+# image_views.c (KosmicKrisp only; STEAMAC-62/64/3/G): single-layer non-array
+# 2D slice overflow is recovered and checked by clear/readback. Other invalid
+# ranges (empty, REMAINING_ARRAY_LAYERS, 3D slices, narrowed counts) and formats
+# still fail before Metal; valid remaining-layer and 3D-slice controls create.
 # nir_cache.c (KosmicKrisp only; STEAMAC-6M/6K): corrupted precompiled NIR,
 # checksum corruption, missing checksum and legacy entries must be cache misses
 # before nir_deserialize; an unmodified control and every rebuilt pipeline dispatch
@@ -277,6 +281,18 @@ build() {
 	xcrun clang -std=c11 -Wall -Werror -O1 "$@" -I"$inc" "$here/$prog.c" $link -o "$work/$prog"
 }
 
+run_sentry_ag() {
+	build sentry_ag
+	ag_log=$work/sentry-ag.log
+	"$work/sentry_ag" > "$ag_log" 2>&1 || { cat "$ag_log"; return 1; }
+	cat "$ag_log"
+	if grep -E 'Invalid sample buffer length|Could not create MTLCounterSampleBuffer|AGX: Texture read/write assertion' "$ag_log"; then
+		echo "sentry-ag: unexpected Metal counter/pitch failure" >&2
+		return 1
+	fi
+	python3 "$here/sentry_ag_gpu.py" "${REPRO_MOLTENVK_SOURCE:-$root/work/build/host-moltenvk/src}" "$work/sentry-ag-gpu"
+}
+
 if [ "${REPRO_CASE:-}" = shared_image ]; then
 	build shared_image
 	"$work/shared_image"
@@ -296,6 +312,11 @@ if [ "${REPRO_CASE:-}" = sentry-ah ]; then
 	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
 	build sentry-ah-no-vertex -I"$work"
 	"$work/sentry-ah-no-vertex"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-ag ]; then
+	[ "$driver" = moltenvk ] || { echo "sentry-ag requires MoltenVK" >&2; exit 2; }
+	run_sentry_ag
 	exit
 fi
 
@@ -341,6 +362,9 @@ build depth_stencil
 
 build linear_pitch
 "$work/linear_pitch"
+if [ "$driver" = moltenvk ]; then
+	run_sentry_ag
+fi
 
 if [ "$driver" = moltenvk ]; then
 	build xfb

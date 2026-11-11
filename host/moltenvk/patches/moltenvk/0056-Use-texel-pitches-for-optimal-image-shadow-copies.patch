@@ -1,0 +1,64 @@
+From 95f9a0e0bed58667bd9aef3d81bce98569be26b5 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 11 Nov 2026 20:55:22 +0300
+Subject: [PATCH 56/57] Use texel pitches for optimal image shadow copies
+
+STEAMAC-AG/G: 4x64 BC1 imports reproduce AGX bytes_per_row >= used_bytes_per_row; 300x3 RGBA8 passed 2730-byte rows to Metal. Preserve heap offsets but use CPU texel/block strides for shadow copies, and do not convert mapped heap textures onto themselves. Retain descriptor fields when rejecting unsupported LINEAR non-2D textures.
+---
+ MoltenVK/MoltenVK/GPUObjects/MVKImage.mm | 19 ++++++++++++++++---
+ 1 file changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+index c403069..3ac559a 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+@@ -258,8 +258,12 @@
+                 layout.offset = offset + layer * layerSizeAndAlign.size;
+                 layout.size = levelSizeAndAlign.size;
+ 
+-                layout.rowPitch = layout.size / mipExtent.height / mipExtent.depth;
+-                layout.depthPitch = layout.size / mipExtent.depth;
++                // Heap size includes tiling/padding, not a CPU row stride. Dividing it
++                // by height produced fractional texels (300x3 RGBA8: 2730 bytes)
++                // and too-small compressed rows, which replaceRegion/getBytes reject.
++                auto planeFormat = _image->getPixelFormats()->getChromaSubsamplingPlaneMTLPixelFormat(_image->_vkFormat, _planeIndex);
++                layout.rowPitch = _image->getBytesPerRow(planeFormat, mipExtent.width);
++                layout.depthPitch = _image->getPixelFormats()->getBytesPerLayer(planeFormat, layout.rowPitch, mipExtent.height);
+ 
+                 _subresources.push_back(subRez);
+             }
+@@ -332,6 +336,10 @@
+     VkDeviceSize bytesPerImage = (imgType == VK_IMAGE_TYPE_3D) ? imgLayout.depthPitch : 0;
+ 
+     id<MTLTexture> mtlTex = getMTLTexture();
++    // A texture placed in the mapped allocation already aliases these bytes in
++    // Metal's opaque tiled layout. CPU linear copies would overwrite their own
++    // source/destination; only separate image backings need flush/pull copies.
++    if (mtlTex.heap && mtlTex.heap == getMemoryBinding()->getDeviceMemory()->getMTLHeap()) { return; }
+     if (_image->getPixelFormats()->isPVRTCFormat(mtlTex.pixelFormat)) {
+         bytesPerRow = 0;
+         bytesPerImage = 0;
+@@ -370,6 +378,7 @@
+     VkImageType imgType = _image->getImageType();
+     VkDeviceSize bytesPerRow = (imgType != VK_IMAGE_TYPE_1D) ? imgLayout.rowPitch : 0;
+     VkDeviceSize bytesPerImage = (imgType == VK_IMAGE_TYPE_3D) ? imgLayout.depthPitch : 0;
++    if (_mtlTexture.heap && _mtlTexture.heap == getMemoryBinding()->getDeviceMemory()->getMTLHeap()) { return; }
+ 
+     [_mtlTexture getBytes: pImgBytes
+               bytesPerRow: bytesPerRow
+@@ -1469,7 +1478,11 @@ static MTLRegion getMTLRegion(const ImgRgn& imgRgn) {
+ 	bool isLin = true;
+ 
+ 	if (getImageType() != VK_IMAGE_TYPE_2D) {
+-		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateImage() : If tiling is VK_IMAGE_TILING_LINEAR, imageType must be VK_IMAGE_TYPE_2D."));
++		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT,
++			"vkCreateImage() : LINEAR requires a Metal 2D texture (Vulkan type %d, Metal type %lu, format %d, extent %ux%ux%u, levels %u, layers %u, usage 0x%x; texture1DAs2D %u).",
++			pCreateInfo->imageType, (unsigned long)_mtlTextureType, pCreateInfo->format,
++			pCreateInfo->extent.width, pCreateInfo->extent.height, pCreateInfo->extent.depth,
++			pCreateInfo->mipLevels, pCreateInfo->arrayLayers, pCreateInfo->usage, getMVKConfig().texture1DAs2D));
+ 		isLin = false;
+ 	}
+ 
+-- 
+2.54.0 (Apple Git-157)
+

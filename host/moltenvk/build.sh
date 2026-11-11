@@ -116,6 +116,29 @@
 #   hash-deduplicated .metal event attachments per process; Sentry truncates extra
 #   fields at 16 KiB. sentry-ad-capture.sh checks exact recovery and byte/line
 #   boundaries through real failures. No Bodycam compiler workaround is claimed.
+#   MoltenVK 0055 (STEAMAC-AG/G, RDR2): the game creates pipeline-statistics
+#   pools despite pipelineStatisticsQuery=false (invalid VUID-00791 usage).
+#   Keep that feature false, but accept these pools with explicitly zeroed
+#   requested counters and normal reset/completion/availability/copy semantics,
+#   instead of losing an asynchronously created Venus object. Split native
+#   timestamp storage into <=4096-sample Metal buffers (8192 used to request
+#   65536 bytes, above Apple's 32768-byte limit); retain the existing CPU
+#   timestamp fallback when the process-wide counter-buffer budget is exhausted.
+#   MoltenVK 0056 (STEAMAC-AG/G): heap size / height is not a CPU row pitch.
+#   A 4x64 BC1 host import reproduces the exact AGX bytes_per_row assertion;
+#   300x3 RGBA8 produced 2730-byte fractional-texel rows. Use texel/block pitches
+#   for separate image backing copies, retaining heap offsets for aliases, and
+#   never copy a mapped heap texture onto its own opaque tiled memory. LINEAR
+#   3D remains unsupported (as advertised); refusal now retains the descriptor.
+#   sentry_ag checks all counters, chunk-boundary resolves, imported/ordinary
+#   image bytes, host-copy paths, and valid 1D-as-2D/LINEAR controls.
+#   MoltenVK 0057 (STEAMAC-AG/G diagnostics): Story-mode and appid 1859910
+#   reports contain only a generic queue-submit timeout, no shader or encoder
+#   identity; appid 1373880 has a real Metal code-8 OOM (10173 MiB allocated).
+#   Keep encoder status/signposts/shader validation logs even at errors-only
+#   logging, and explain how to enable status/shader capture when absent.
+#   sentry_ag_gpu uses synthetic Metal error records to test the real formatter;
+#   it does not induce a GPU fault or claim to reproduce/fix the Story-mode hang.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -403,6 +426,14 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         producer lanes, and key/cache the interface adapter (historical STEAMAC-2M/88)"
 	echo "  0054 = steamac: retain failed shader source up to 256 KiB / 8192 lines for bounded"
 	echo "         replayable event attachments (STEAMAC-AD diagnostics, not a compiler workaround)"
+	echo "  0055 = steamac: keep invalid unsupported statistics pools alive with zero counters"
+	echo "         without advertising the feature; chunk native timestamp storage at 4096 samples"
+	echo "         (STEAMAC-AG/G; retain CPU fallback on process-wide counter exhaustion)"
+	echo "  0056 = steamac: use texel/block CPU pitches for separate optimal image backings,"
+	echo "         avoid in-place copies of mapped heap textures; retain rejected LINEAR descriptors"
+	echo "         (STEAMAC-AG/G; 4x64 BC1 AGX assertion and 300x3 RGBA8 pitch regressions)"
+	echo "  0057 = steamac: retain GPU encoder/signpost/shader-log evidence at errors-only logging"
+	echo "         and give opt-in capture instructions (STEAMAC-AG/G diagnostics, no hang fix)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"
