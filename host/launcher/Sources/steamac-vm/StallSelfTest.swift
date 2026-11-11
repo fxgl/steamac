@@ -26,6 +26,16 @@ enum StallSelfTest {
     static func run(_ o: Options) -> Never {
         if let error = StallThreadDiagnostics.selfCheck() { fatal(error) }
         log("stall selftest: PASS bounded host thread snapshot includes named waiting worker")
+        // A poll observes hb=1 before host paging delays persistence/UI work by 5 s.
+        // Re-reading the clock inside evaluate used to report hb=6 against that hb=1 row.
+        guard !StallMonitor.heartbeatTimedOut(at: 101, lastAlive: 100, observationStarted: 1, lastPoll: 101),
+              !StallMonitor.heartbeatTimedOut(at: 106.1, lastAlive: 100, observationStarted: 1, lastPoll: 101),
+              !StallMonitor.heartbeatTimedOut(at: 106.1, lastAlive: 100, observationStarted: 106.1, lastPoll: 106.1),
+              StallMonitor.heartbeatTimedOut(at: 112, lastAlive: 100, observationStarted: 106.1, lastPoll: 112),
+              !StallMonitor.heartbeatTimedOut(at: 112, lastAlive: 0, observationStarted: 1, lastPoll: 112) else {
+            fatal("stall heartbeat observation must use a coherent poll timestamp and a fresh host window")
+        }
+        log("stall selftest: PASS coherent heartbeat timestamp across host delays")
         let cardPattern = #"3[47](?:[ -]*[0-9]){13}"#
         let counters = StallMonitor.diagnosticCounterText((ctrl: 340577, ring: 89246731)) + " hb=0.65"
         guard counters.contains("ctrl=340577 ring=89246731"),
@@ -200,6 +210,8 @@ enum StallSelfTest {
                             && $0.memoryHistory.contains("VM memory snapshots")
                             && $0.memoryHistory.contains("malloc-in-use=")
                             && $0.memoryHistory.contains("malloc-allocated=")
+                            && $0.memoryHistory.contains("host-pressure=")
+                            && $0.memoryHistory.contains("host-swap-used=")
                             && $0.threadSnapshot.contains("Host thread snapshot:")
                             && $0.threadSnapshot.contains("cpu-permille=")
                             && $0.history.split(separator: "\n").count > 5

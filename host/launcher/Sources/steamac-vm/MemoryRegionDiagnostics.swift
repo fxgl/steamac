@@ -7,23 +7,28 @@ import Foundation
 final class MemoryRegionDiagnostics {
     private var lastSample: TimeInterval?
 
-    static func shouldSample(footprint: UInt64, physical: UInt64, now: TimeInterval, last: TimeInterval?) -> Bool {
-        footprint > physical && (last == nil || now - last! >= 60)
+    static func shouldSample(footprint: UInt64, physical: UInt64, pressure: String,
+                             now: TimeInterval, last: TimeInterval?) -> Bool {
+        (footprint > physical || pressure == "warning" || pressure == "critical")
+            && (last == nil || now - last! >= 60)
     }
 
-    func sample(footprint: UInt64) -> String? {
+    func sample(footprint: UInt64, hostPressure: String) -> String? {
         let now = ProcessInfo.processInfo.systemUptime
         guard Self.shouldSample(footprint: footprint, physical: ProcessInfo.processInfo.physicalMemory,
-                                now: now, last: lastSample) else { return nil }
+                                pressure: hostPressure, now: now, last: lastSample) else { return nil }
         lastSample = now
         return Self.regions()
     }
     static func selfCheck() -> [String] {
         var failures: [String] = []
-        if shouldSample(footprint: 16, physical: 16, now: 100, last: nil)
-            || !shouldSample(footprint: 17, physical: 16, now: 100, last: nil)
-            || shouldSample(footprint: 17, physical: 16, now: 159, last: 100)
-            || !shouldSample(footprint: 17, physical: 16, now: 160, last: 100) {
+        if shouldSample(footprint: 16, physical: 16, pressure: "normal", now: 100, last: nil)
+            || !shouldSample(footprint: 17, physical: 16, pressure: "normal", now: 100, last: nil)
+            || shouldSample(footprint: 17, physical: 16, pressure: "normal", now: 159, last: 100)
+            || !shouldSample(footprint: 17, physical: 16, pressure: "normal", now: 160, last: 100)
+            || !shouldSample(footprint: 6, physical: 8, pressure: "warning", now: 100, last: nil)
+            || !shouldSample(footprint: 31, physical: 36, pressure: "critical", now: 100, last: nil)
+            || shouldSample(footprint: 6, physical: 8, pressure: "critical", now: 159, last: 100) {
             failures.append("memory-region threshold/rate gate")
         }
         var address: mach_vm_address_t = 0

@@ -247,6 +247,7 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
     }
 
     private func sample() {
+        let host = CrashReporting.HostMemory.current()
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) {
@@ -259,7 +260,7 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
             line += " footprint=\(info.phys_footprint >> 20) resident=\(info.resident_size >> 20)"
                 + " internal=\(info.internal >> 20) compressed=\(info.compressed >> 20)"
                 + " external=\(info.external >> 20) reusable=\(info.reusable >> 20)"
-            if let regions = regionDiagnostics.sample(footprint: info.phys_footprint) {
+            if let regions = regionDiagnostics.sample(footprint: info.phys_footprint, hostPressure: host.pressure) {
                 line += " " + regions
             }
         } else {
@@ -280,6 +281,9 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
         } else {
             line += " vkr-stats=unavailable"
         }
+        line += " host-pressure=\(host.pressure) host-available-pct=\(host.availablePercent.map(String.init) ?? "?")"
+            + " host-swap-used=\(host.swapUsed.map { String($0 >> 20) } ?? "?")"
+            + " host-swap-total=\(host.swapTotal.map { String($0 >> 20) } ?? "?")"
         lock.lock()
         if samples.count == 12 { samples.removeFirst() }
         samples.append(line)
