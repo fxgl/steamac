@@ -105,6 +105,10 @@ final class PadPort {
     /// Bytes the pipe has not taken yet, whole lines in order. Beyond `maxPending` (the guest
     /// stopped reading) everything waiting is dropped and lines start clean again.
     private var pending: [UInt8] = []
+    /// Newest coalesced input line waiting for `pending` to drain. Each `sendLatest` replaces it
+    /// so a busy pipe never drops the current HID state (button-up / lizard trackpad) — the old
+    /// "return false while pending" path stuck clicks in Desktop Mode.
+    private var latest: [UInt8]?
     private static let maxPending = 256 * 1024
     private var writable: DispatchSourceWrite?
     private var writableArmed = false
@@ -121,12 +125,25 @@ final class PadPort {
         _ = fcntl(writeFd, F_SETFL, fcntl(writeFd, F_GETFL) | O_NONBLOCK)
     }
 
+    deinit {
+        // libdispatch: cancel/release of a suspended DispatchSource traps
+        // ("BUG IN CLIENT OF LIBDISPATCH: Release of a suspended object").
+        if let s = writable {
+            s.setEventHandler {}
+            if !writableArmed { s.resume() }
+            s.cancel()
+            writable = nil
+        }
+        for fd in [readFd, writeFd, guestOutputFd, guestInputFd] { Darwin.close(fd) }
+    }
+
     /// One host → guest line, after everything queued before it; false if it had to be dropped.
     @discardableResult
     func send(_ line: String) -> Bool {
         let bytes = Array((line + "\n").utf8)
         if pending.count + bytes.count > PadPort.maxPending {
             pending.removeAll()
+            latest = nil
             if bytes.count > PadPort.maxPending { return false }
             // A dropped partial line would merge with the next one: a newline ends it.
             pending.append(UInt8(ascii: "\n"))
@@ -136,30 +153,50 @@ final class PadPort {
         return true
     }
 
-    /// A line that a newer one replaces (an input report: each carries the whole state): sent
-    /// only if nothing older still waits, so a slow guest gets fewer, current reports.
+    /// A full-state line (HID input report) that a newer one replaces. Always accepts the latest
+    /// report: if the pipe is busy it replaces any previous coalesced line and sends when free.
     @discardableResult
     func sendLatest(_ line: String) -> Bool {
-        guard pending.isEmpty else { return false }
-        return send(line)
+        let bytes = Array((line + "\n").utf8)
+        if bytes.count > PadPort.maxPending { return false }
+        if !pending.isEmpty {
+            // Pipe already waiting on `pending`: do not re-arm the write source (re-entrancy /
+            // selftest crash). `flush` promotes `latest` once pending drains.
+            latest = bytes
+            return true
+        }
+        latest = nil
+        pending = bytes
+        flush()
+        return true
     }
 
     private func flush() {
-        while !pending.isEmpty {
-            let n = pending.withUnsafeBytes { Darwin.write(writeFd, $0.baseAddress, $0.count) }
-            if n > 0 {
-                pending.removeFirst(n)
-            } else if n < 0 && errno == EINTR {
-                continue
-            } else {
-                break
+        while true {
+            while !pending.isEmpty {
+                let n = pending.withUnsafeBytes { Darwin.write(writeFd, $0.baseAddress, $0.count) }
+                if n > 0 {
+                    pending.removeFirst(n)
+                } else if n < 0 && errno == EINTR {
+                    continue
+                } else {
+                    armWritable(true)
+                    return
+                }
             }
+            guard let next = latest else {
+                armWritable(false)
+                return
+            }
+            latest = nil
+            pending = next
         }
-        armWritable(!pending.isEmpty)
     }
 
     private func armWritable(_ on: Bool) {
-        if writable == nil {
+        // Only create the write source when we need it armed. Creating it for `on: false`
+        // left a never-resumed (suspended) source that crashed in deinit during selftest.
+        if on, writable == nil {
             let s = DispatchSource.makeWriteSource(fileDescriptor: writeFd, queue: .main)
             s.setEventHandler { [weak self] in self?.flush() }
             writable = s
@@ -189,6 +226,49 @@ final class PadPort {
         t.name = name
         t.start()
     }
+
+    /// Coalesce: while `pending` is held, `sendLatest` keeps only the newest line; after pending
+    /// drains, that line is what the guest reads (older coalesced reports never queue behind it).
+    static func coalesceSelfCheck() -> [String] {
+        var failures: [String] = []
+        var checks = 0
+        func check(_ ok: Bool, _ name: String) {
+            checks += 1
+            if !ok { failures.append("PadPort coalesce: \(name)") }
+        }
+        do {
+            let port = try PadPort(player: 3)
+            port.testParkPending(Array("parked-control\n".utf8))
+            check(port.sendLatest("hid-input aa"), "first coalesced report accepted while busy")
+            check(port.sendLatest("hid-input bb"), "second coalesced report replaces the first")
+            check(port.testLatestUTF8() == "hid-input bb\n", "latest slot holds only the newest report")
+            // Promote without a live write-source: flush once into the guest pipe, then read.
+            port.testFlush()
+            _ = fcntl(port.guestInputFd, F_SETFL, fcntl(port.guestInputFd, F_GETFL) | O_NONBLOCK)
+            var got = Data()
+            var buf = [UInt8](repeating: 0, count: 4096)
+            for _ in 0..<20 {
+                let n = Darwin.read(port.guestInputFd, &buf, buf.count)
+                if n > 0 { got.append(contentsOf: buf[0..<n]); continue }
+                break
+            }
+            let text = String(data: got, encoding: .utf8) ?? ""
+            check(port.testPendingEmpty && port.testLatestEmpty, "flush drained pending and latest")
+            check(text.contains("parked-control"), "control line still goes out before coalesced input")
+            check(text.contains("hid-input bb"), "drained stream includes the latest report")
+            check(!text.contains("hid-input aa"), "older coalesced report was replaced")
+        } catch {
+            failures.append("PadPort coalesce: setup \(error)")
+        }
+        log("selftest-settings: PadPort coalesce: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
+        return failures
+    }
+
+    fileprivate var testPendingEmpty: Bool { pending.isEmpty }
+    fileprivate var testLatestEmpty: Bool { latest == nil }
+    fileprivate func testParkPending(_ bytes: [UInt8]) { pending = bytes }
+    fileprivate func testLatestUTF8() -> String? { latest.flatMap { String(bytes: $0, encoding: .utf8) } }
+    fileprivate func testFlush() { flush() }
 }
 
 /// One of the guest's gamepads: player `index` + 1, over its own PadPort. Fed from the
@@ -598,12 +678,38 @@ enum SteamControllerRouting {
               "registry-ID duplicates never take two players")
         check(rawPlayers(previous: [10: 1, 20: 0], devices: [10], available: [0, 1]) == [10: 1],
               "generic disconnect frees only its player, BLE stays sticky")
+        check(suppressGameControllerSteamStandIn(vendorName: "Steam Controller", productCategory: "Steam Controller",
+                                                 hidNonPuckSteam: 1, hidLivePuck: 0),
+              "USB GameController stand-in suppressed while HID owns the pad")
+        check(!suppressGameControllerSteamStandIn(vendorName: "Steam Controller", productCategory: "Steam Controller",
+                                                  hidNonPuckSteam: 0, hidLivePuck: 0),
+              "USB GameController kept when no HID Steam Controller")
+        check(suppressGameControllerSteamStandIn(vendorName: "Steam Controller Puck", productCategory: "Steam Controller",
+                                                 hidNonPuckSteam: 0, hidLivePuck: 1),
+              "Puck GameController suppressed while a live HID Puck slot is routed")
+        check(!suppressGameControllerSteamStandIn(vendorName: "Steam Controller Puck", productCategory: "Steam Controller",
+                                                  hidNonPuckSteam: 1, hidLivePuck: 0),
+              "Puck GameController kept when no live HID Puck slot")
+        check(!suppressGameControllerSteamStandIn(vendorName: "Xbox Wireless Controller", productCategory: "Xbox One",
+                                                  hidNonPuckSteam: 1, hidLivePuck: 1),
+              "unrelated GameController is not suppressed")
         log("selftest-settings: Steam Controller routing: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
         return failures
     }
 
     static func availableControllerPlayer(_ index: Int, rawPlayers: [UInt64: Int], genericDevices: [UInt64] = []) -> Bool {
         !rawPlayers.contains { $0.value == index && !genericDevices.contains($0.key) }
+    }
+
+    /// USB/BLE Steam Controllers and live Puck slots are both an IOHIDDevice and a GameController
+    /// publication of the same hardware. Once HID owns the guest pad, keep the GameController
+    /// stand-in off other players so SteamOS does not also see an Xbox 360 pad (glyph flicker).
+    static func suppressGameControllerSteamStandIn(vendorName: String?, productCategory: String,
+                                                   hidNonPuckSteam: Int, hidLivePuck: Int = 0) -> Bool {
+        let isSteam = vendorName == "Steam Controller Puck" || productCategory == "Steam Controller"
+        guard isSteam else { return false }
+        if vendorName == "Steam Controller Puck" { return hidLivePuck > 0 }
+        return hidNonPuckSteam > 0
     }
 }
 
@@ -988,8 +1094,8 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's raw controller: an unambiguous Puck slot follows GameController,
-        // while BLE and generic devices keep their reserved players.
+        // Each player's raw controller: live Puck slots, BLE/USB, and generic devices keep
+        // sticky rawPlayers reservations (Puck no longer co-locates via GameController).
         for s in slots {
             let playerIndex = s.index
             s.rawControllerDevice = { [weak self] in self?.assignedRawDevice(for: playerIndex) }
@@ -1029,9 +1135,13 @@ final class GamepadBridge {
 
     /// Reconcile raw HID reservations only on topology/settings changes, never while querying a slot.
     private func updateRawPlayers() {
+        // Puck wireless slots need a recent state report (controller off / moved away). USB/BLE keep
+        // the reservation while the HID device remains matched, so a quiet Desktop Mode stretch does
+        // not free the player for a GameController Xbox stand-in.
         let devices = hid.devices.filter {
-            $0.generic ? matchesGenericControllers
-                : (matchesValveControllers && HIDPassthrough.isLiveSteamController($0) && $0.puckSlot == nil)
+            if $0.generic { return matchesGenericControllers }
+            guard matchesValveControllers, HIDPassthrough.isSteamController($0) else { return false }
+            return $0.puckSlot == nil || HIDPassthrough.isLiveSteamController($0)
         }.map(\.registryID)
         let available = slots.indices.filter { usable($0) && slots[$0].controller == nil && slots[$0].remote == nil }
         rawPlayers = SteamControllerRouting.rawPlayers(previous: rawPlayers, devices: devices, available: available,
@@ -1039,16 +1149,11 @@ final class GamepadBridge {
             hidCapable: slots.indices.filter { slots[$0].hidCapable })
     }
 
-    /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
-    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE/generic reserve players.
+    /// BLE, USB, live Puck slots, and generic devices reserve players via `rawPlayers` only.
+    /// Puck no longer co-locates through GameController (`puckPlayer`): that path raced with
+    /// rawPlayers and could put the same HID on two pads.
     private func assignedRawDevice(for index: Int) -> HIDPassthrough.Device? {
         guard usable(index), slots[index].remote == nil else { return nil }
-        let steamPlayers = matchesValveControllers
-            ? slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false } : []
-        let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
-        if SteamControllerRouting.puckPlayer(steamPlayers, liveSlots: livePuckSlots.count) == index {
-            return livePuckSlots.first
-        }
         return hid.devices.first { rawPlayers[$0.registryID] == index }
     }
 
@@ -1065,7 +1170,17 @@ final class GamepadBridge {
     /// everybody keeps theirs while it is connected, the chosen one is player 1 when it is there,
     /// and free players get the remaining controllers in connection order.
     private func assignControllers() {
-        let candidates = GamepadBridge.connected
+        let hidNonPuckSteam = hid.devices.filter {
+            !$0.generic && HIDPassthrough.isSteamController($0) && $0.puckSlot == nil
+        }.count
+        let hidLivePuck = hid.devices.filter {
+            $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0)
+        }.count
+        let candidates = GamepadBridge.connected.filter {
+            !SteamControllerRouting.suppressGameControllerSteamStandIn(
+                vendorName: $0.vendorName, productCategory: $0.productCategory,
+                hidNonPuckSteam: hidNonPuckSteam, hidLivePuck: hidLivePuck)
+        }
         // Moonlight controllers come first: the remote player is the one using SteamOS during a
         // stream (with one usable player, a Mac controller waits until the stream ends).
         remotePlayers = remotePlayers.filter { remotePads[$0.key] != nil && usable($0.value) }

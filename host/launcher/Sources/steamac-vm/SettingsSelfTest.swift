@@ -126,7 +126,7 @@ enum SettingsSelfTest {
         var failures = CrashReporting.scrubSelfCheck() + CrashReporting.scannerSelfCheck() + CrashReporting.exitSelfCheck()
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
-            + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+            + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck() + PadPort.coalesceSelfCheck()
             + sharedLibrarySelfCheck()
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType

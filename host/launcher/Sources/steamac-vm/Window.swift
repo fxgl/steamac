@@ -921,8 +921,13 @@ extension WindowController {
     private func updateHostCursor(_ e: NSEvent) { updateHostCursor(at: e.locationInWindow) }
 
     /// Pure policy, also checked by --selftest-pointer. Captured hiding is owned by grabPointer.
-    static func hostCursorShouldBeHidden(mouseMode: MouseMode, captured: Bool) -> Bool {
-        captured || mouseMode == .auto
+    /// Desktop Mode (Plasma): keep the Mac cursor visible — guest/lizard often leaves no drawn
+    /// cursor, which felt like a missing pointer even while motion still worked.
+    static func hostCursorShouldBeHidden(mouseMode: MouseMode, captured: Bool,
+                                         guestFocus: GuestFocus = .steam) -> Bool {
+        if captured { return true }
+        if guestFocus == .desktop { return false }
+        return mouseMode == .auto
     }
 
     /// `point` is in the scanout layer's coordinates. Detect scanout occlusion, not guest cursor
@@ -947,7 +952,7 @@ extension WindowController {
             reportCursorPresentation(covered: covered, hidden: true)
             return
         }
-        var hide = Self.hostCursorShouldBeHidden(mouseMode: mouseMode, captured: captured)
+        var hide = Self.hostCursorShouldBeHidden(mouseMode: mouseMode, captured: captured, guestFocus: guestFocus)
             && !bootOrShutdown && !overlay.shown && !pauseView.shown && !guestAsleep
             && window.isKeyWindow && inPicture(at: location)
         if hide, let sup = view.superview {

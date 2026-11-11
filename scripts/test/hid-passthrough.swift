@@ -42,6 +42,7 @@ final class TestHIDDevice: NSObject {
     var openResult = kIOReturnSuccess
     var openCalls = 0
     var closeCalls = 0
+    var lastOpenOptions: IOOptionBits = 0
     var usagePage: UInt32 = 1
     var usages: Set<UInt32> = [5]
     var gameControllerSupported = false
@@ -60,12 +61,13 @@ final class TestHIDDevice: NSObject {
     var inputBuffer: UnsafeMutablePointer<UInt8>?
     var inputCapacity = 0
 
-    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil) {
+    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil, product: Int? = nil) {
         self.id = id
         service = nextService
         nextService += 1
+        let valveProduct = product ?? (puckSlot == nil ? 0x1303 : 0x1304)
         properties = [kIOHIDVendorIDKey: valve ? 0x28de : 0x054c,
-                      kIOHIDProductIDKey: valve ? (puckSlot == nil ? 0x1303 : 0x1304) : 0x0ce6,
+                      kIOHIDProductIDKey: valve ? valveProduct : 0x0ce6,
                       kIOHIDTransportKey: bluetooth ? kIOHIDTransportBluetoothLowEnergyValue : kIOHIDTransportUSBValue,
                       kIOHIDReportDescriptorKey: Data([0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
                                                        0x85, 0x01, 0x75, 0x08, 0x95, 0x3f, 0x81, 0x02, 0xc0]),
@@ -155,6 +157,7 @@ func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { permissionRequests +
 func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeDenied }
 func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
     device.openCalls += 1
+    device.lastOpenOptions = options
     guard device.live else { return kIOReturnNoDevice }
     guard device.openResult == kIOReturnSuccess else { return device.openResult }
     device.isOpen = true
@@ -199,19 +202,28 @@ func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: 
                          _ report: UnsafeMutablePointer<UInt8>, _ size: UnsafeMutablePointer<CFIndex>) -> IOReturn {
     device.getRequests.append((type, id, size.pointee))
     guard device.live && device.isOpen else { return kIOReturnNotOpen }
-    let valveBLE = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let valve = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let valveBLE = valve
         && (device.properties[kIOHIDTransportKey] as? String) == kIOHIDTransportBluetoothLowEnergyValue
     if !valveBLE && type == kIOHIDReportTypeFeature && id == 32 && size.pointee != 64 { return kIOReturnTimeout }
     let count = valveBLE && type == kIOHIDReportTypeFeature ? 65 : (id == 9 ? 20 : 64)
     guard size.pointee >= count else { return kIOReturnNoSpace }
     for i in 0..<count { report[i] = i == 0 ? UInt8(id) : UInt8(i) }
     size.pointee = count
+    // USB Steam Controller feature report 1: macOS fills the buffer then returns pipe stalled.
+    if valve && !valveBLE && type == kIOHIDReportTypeFeature {
+        return HIDPassthrough.usbPipeStalled
+    }
     return kIOReturnSuccess
 }
 func IOHIDDeviceSetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafePointer<UInt8>, _ size: CFIndex) -> IOReturn {
     device.setRequests.append((type, id, Array(UnsafeBufferPointer(start: report, count: size))))
-    return device.live && device.isOpen ? kIOReturnSuccess : kIOReturnNotOpen
+    guard device.live && device.isOpen else { return kIOReturnNotOpen }
+    let valve = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let ble = (device.properties[kIOHIDTransportKey] as? String) == kIOHIDTransportBluetoothLowEnergyValue
+    if valve && !ble && type == kIOHIDReportTypeFeature { return HIDPassthrough.usbPipeStalled }
+    return kIOReturnSuccess
 }
 
 extension HIDPassthrough {
@@ -291,12 +303,43 @@ extension HIDPassthrough {
         let feature = get(hid, valve, .feature, 1)
         check(feature?.count == 65 && feature?.first == 1, "BLE Steam Controller keeps the 65-byte feature fix")
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
+        check(ble.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "BLE Steam Controller is opened with SeizeDevice")
         _ = get(hid, valve, .input, 1)
         check(ble.getRequests.last?.2 == 64, "BLE input requests are not enlarged")
+
+        let usbWired = TestHIDDevice(id: 23, valve: true, product: 0x1302)
+        hid.manager!.emitMatch(usbWired)
+        let wired = hid.devices.last!
+        check(HIDPassthrough.isSteamController(wired) && wired.puckSlot == nil
+              && wired.identity.product == HIDPassthrough.wiredSteamController
+              && wired.identity.bus == HIDPassthrough.busUSB,
+              "USB-wired Steam Controller (28de:1302) is matched and passed through as itself")
+        check(usbWired.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "USB-wired Steam Controller is opened with SeizeDevice")
+        let wiredFeature = get(hid, wired, .feature, 1)
+        check(wiredFeature?.count == 64 && wiredFeature?.first == 1,
+              "USB-wired Steam Controller accepts feature GET after USB pipe stall")
+        check(usbWired.getRequests.last?.2 == 64, "USB-wired Steam Controller feature requests stay at descriptor size")
+        check(HIDPassthrough.getReportSucceeded(HIDPassthrough.usbPipeStalled, length: 64),
+              "pipe stall with filled buffer is a successful GET")
+        check(!HIDPassthrough.getReportSucceeded(HIDPassthrough.usbPipeStalled, length: 0),
+              "pipe stall with empty buffer remains a failed GET")
+        check(HIDPassthrough.setReportSucceeded(HIDPassthrough.usbPipeStalled, valveController: true),
+              "Valve SET tolerates USB pipe stall")
+        check(!HIDPassthrough.setReportSucceeded(HIDPassthrough.usbPipeStalled, valveController: false),
+              "non-Valve SET does not mask USB pipe stall")
+        var setDone: IOReturn?
+        hid.setReport(wired, type: .feature, data: [1] + [UInt8](repeating: 0, count: 63)) { setDone = $0 }
+        let setDeadline = Date(timeIntervalSinceNow: 2)
+        while setDone == nil && Date() < setDeadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)) }
+        check(setDone == kIOReturnSuccess, "USB-wired Steam Controller SET maps pipe stall to success")
 
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)
         let slot = hid.devices.last!
+        check(puck.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "Puck controller interfaces open with SeizeDevice like USB/BLE")
         _ = get(hid, slot, .feature, 1)
         check(puck.getRequests.last?.2 == 64, "USB Puck requests are not enlarged")
         var movedInputs = 0

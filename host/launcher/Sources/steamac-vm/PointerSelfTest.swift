@@ -139,13 +139,15 @@ enum PointerSelfTest {
         }
         // Part 3: measure actual scanout occlusion, without guessing guest cursor visibility.
         // Preserve host hiding policy: no replacement arrow inferred from wmtr being enabled.
-        for (mode, captured, want) in [
-            (MouseMode.auto, false, true), (.auto, true, true),
-            (.tablet, false, false), (.tablet, true, true),
-            (.capture, false, false), (.capture, true, true)
-        ] {
-            check("cursor policy mode=\(mode.rawValue), captured=\(captured)",
-                  WindowController.hostCursorShouldBeHidden(mouseMode: mode, captured: captured) == want)
+        for (mode, captured, focus, want) in [
+            (MouseMode.auto, false, GuestFocus.steam, true), (.auto, true, .steam, true),
+            (.tablet, false, .steam, false), (.tablet, true, .steam, true),
+            (.capture, false, .steam, false), (.capture, true, .steam, true),
+            (.auto, false, .desktop, false), (.auto, true, .desktop, true),
+            (.tablet, false, .desktop, false)
+        ] as [(MouseMode, Bool, GuestFocus, Bool)] {
+            check("cursor policy mode=\(mode.rawValue), captured=\(captured), focus=\(focus)",
+                  WindowController.hostCursorShouldBeHidden(mouseMode: mode, captured: captured, guestFocus: focus) == want)
         }
         do {
             let picture = CAMetalLayer(), game = CAMetalLayer(), ordinary = CALayer()

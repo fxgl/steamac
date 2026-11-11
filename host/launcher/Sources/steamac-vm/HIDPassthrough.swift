@@ -14,16 +14,19 @@ import GameController
 final class HIDPassthrough {
     /// DualSense, DualSense Edge (the products hid-playstation binds to as a DualSense).
     static let dualSenses: [(vendor: Int, product: Int)] = [(0x054c, 0x0ce6), (0x054c, 0x0df2)]
-    /// Steam Controller (2026) connected to the Mac directly (Bluetooth LE). Not its Puck
-    /// dongle (28de:1304): SDL and Steam take the dongle's controllers only on USB interfaces
-    /// 2-5, which a uhid device does not have; the controller itself they take by its IDs.
-    static let steamControllers: [(vendor: Int, product: Int)] = [(0x28de, 0x1303)]
+    /// Steam Controller (2026) on the Mac itself: Bluetooth LE (`28de:1303`) and USB cable
+    /// (`28de:1302`). Not the Puck dongle (`28de:1304`): SDL and Steam take the dongle's
+    /// controllers only on USB interfaces 2-5, which a uhid device does not have; the controller
+    /// itself they take by its IDs. Without matching USB `1302`, GameController still sees the
+    /// wired pad as a Steam Controller but SteamOS only gets the Xbox 360 uinput stand-in (#94).
+    static let steamControllers: [(vendor: Int, product: Int)] = [(0x28de, 0x1303), (0x28de, 0x1302)]
     /// The Steam Controller Puck: interfaces 2-5 are its controller slots, each with the
     /// controller's own descriptor and reports. A slot goes to SteamOS as a wired Steam
     /// Controller (28de:1302), which SDL and Steam take without a USB interface number, and only
     /// while a controller sends on it (an idle slot would be a phantom pad).
     static let puck = (vendor: 0x28de, product: 0x1304)
     static let puckSlots = 2...5
+    /// Guest identity for a Puck slot (and the Mac PID of a USB-plugged controller).
     static let wiredSteamController: UInt16 = 0x1302
     /// The controller-state report IDs: USB/dongle (0x42), BLE (0x45) and the newer "Ibex" with
     /// a trackpad timestamp (0x47). Outside Desktop Mode only these keep a Puck slot alive.
@@ -336,11 +339,25 @@ final class HIDPassthrough {
         open(ref, id: id, result: result, generic: false)
     }
 
+    /// Valve Steam Controllers (USB, BLE, and Puck controller interfaces): open exclusively so
+    /// GameController is not also on the pipes. Shared opens made feature report 1 STALL; Steam
+    /// retried every ~1–2 s in Desktop Mode and briefly cut input until Options re-inited lizard.
+    /// Puck used to stay shared for GC co-location; that raced with raw HID routing and left the
+    /// same stalls, so Puck slots now seize too and route like BLE via rawPlayers.
+    static func seizes(_ ref: IOHIDDevice) -> Bool {
+        let vendor = (IOHIDDeviceGetProperty(ref, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue
+        let product = (IOHIDDeviceGetProperty(ref, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue
+        guard vendor == 0x28de, let product else { return false }
+        return product == puck.product || steamControllers.contains { $0.product == product }
+    }
+
     private func open(_ ref: IOHIDDevice, id: UInt64, result: IOReturn, generic: Bool) {
         // Opening only accepted devices avoids requesting Input Monitoring for unrelated HID
         // devices. Ordinary gamepad/joystick collections do not require it; composite controllers
         // with keyboard/mouse collections can require it, just like a Steam Controller.
-        let result = result == kIOReturnSuccess ? IOHIDDeviceOpen(ref, IOOptionBits(kIOHIDOptionsTypeNone)) : result
+        let options: IOOptionBits = HIDPassthrough.seizes(ref)
+            ? IOOptionBits(kIOHIDOptionsTypeSeizeDevice) : IOOptionBits(kIOHIDOptionsTypeNone)
+        let result = result == kIOReturnSuccess ? IOHIDDeviceOpen(ref, options) : result
         // A device that did not open cannot be passed through (its reports are unavailable): a
         // Steam Controller opens only with Input Monitoring. Skip it; a grant recreates the
         // manager and this callback fires again with success.
@@ -368,7 +385,9 @@ final class HIDPassthrough {
         d.owner = self
         watch(d)
         if d.puckSlot != nil { startPuckTimer() }
-        log("hid passthrough: found \(d.identity.name) (\(d.identity.bus == HIDPassthrough.busBluetooth ? "Bluetooth" : "USB"), "
+        let transport = d.identity.bus == HIDPassthrough.busBluetooth ? "Bluetooth" : "USB"
+        let exclusive = options == IOOptionBits(kIOHIDOptionsTypeSeizeDevice) ? ", exclusive" : ""
+        log("hid passthrough: found \(d.identity.name) (\(transport)\(exclusive), "
             + "\(d.identity.descriptor.count)-byte descriptor, input reports up to \(d.maxInput) bytes)")
         onChange?()
     }
@@ -726,6 +745,22 @@ final class HIDPassthrough {
         }
     }
 
+    /// kUSBHostReturnPipeStalled: USB HID GET/SET for Steam Controller feature report 1 often
+    /// returns this after the data stage already succeeded (buffer filled / command accepted).
+    /// Treating it as hard failure made SteamOS retry about once a second in Desktop Mode and
+    /// briefly stall input.
+    static let usbPipeStalled: IOReturn = IOReturn(bitPattern: 0xe0005000)
+
+    /// GET succeeded, or USB returned pipe-stalled with a filled buffer (keep the bytes).
+    static func getReportSucceeded(_ status: IOReturn, length: CFIndex) -> Bool {
+        status == kIOReturnSuccess || (status == usbPipeStalled && length > 0)
+    }
+
+    /// SET succeeded, or a Valve controller's USB pipe reported a spurious stall after accept.
+    static func setReportSucceeded(_ status: IOReturn, valveController: Bool) -> Bool {
+        status == kIOReturnSuccess || (valveController && status == usbPipeStalled)
+    }
+
     /// GET_REPORT of report `id`: the report (ID first) or an error, on the main queue.
     func getReport(_ d: Device, type: ReportType, id: UInt8, done: @escaping (Result<[UInt8], IOReturnError>) -> Void) {
         // The IOHIDDevice, not the Device: a Device is released on the main thread only (deinit).
@@ -743,12 +778,14 @@ final class HIDPassthrough {
             let r = buf.withUnsafeMutableBufferPointer {
                 IOHIDDeviceGetReport(ref, type.io, CFIndex(id), $0.baseAddress!, &len)
             }
-            if r != kIOReturnSuccess {
+            let ok = HIDPassthrough.getReportSucceeded(r, length: len)
+            if !ok || r == HIDPassthrough.usbPipeStalled {
                 log("hid passthrough: GET \(type.rawValue) report \(id) from \(name) (bus \(bus), registry \(registryID)): "
-                    + "\(HIDPassthrough.describe(r)) (requested \(size) bytes, result length \(len))")
+                    + "\(HIDPassthrough.describe(r)) (requested \(size) bytes, result length \(len)"
+                    + (ok && r != kIOReturnSuccess ? ", accepting filled buffer" : "") + ")")
             }
             let result: Result<[UInt8], IOReturnError> =
-                r == kIOReturnSuccess ? .success(Array(buf.prefix(len))) : .failure(IOReturnError(code: r))
+                ok ? .success(Array(buf.prefix(Int(len)))) : .failure(IOReturnError(code: r))
             DispatchQueue.main.async { done(result) }
         }
     }
@@ -759,12 +796,18 @@ final class HIDPassthrough {
         let ref = d.ref
         let numbered = d.numbered
         let reportID = GenericHIDRouting.reportID(numbered: numbered, firstByte: data[0])
+        let valve = HIDPassthrough.isSteamController(d)
         io.async {
             let r = data.withUnsafeBufferPointer {
                 IOHIDDeviceSetReport(ref, type.io, CFIndex(reportID), $0.baseAddress!, data.count)
             }
-            if r != kIOReturnSuccess { log("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))") }
-            if let done { DispatchQueue.main.async { done(r) } }
+            let ok = HIDPassthrough.setReportSucceeded(r, valveController: valve)
+            if !ok || r == HIDPassthrough.usbPipeStalled {
+                log("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))"
+                    + (ok && r != kIOReturnSuccess ? " (accepting for Valve)" : "")
+                    + ", \(data.count) bytes")
+            }
+            if let done { DispatchQueue.main.async { done(ok ? kIOReturnSuccess : r) } }
         }
     }
 
@@ -778,6 +821,9 @@ final class HIDPassthrough {
         }
         if r == kIOReturnNotOpen {
             return "device not open"
+        }
+        if r == usbPipeStalled {
+            return "USB pipe stalled (kUSBHostReturnPipeStalled)"
         }
         return String(format: "IOReturn 0x%08x", UInt32(bitPattern: r))
     }
