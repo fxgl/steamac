@@ -127,6 +127,7 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+            + Ext4Probe.selfCheck() + DiskShrinker.selfCheck()
             + sharedLibrarySelfCheck()
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType

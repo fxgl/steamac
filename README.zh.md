@@ -279,12 +279,18 @@ home 容量在创建磁盘时固定。**设置 → 高级 → 扩展磁盘…** 
 exFAT 立即分配全部新增容量，故先检查其空闲空间。终端（SteamOS 停止时）：
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`。
 
+**减小容量（缩小磁盘）：** **设置 → 高级 → 缩小磁盘…** 在已用数据仍能放下时降低 home 容量
+（否则拒绝）。必须先缩小 ext4，再改 GPT/截断：一次性启动带 `steamac.shrink-home=N` 与
+`steamac.slot=stop`，在 initramfs 中运行 `e2fsck`/`resize2fs` 后关机，宿主再重写 GPT 并截断映像。
+若文件系统已够小，宿主可立即截断。终端（文件系统已够小、SteamOS 已停止）：
+`work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`。
+
 **回收 Mac 上的空间：** 卸载游戏（或大幅扩容）后，稀疏的 `steamos.img` 在磁盘上仍可能很大，
 尽管 SteamOS 已不再需要那些块。**设置 → 高级 → 回收磁盘空间…**（需 SteamOS 运行中）让客户机对
 `/home`（以及已挂载的 `/var`）执行 `fstrim`；virtio-blk DISCARD 在 Mac 映像上打洞。容量不变——
 **仅当映像位于 APFS 上时**，已分配大小才可能下降。HFS+ 和 exFAT 无法以此方式回收空间；
 启动器会在开始前检查卷。APFS 克隆和快照可能仍保留已释放的块，因此 Mac 的可用空间不一定
-增加同样的数量。这不是缩小 GPT/home（仍只增不减）。
+增加同样的数量。缩小磁盘改变容量；回收仅打洞。
 
 测试用：`STEAMAC_DEFAULTS_DOMAIN=<domain>` 替换设置域；`--selftest-settings
 --selftest-out DIR` 无虚拟机打开窗口并为每选项卡写 PNG；`--control-fifo` 支持

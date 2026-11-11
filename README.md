@@ -335,6 +335,13 @@ only as SteamOS writes; exFAT allocates the full added capacity immediately, so 
 free space first. Terminal, with SteamOS stopped:
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`.
 
+**Less capacity (Shrink Disk):** **Settings → Advanced → Shrink Disk…** lowers home capacity when
+used data still fits (refuses otherwise). Ext4 must shrink **before** GPT/truncate: a one-shot boot
+with `steamac.shrink-home=N` + `steamac.slot=stop` runs `e2fsck`/`resize2fs` in initramfs, powers
+off, then the host rewrites GPT and truncates the image. If the filesystem already fits, the host
+truncates immediately. Terminal (filesystem already fits, VM stopped):
+`work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`.
+
 **Reclaim space on the Mac:** after uninstalling games (or after a large Grow), the sparse
 `steamos.img` can stay large on disk even though SteamOS no longer needs those blocks.
 **Settings → Advanced → Reclaim Disk Space…** (SteamOS running) asks the guest to `fstrim`
@@ -342,7 +349,7 @@ free space first. Terminal, with SteamOS stopped:
 is unchanged — allocated size can drop **only when the image is on APFS**. HFS+ and exFAT cannot
 reclaim space this way; the launcher checks the volume before starting. APFS clones and snapshots
 may retain the freed blocks, so the Mac's free space need not increase by the same amount.
-This is not a GPT/home shrink (that remains grow-only).
+Shrink Disk changes capacity; Reclaim only punches holes.
 
 For tests: `STEAMAC_DEFAULTS_DOMAIN=<domain>` substitutes the settings domain; `--selftest-settings
 --selftest-out DIR` opens the window without a VM and writes a PNG of each tab; `--control-fifo` has
