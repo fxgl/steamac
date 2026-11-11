@@ -105,6 +105,10 @@ final class PadPort {
     /// Bytes the pipe has not taken yet, whole lines in order. Beyond `maxPending` (the guest
     /// stopped reading) everything waiting is dropped and lines start clean again.
     private var pending: [UInt8] = []
+    /// Newest coalesced input line waiting for `pending` to drain. Each `sendLatest` replaces it
+    /// so a busy pipe never drops the current HID state (button-up / lizard trackpad) — the old
+    /// "return false while pending" path stuck clicks in Desktop Mode.
+    private var latest: [UInt8]?
     private static let maxPending = 256 * 1024
     private var writable: DispatchSourceWrite?
     private var writableArmed = false
@@ -121,12 +125,18 @@ final class PadPort {
         _ = fcntl(writeFd, F_SETFL, fcntl(writeFd, F_GETFL) | O_NONBLOCK)
     }
 
+    deinit {
+        writable?.cancel()
+        for fd in [readFd, writeFd, guestOutputFd, guestInputFd] { Darwin.close(fd) }
+    }
+
     /// One host → guest line, after everything queued before it; false if it had to be dropped.
     @discardableResult
     func send(_ line: String) -> Bool {
         let bytes = Array((line + "\n").utf8)
         if pending.count + bytes.count > PadPort.maxPending {
             pending.removeAll()
+            latest = nil
             if bytes.count > PadPort.maxPending { return false }
             // A dropped partial line would merge with the next one: a newline ends it.
             pending.append(UInt8(ascii: "\n"))
@@ -136,26 +146,43 @@ final class PadPort {
         return true
     }
 
-    /// A line that a newer one replaces (an input report: each carries the whole state): sent
-    /// only if nothing older still waits, so a slow guest gets fewer, current reports.
+    /// A full-state line (HID input report) that a newer one replaces. Always accepts the latest
+    /// report: if the pipe is busy it replaces any previous coalesced line and sends when free.
     @discardableResult
     func sendLatest(_ line: String) -> Bool {
-        guard pending.isEmpty else { return false }
-        return send(line)
+        let bytes = Array((line + "\n").utf8)
+        if bytes.count > PadPort.maxPending { return false }
+        if !pending.isEmpty {
+            latest = bytes
+            armWritable(true)
+            return true
+        }
+        latest = nil
+        pending = bytes
+        flush()
+        return true
     }
 
     private func flush() {
-        while !pending.isEmpty {
-            let n = pending.withUnsafeBytes { Darwin.write(writeFd, $0.baseAddress, $0.count) }
-            if n > 0 {
-                pending.removeFirst(n)
-            } else if n < 0 && errno == EINTR {
-                continue
-            } else {
-                break
+        while true {
+            while !pending.isEmpty {
+                let n = pending.withUnsafeBytes { Darwin.write(writeFd, $0.baseAddress, $0.count) }
+                if n > 0 {
+                    pending.removeFirst(n)
+                } else if n < 0 && errno == EINTR {
+                    continue
+                } else {
+                    armWritable(true)
+                    return
+                }
             }
+            guard let next = latest else {
+                armWritable(false)
+                return
+            }
+            latest = nil
+            pending = next
         }
-        armWritable(!pending.isEmpty)
     }
 
     private func armWritable(_ on: Bool) {
@@ -189,6 +216,49 @@ final class PadPort {
         t.name = name
         t.start()
     }
+
+    /// Coalesce: while `pending` is held, `sendLatest` keeps only the newest line; after pending
+    /// drains, that line is what the guest reads (older coalesced reports never queue behind it).
+    static func coalesceSelfCheck() -> [String] {
+        var failures: [String] = []
+        var checks = 0
+        func check(_ ok: Bool, _ name: String) {
+            checks += 1
+            if !ok { failures.append("PadPort coalesce: \(name)") }
+        }
+        do {
+            let port = try PadPort(player: 3)
+            port.testParkPending(Array("parked-control\n".utf8))
+            check(port.sendLatest("hid-input aa"), "first coalesced report accepted while busy")
+            check(port.sendLatest("hid-input bb"), "second coalesced report replaces the first")
+            check(port.testLatestUTF8() == "hid-input bb\n", "latest slot holds only the newest report")
+            // Drain parked pending + promoted latest into the guest pipe, then read it back.
+            var got = Data()
+            var buf = [UInt8](repeating: 0, count: 4096)
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline {
+                port.testFlush()
+                let n = Darwin.read(port.guestInputFd, &buf, buf.count)
+                if n > 0 { got.append(contentsOf: buf[0..<n]) }
+                if port.testPendingEmpty && port.testLatestEmpty { break }
+                if n <= 0 { Thread.sleep(forTimeInterval: 0.005) }
+            }
+            let text = String(data: got, encoding: .utf8) ?? ""
+            check(text.contains("parked-control"), "control line still goes out before coalesced input")
+            check(text.contains("hid-input bb"), "drained stream includes the latest report")
+            check(!text.contains("hid-input aa"), "older coalesced report was replaced")
+        } catch {
+            failures.append("PadPort coalesce: setup \(error)")
+        }
+        log("selftest-settings: PadPort coalesce: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
+        return failures
+    }
+
+    fileprivate var testPendingEmpty: Bool { pending.isEmpty }
+    fileprivate var testLatestEmpty: Bool { latest == nil }
+    fileprivate func testParkPending(_ bytes: [UInt8]) { pending = bytes }
+    fileprivate func testLatestUTF8() -> String? { latest.flatMap { String(bytes: $0, encoding: .utf8) } }
+    fileprivate func testFlush() { flush() }
 }
 
 /// One of the guest's gamepads: player `index` + 1, over its own PadPort. Fed from the
