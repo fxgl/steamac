@@ -339,11 +339,23 @@ final class HIDPassthrough {
         open(ref, id: id, result: result, generic: false)
     }
 
+    /// USB/BLE Steam Controllers (not the Puck): open exclusively so GameController is not also
+    /// on the pipes. Shared opens made feature report 1 STALL; Steam retried every ~1–2 s in
+    /// Desktop Mode and briefly cut input until Options re-inited lizard.
+    static func seizes(_ ref: IOHIDDevice) -> Bool {
+        let vendor = (IOHIDDeviceGetProperty(ref, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue
+        let product = (IOHIDDeviceGetProperty(ref, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue
+        guard vendor == 0x28de, let product else { return false }
+        return steamControllers.contains { $0.product == product }
+    }
+
     private func open(_ ref: IOHIDDevice, id: UInt64, result: IOReturn, generic: Bool) {
         // Opening only accepted devices avoids requesting Input Monitoring for unrelated HID
         // devices. Ordinary gamepad/joystick collections do not require it; composite controllers
         // with keyboard/mouse collections can require it, just like a Steam Controller.
-        let result = result == kIOReturnSuccess ? IOHIDDeviceOpen(ref, IOOptionBits(kIOHIDOptionsTypeNone)) : result
+        let options: IOOptionBits = HIDPassthrough.seizes(ref)
+            ? IOOptionBits(kIOHIDOptionsTypeSeizeDevice) : IOOptionBits(kIOHIDOptionsTypeNone)
+        let result = result == kIOReturnSuccess ? IOHIDDeviceOpen(ref, options) : result
         // A device that did not open cannot be passed through (its reports are unavailable): a
         // Steam Controller opens only with Input Monitoring. Skip it; a grant recreates the
         // manager and this callback fires again with success.
@@ -371,7 +383,9 @@ final class HIDPassthrough {
         d.owner = self
         watch(d)
         if d.puckSlot != nil { startPuckTimer() }
-        log("hid passthrough: found \(d.identity.name) (\(d.identity.bus == HIDPassthrough.busBluetooth ? "Bluetooth" : "USB"), "
+        let transport = d.identity.bus == HIDPassthrough.busBluetooth ? "Bluetooth" : "USB"
+        let exclusive = options == IOOptionBits(kIOHIDOptionsTypeSeizeDevice) ? ", exclusive" : ""
+        log("hid passthrough: found \(d.identity.name) (\(transport)\(exclusive), "
             + "\(d.identity.descriptor.count)-byte descriptor, input reports up to \(d.maxInput) bytes)")
         onChange?()
     }

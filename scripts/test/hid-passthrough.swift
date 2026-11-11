@@ -42,6 +42,7 @@ final class TestHIDDevice: NSObject {
     var openResult = kIOReturnSuccess
     var openCalls = 0
     var closeCalls = 0
+    var lastOpenOptions: IOOptionBits = 0
     var usagePage: UInt32 = 1
     var usages: Set<UInt32> = [5]
     var gameControllerSupported = false
@@ -156,6 +157,7 @@ func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { permissionRequests +
 func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeDenied }
 func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
     device.openCalls += 1
+    device.lastOpenOptions = options
     guard device.live else { return kIOReturnNoDevice }
     guard device.openResult == kIOReturnSuccess else { return device.openResult }
     device.isOpen = true
@@ -301,6 +303,8 @@ extension HIDPassthrough {
         let feature = get(hid, valve, .feature, 1)
         check(feature?.count == 65 && feature?.first == 1, "BLE Steam Controller keeps the 65-byte feature fix")
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
+        check(ble.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "BLE Steam Controller is opened with SeizeDevice")
         _ = get(hid, valve, .input, 1)
         check(ble.getRequests.last?.2 == 64, "BLE input requests are not enlarged")
 
@@ -311,6 +315,8 @@ extension HIDPassthrough {
               && wired.identity.product == HIDPassthrough.wiredSteamController
               && wired.identity.bus == HIDPassthrough.busUSB,
               "USB-wired Steam Controller (28de:1302) is matched and passed through as itself")
+        check(usbWired.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "USB-wired Steam Controller is opened with SeizeDevice")
         let wiredFeature = get(hid, wired, .feature, 1)
         check(wiredFeature?.count == 64 && wiredFeature?.first == 1,
               "USB-wired Steam Controller accepts feature GET after USB pipe stall")
@@ -332,6 +338,8 @@ extension HIDPassthrough {
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)
         let slot = hid.devices.last!
+        check(puck.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeNone),
+              "Puck stays shared (no SeizeDevice) for GameController co-location")
         _ = get(hid, slot, .feature, 1)
         check(puck.getRequests.last?.2 == 64, "USB Puck requests are not enlarged")
         var movedInputs = 0
