@@ -147,6 +147,7 @@ steam-download`）；经 显示 → 显示启动进度收起的则保持小条�
 （此时与焦点无关）。空闲 Steam 界面几分钟无 GPU 命令属正常，不触发。首个 GPU 命令到达或焦点离开游戏即消失；每次出现都记日志（`stall: gpu idle 3.1 s (guest alive, …)`）。
 `--perf-stats` 下每 5 秒加一行 `perf: gpu ctrl/s=… ring/s=… longest-idle=…`。在 设置 > 通用中关闭。代理跑在每个
 gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换到桌面、返回游戏模式），在新会话代理发来心跳前不期待心跳；虚拟机挂起或睡眠期间指示器关闭，恢复、客户机唤醒与 Mac 睡眠后，空闲与心跳计时重来。
+每次检查在同一时刻取 GPU 空闲时间与心跳时长，因此被 Mac 自身延迟（换页、主线程繁忙）的检查不会只让心跳“变老”而报告无响应（STEAMAC-8）。
 
 | 窗口中的按键 | |
 |---|---|
@@ -383,6 +384,8 @@ Flatpak 应用（Discover）跑在 bubblewrap 中，在用户命名空间挂载�
 `/run/steamac/proc` 挂载一份 untouched procfs（`nosuid,nodev,noexec`）。没有它每个 Flatpak 应用都以 `bwrap: Can't mount
 proc on /newroot/proc: Operation not permitted` 退出。
 
+桌面模式通过 `/usr/lib/steamac/desktop-shell` 运行 `plasmashell`：嵌套会话没有 systemd 用户管理器，原有服务的重启策略不起作用，而 Wayland 协议错误会让外壳绕过崩溃处理器直接退出（`_exit`），只留下黑色桌面和 KWin 窗口（STEAMAC-AJ/9P）。外壳异常退出后会被重启，每分钟最多启动三次；正常注销或外壳正常退出不会重启。问题报告包含桌面软件包版本以及外壳与合成器的日志。
+
 ## 剪贴板
 
 设置 → 通用 → **与 SteamOS 共享剪贴板**（默认开，立即生效）：Mac 上复制的文本（UTF-8）
@@ -560,6 +563,22 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 
 若启动时 `/home` 仍有错误（虚拟机被杀时正在写，或一块盘被两个无锁旧启动器用过），SteamOS 会修复而非卡在“正在启动 SteamOS 服务…”：启动器在内核命令行加 `fsck.repair=yes`，systemd-fsck 用回答 yes 的 e2fsck 而非仅安全 preen 修复。e2fsck 放不回去的文件进 `/home/lost+found`。
 
+## 卸载
+
+启动器不会给 Mac 的硬盘分区：SteamOS、游戏和存档都在一个磁盘映像文件里。完全删除：
+
+1. 退出 FX Steam Launcher（SteamOS 随之关机）。
+2. 删除设置 → 高级 → 磁盘映像中显示的磁盘映像（默认 `~/Library/Application Support/es.fxgam.steamac/steamos.img`，第 4 步会删除）。位于其他宗卷的磁盘旁边还可能留有 `steamos.provision.img`（首次启动完成前）和下载缓存 `steamos.img.cache`。
+3. 把“应用程序”中的 `FX Steam Launcher.app` 移到废纸篓。
+4. 在终端删除启动器的数据（磁盘、游戏统计、Moonlight 配对、下载与崩溃报告缓存、日志、已保存的问题报告）和设置：
+
+   ```
+   rm -rf ~/Library/Application\ Support/es.fxgam.steamac ~/Library/Caches/es.fxgam.steamac \
+          ~/Library/Logs/es.fxgam.steamac ~/Library/HTTPStorages/es.fxgam.steamac
+   defaults delete es.fxgam.steamac
+   ```
+5. 可选：在“钥匙串访问”中删除“FX Steam Launcher: SteamOS user steamos”密码（服务 `es.fxgam.steamac.guest-password`，每个磁盘一个）。
+
 ## 语言
 
 启动器界面提供英语、俄语和简体中文，跟随 macOS 语言（系统设置 → 通用 → 语言与地区，也可在“应用程序”中为单个应用设置）。日志、命令行输出、崩溃报告与问题报告保持英文。客户机代理发送的固定 Steam 阶段文本（“Checking for Steam updates”等）会显示为译文（`BootProgress.localizedGuestText`）；其他客户机文本（systemd 行、SteamOS 本身）启动器不翻译。
@@ -672,6 +691,8 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 切换改变 Venus 驱动身份（管线缓存 UUID），Steam 与游戏重建着色器缓存。宿主驱动建不出的管线在 virglrenderer 中是占位：其绘制与派发被丢弃，驱动永远见不到 `VK_NULL_HANDLE`。
 
 宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。嵌套超过 128 层的分支改为带已保存条件的并列块输出，因为 Metal 拒绝括号嵌套超过 256 层的源码（STEAMAC-G 报告；`sentry-g-brackets.sh` 在 GPU 上校验 320 路发散分支阶梯）。对可复现的 KosmicKrisp 卡顿，启动 macOS 启动器时（而不是作为游戏参数）设置 `MESA_KK_DEBUG=syncs,cbs`，会追踪队列同步以及每次超过一秒的 CPU 等待（STEAMAC-94）。源缓冲或目标缓冲为 NULL 的缓冲复制会被跳过并仅警告一次，而不是让虚拟机进程崩溃（Dota 2，STEAMAC-9S/9T；`host/kosmickrisp/test/copy-buffer-null.py`）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。Workgroup（共享内存）数组中的 `vec3` 成员按 Vulkan 填充规则所计的大小紧凑存放，968 个 `{float; vec3; float}` 只需 19360 字节，而不是 Metal 布局下超过 32768 的 46464 字节（STEAMAC-57）。同一 Location 上比片段输入更窄的顶点输出（float3 → float4）会加宽到输入宽度；缺失的 varying 与不同数值类型仍不支持（STEAMAC-2M/88）。名为 `rgb9e5` 的着色器函数会被重命名，以免与 Metal 的 `rgb9e5` 像素类型冲突（STEAMAC-A9）；只写入 `ClipDistance` 的几何/网格阶段也会写入片段着色器读取的 `user(clip0)` 副本（STEAMAC-A2）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
+
+没有顶点着色器的图形管线创建失败（日志记录其阶段），而不是在绑定时使虚拟机进程崩溃（STEAMAC-AH；`REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh`）。单层 2D 图像的视图若层数溢出（Zink 的 `0+65536`），保留这一层，而不是让 GPU 上下文终止；格式不兼容的视图（RGBA8 图像、R8 视图）仍被拒绝，日志记录客户机应用和完整视图参数（STEAMAC-G）。指向上下文所没有资源的回复流仍是致命错误；virglrenderer 记录该资源是已从此上下文分离（及多久之前）、从未附加，还是不是共享内存（`host/virglrenderer/test/reply-resource.py`，STEAMAC-G）。MoltenVK：Red Dead Redemption 2 的 Vulkan 渲染器在 MoltenVK 不提供管线统计查询时仍创建此类查询池；现在它们会被创建并返回零（该特性仍关闭），不再失败并终止 GPU 上下文；超过 4096 个查询的时间戳池使用多个 Metal 采样缓冲；经 CPU 影子副本复制的宿主内存图像使用真实的纹素/块行距（AGX `bytes_per_row` 断言，STEAMAC-AG/G；`REPRO_CASE=sentry-ag`）。在 GPU 上失败的命令缓冲会记录其编码器与着色器。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
@@ -856,6 +877,7 @@ SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）�
   监管器的报告附上 macOS 自己的崩溃报告（`~/Library/Logs/DiagnosticReports/steamac-vm-*.ips`，按 pid 匹配）：
   标题与 `crash_site` 标签中的崩溃位置（报告按其分组），extra `macos_crash_report` 中的异常、Application Specific
   Information 行（堆损坏陷阱时 libmalloc 的消息）及崩溃线程前 16 帧（库名与符号名）；
+  内核的内存终止标志与 SIGKILL 来源未知分开报告（没有该标志并不表示强制退出），并给出峰值占用相对虚拟机与 Mac 内存的比例和采样到的最高内存压力，而不只是 macOS 通告过的等级（STEAMAC-S）。
   `memory_history` 增加最多两分钟的退出前虚拟机 footprint 与宿主内存采样（每 10 秒一次）；
   报告时的独立快照标为退出后状态，因为虚拟机内存已释放。GPU 上下文 fatal 与 SIGKILL 报告附加虚拟机进程最近的 GPU/心跳历史，
   以及进程、Metal、Vulkan 分配与共享内存快照；这些计数相互重叠，不能相加。因磁盘被占用而被拒绝的第二个虚拟机以状态 4 退出：只有说明，不上报。

@@ -166,7 +166,9 @@ game; every occurrence is logged (`stall: gpu idle 3.1 s (guest alive, …)`). W
 gamescope session (gaming and Desktop Mode): when a session ends (Switch to Desktop, Return to Gaming
 Mode), no heartbeat is expected until the new session's agent sends one; while the VM is suspended or
 asleep the indicator is off, and after resume, guest wake, and Mac sleep, idle and heartbeat timers
-start over.
+start over. Each check measures GPU idle time and heartbeat age at one instant, so a check the Mac
+itself delayed (paging, a busy main thread) does not age only the heartbeat into “not responding”
+(STEAMAC-8).
 
 | Keys in the window | |
 |---|---|
@@ -500,6 +502,13 @@ the synthesized `/proc/cmdline` over the real one; so it also mounts an untouche
 `/run/steamac/proc` (`nosuid,nodev,noexec`). Without it every Flatpak app exits with `bwrap: Can't mount
 proc on /newroot/proc: Operation not permitted`.
 
+Desktop Mode runs `plasmashell` under `/usr/lib/steamac/desktop-shell`: the nested session has no systemd
+user manager, so the stock service's restart does not apply, and a Wayland protocol error makes the shell
+exit (`_exit`) without a crash handler, leaving a black desktop with only the KWin window (STEAMAC-AJ/9P).
+After an abnormal exit the shell is restarted, at most three starts per minute; a normal logout or shell
+exit is not restarted. Problem reports include the desktop's package versions and a journal of the shell
+and compositor.
+
 ## Clipboard
 
 Settings → General → **Share clipboard with SteamOS** (on by default, applies now): text (UTF-8)
@@ -797,6 +806,28 @@ predate the lock), SteamOS repairs it instead of stopping at “Starting SteamOS
 adds `fsck.repair=yes` to the kernel command line, so systemd-fsck runs e2fsck answering yes rather than
 only the safe preen fixes. Files e2fsck cannot place again end up in `/home/lost+found`.
 
+## Uninstalling
+
+The launcher does not partition the Mac's drive: SteamOS, its games and saves live in one disk image
+file. To remove everything:
+
+1. Quit FX Steam Launcher (SteamOS shuts down with it).
+2. Delete the disk image shown in Settings → Advanced → Disk image (by default
+   `~/Library/Application Support/es.fxgam.steamac/steamos.img`, deleted in step 4). A disk on another
+   volume may also leave `steamos.provision.img` (until its first start finished) and the download cache
+   `steamos.img.cache` next to it.
+3. Move `FX Steam Launcher.app` from Applications to the Trash.
+4. Delete the launcher's data (disk, game statistics, Moonlight pairing, download and crash-report caches,
+   logs, saved problem reports) and settings in Terminal:
+
+   ```
+   rm -rf ~/Library/Application\ Support/es.fxgam.steamac ~/Library/Caches/es.fxgam.steamac \
+          ~/Library/Logs/es.fxgam.steamac ~/Library/HTTPStorages/es.fxgam.steamac
+   defaults delete es.fxgam.steamac
+   ```
+5. Optionally, in Keychain Access delete the “FX Steam Launcher: SteamOS user steamos” passwords
+   (service `es.fxgam.steamac.guest-password`, one per disk).
+
 ## Languages
 
 The launcher's interface is in English, Russian and Simplified Chinese and follows the macOS language
@@ -1016,6 +1047,13 @@ KosmicKrisp stall, `MESA_KK_DEBUG=syncs,cbs` set when starting the macOS launche
 argument) traces queue synchronization and every CPU wait longer than one second (STEAMAC-94).
 A buffer copy with a NULL source or destination buffer is skipped with one warning instead of crashing the
 VM process (Dota 2, STEAMAC-9S/9T; `host/kosmickrisp/test/copy-buffer-null.py`).
+A graphics pipeline without a vertex shader fails to create, with its stages logged, instead of crashing
+the VM process when bound (STEAMAC-AH; `REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh`). A view of a
+single-layer 2D image whose layer count overflows (Zink's `0+65536`) keeps that one layer instead of
+killing the GPU context; a view in an incompatible format (RGBA8 image, R8 view) is still refused, and the
+log names the guest application and the full view arguments (STEAMAC-G). A reply stream on a resource the
+context does not have stays fatal; virglrenderer logs whether it was detached from that context (and how
+long ago), never attached, or not shared memory (`host/virglrenderer/test/reply-resource.py`, STEAMAC-G).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -1039,6 +1077,11 @@ the input's width; missing varyings and different numeric types remain unsupport
 A shader function named `rgb9e5` is renamed so it no longer collides with Metal's `rgb9e5` pixel type
 (STEAMAC-A9), and a geometry/mesh stage writing only `ClipDistance` also writes the `user(clip0)` copy
 the fragment shader reads (STEAMAC-A2).
+Red Dead Redemption 2's Vulkan renderer creates pipeline-statistics query pools although MoltenVK does not
+offer them; they are now created and return zeros (the feature stays off) instead of failing and killing
+the GPU context, timestamp pools larger than 4096 queries use several Metal sample buffers, and host-memory
+images copied through a CPU shadow use the real texel/block row pitch (the AGX `bytes_per_row` assertion,
+STEAMAC-AG/G; `REPRO_CASE=sentry-ag`). A command buffer that fails on the GPU logs its encoders and shaders.
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
@@ -1334,6 +1377,9 @@ What is sent:
   second shutdown request) is a requested exit, not a report: the VM process exits with status 3, which
   the supervisor recognizes without the `user-exit` marker file (with the Mac's disk full the marker
   could not be written, STEAMAC-15);
+  The kernel's memory-kill flag is reported separately from the SIGKILL's unknown source (its absence does
+  not mean Force Quit), with the peak footprint relative to VM and Mac memory and the highest sampled
+  memory pressure, not only the levels macOS announced (STEAMAC-S).
   `memory_history` adds up to two minutes of pre-exit VM footprint and host memory samples (every
   10 s); the separate report-time snapshot is labelled post-exit because VM memory is already freed.
   GPU-fatal and SIGKILL reports add the VM process's recent GPU/heartbeat history and process, Metal,
