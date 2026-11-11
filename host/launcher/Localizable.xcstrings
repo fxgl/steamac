@@ -1,7 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "" : {},
+    "" : {
+
+    },
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
@@ -405,6 +407,9 @@
           }
         }
       }
+    },
+    "%@: home is not an ext4 filesystem" : {
+
     },
     "%@: not a SteamOS disk with home as its last partition" : {
       "localizations" : {
@@ -3155,6 +3160,9 @@
         }
       }
     },
+    "Games currently have %@ GiB of capacity. Enter a smaller home size in GiB (at least 8). Shrink refuses when the data already on /home would not fit. This rewrites the disk image; keep a backup if the games matter." : {
+
+    },
     "Games currently have %@ GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space." : {
       "localizations" : {
         "ru" : {
@@ -3379,7 +3387,9 @@
         }
       }
     },
-    "H" : {},
+    "H" : {
+
+    },
     "Help" : {
       "comment" : "Application help menu",
       "localizations" : {
@@ -3413,6 +3423,9 @@
           }
         }
       }
+    },
+    "Home capacity is now %lld GiB." : {
+
     },
     "Home partition (games, sparse)" : {
       "localizations" : {
@@ -6387,6 +6400,21 @@
         }
       }
     },
+    "Shrink Disk" : {
+
+    },
+    "Shrink Disk…" : {
+
+    },
+    "Shrink SteamOS Disk" : {
+
+    },
+    "Shrink and Restart" : {
+
+    },
+    "Shrink boot queued" : {
+
+    },
     "Shut Down SteamOS" : {
       "localizations" : {
         "ru" : {
@@ -6584,6 +6612,9 @@
           }
         }
       }
+    },
+    "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start." : {
+
     },
     "Starting Steam" : {
       "localizations" : {
@@ -6992,6 +7023,9 @@
         }
       }
     },
+    "SteamOS disk could not be shrunk" : {
+
+    },
     "SteamOS disk enlarged" : {
       "localizations" : {
         "ru" : {
@@ -7007,6 +7041,9 @@
           }
         }
       }
+    },
+    "SteamOS disk shrunk" : {
+
     },
     "SteamOS gets a gamepad while a controller is connected." : {
       "localizations" : {
@@ -7185,6 +7222,9 @@
         }
       }
     },
+    "SteamOS must be stopped. A one-shot boot shrinks the filesystem when needed, then the image is truncated." : {
+
+    },
     "SteamOS must be stopped. The partition and filesystem grow on its next boot." : {
       "localizations" : {
         "ru" : {
@@ -7201,21 +7241,8 @@
         }
       }
     },
-    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Диск SteamOS (raw GPT), используется на месте, без копирования. Если Steam пишет, что не хватает места, «Увеличить диск…» добавит место для игр без пересоздания диска. После удаления игр «Освободить место на диске…» может уменьшить выделенный размер образа, но только на APFS (ёмкость не меняется). Клоны и снимки могут удерживать место на Mac. Свободное место на Mac само по себе не увеличивает ёмкость SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 原始 GPT 磁盘，原地使用（不会复制）。如果 Steam 提示空间不足，“扩展磁盘…”可在不重建的情况下为游戏增加空间。卸载游戏后，“回收磁盘空间…”仅在 APFS 上可以减小映像的已分配大小（容量不变）。克隆和快照可能仍在 Mac 上占用空间。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
-          }
-        }
-      }
+    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Shrink Disk… lowers home capacity when used space fits (one-shot boot to shrink ext4, then GPT/truncate). After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
+
     },
     "SteamOS set up" : {
       "localizations" : {
@@ -7313,6 +7340,9 @@
           }
         }
       }
+    },
+    "SteamOS will shut down, run a one-shot boot to shrink the filesystem if needed, then truncate the image and restart." : {
+
     },
     "Stick deadzone" : {
       "localizations" : {
@@ -7962,6 +7992,9 @@
           }
         }
       }
+    },
+    "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again." : {
+
     },
     "The statistics service is not reachable. Sessions waiting to be sent: %lld." : {
       "localizations" : {
@@ -8652,7 +8685,9 @@
         }
       }
     },
-    "W" : {},
+    "W" : {
+
+    },
     "Waiting for SteamOS to draw…" : {
       "localizations" : {
         "ru" : {
@@ -9215,6 +9250,12 @@
         }
       }
     },
+    "home filesystem is still larger than %lld GiB; start the shrink boot first" : {
+
+    },
+    "home filesystem still exceeds %lld GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot" : {
+
+    },
     "home size must be 8..4096 GiB" : {
       "localizations" : {
         "ru" : {
@@ -9230,6 +9271,9 @@
           }
         }
       }
+    },
+    "home uses about %@ GiB; free space inside SteamOS or pick a larger size" : {
+
     },
     "last played %@" : {
       "localizations" : {
@@ -9650,6 +9694,9 @@
         }
       }
     },
+    "start SteamOS once so a run directory exists, then shrink again" : {
+
+    },
     "the SteamOS disk %@ is in use by another FX Steam Launcher (or steamac-vm). Quit it first: two VMs writing one disk corrupt its file systems." : {
       "localizations" : {
         "ru" : {
@@ -9682,6 +9729,9 @@
         }
       }
     },
+    "the disk selected for shrink is no longer the next boot's writable disk" : {
+
+    },
     "the new home size must be larger than its current %@ GiB (disks cannot be shrunk)" : {
       "localizations" : {
         "ru" : {
@@ -9697,6 +9747,9 @@
           }
         }
       }
+    },
+    "the new home size must be smaller than its current %@ GiB (use Grow Disk to enlarge)" : {
+
     },
     "the selected SteamOS disk has changed; choose its size again" : {
       "localizations" : {

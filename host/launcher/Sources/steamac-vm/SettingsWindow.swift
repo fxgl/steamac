@@ -1211,7 +1211,7 @@ private struct AdvancedTab: View {
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity."),
+                    Label2(title: "Disk image", detail: String(localized: "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Shrink Disk… lowers home capacity when used space fits (one-shot boot to shrink ext4, then GPT/truncate). After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity."),
                            now: false, key: .diskImage)
                     HStack {
                         Text(verbatim: diskStatus.0)
@@ -1223,6 +1223,7 @@ private struct AdvancedTab: View {
                         Spacer()
                         Button("Create New Disk…") { CreateDiskWindowController.show(settings: settings) }
                         Button("Grow Disk…") { growDisk() }.disabled(nextDisk == nil)
+                        Button("Shrink Disk…") { shrinkDisk() }.disabled(nextDisk == nil)
                         Button("Use Existing Disk…") { chooseDisk() }
                         Button("Use Default") { settings.diskImage = "" }.disabled(settings.diskImage.isEmpty)
                     }
@@ -1367,6 +1368,59 @@ private struct AdvancedTab: View {
         } catch {
             let alert = NSAlert()
             alert.messageText = String(localized: "SteamOS disk could not be grown")
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    private func shrinkDisk() {
+        guard let path = nextDisk else { return }
+        do {
+            let table = try GPT.read(path: path)
+            guard let home = table.entries.last, home.name == "home" else { throw OptionError("not a SteamOS disk", localized: String(localized: "not a SteamOS disk")) }
+            let current = Double(home.sectors * 512) / Double(1 << 30)
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Shrink SteamOS Disk")
+            let running = context.diskPath == path && context.restart != nil
+            let capacity = String(format: "%.1f", current)
+            alert.informativeText = String(localized: "Games currently have \(capacity) GiB of capacity. Enter a smaller home size in GiB (at least 8). Shrink refuses when the data already on /home would not fit. This rewrites the disk image; keep a backup if the games matter.")
+                + " " + (running
+                   ? String(localized: "SteamOS will shut down, run a one-shot boot to shrink the filesystem if needed, then truncate the image and restart.")
+                   : String(localized: "SteamOS must be stopped. A one-shot boot shrinks the filesystem when needed, then the image is truncated."))
+            let field = NSTextField(string: String(max(8, Int(floor(current)) - 64)))
+            field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
+            alert.accessoryView = field
+            alert.addButton(withTitle: running ? String(localized: "Shrink and Restart") : String(localized: "Shrink Disk"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard let size = Int(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                throw OptionError("enter a whole number of GiB", localized: String(localized: "enter a whole number of GiB"))
+            }
+            let request = try DiskShrinker.request(path: path, homeGiB: size)
+            if request.filesystemFits {
+                try DiskShrinker.shrinkGPT(request)
+                let done = NSAlert()
+                done.messageText = String(localized: "SteamOS disk shrunk")
+                done.informativeText = String(localized: "Home capacity is now \(size) GiB.")
+                done.runModal()
+                return
+            }
+            guard let runDir = Supervisor.runDir else {
+                throw OptionError("start SteamOS once so a run directory exists, then shrink again",
+                                  localized: String(localized: "start SteamOS once so a run directory exists, then shrink again"))
+            }
+            try DiskShrinker.queue(request, runDir: runDir)
+            if running {
+                context.restart?()
+            } else {
+                let next = NSAlert()
+                next.messageText = String(localized: "Shrink boot queued")
+                next.informativeText = String(localized: "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start.")
+                next.runModal()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "SteamOS disk could not be shrunk")
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
