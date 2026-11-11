@@ -153,8 +153,9 @@ final class PadPort {
         let bytes = Array((line + "\n").utf8)
         if bytes.count > PadPort.maxPending { return false }
         if !pending.isEmpty {
+            // Pipe already waiting on `pending`: do not re-arm the write source (re-entrancy /
+            // selftest crash). `flush` promotes `latest` once pending drains.
             latest = bytes
-            armWritable(true)
             return true
         }
         latest = nil
@@ -232,18 +233,17 @@ final class PadPort {
             check(port.sendLatest("hid-input aa"), "first coalesced report accepted while busy")
             check(port.sendLatest("hid-input bb"), "second coalesced report replaces the first")
             check(port.testLatestUTF8() == "hid-input bb\n", "latest slot holds only the newest report")
-            // Drain parked pending + promoted latest into the guest pipe, then read it back.
+            // Promote without a live write-source: flush once into the guest pipe, then read.
+            port.testFlush()
             var got = Data()
             var buf = [UInt8](repeating: 0, count: 4096)
-            let deadline = Date().addingTimeInterval(2)
-            while Date() < deadline {
-                port.testFlush()
+            for _ in 0..<20 {
                 let n = Darwin.read(port.guestInputFd, &buf, buf.count)
-                if n > 0 { got.append(contentsOf: buf[0..<n]) }
-                if port.testPendingEmpty && port.testLatestEmpty { break }
-                if n <= 0 { Thread.sleep(forTimeInterval: 0.005) }
+                if n > 0 { got.append(contentsOf: buf[0..<n]); continue }
+                break
             }
             let text = String(data: got, encoding: .utf8) ?? ""
+            check(port.testPendingEmpty && port.testLatestEmpty, "flush drained pending and latest")
             check(text.contains("parked-control"), "control line still goes out before coalesced input")
             check(text.contains("hid-input bb"), "drained stream includes the latest report")
             check(!text.contains("hid-input aa"), "older coalesced report was replaced")
