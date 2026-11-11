@@ -339,14 +339,16 @@ final class HIDPassthrough {
         open(ref, id: id, result: result, generic: false)
     }
 
-    /// USB/BLE Steam Controllers (not the Puck): open exclusively so GameController is not also
-    /// on the pipes. Shared opens made feature report 1 STALL; Steam retried every ~1–2 s in
-    /// Desktop Mode and briefly cut input until Options re-inited lizard.
+    /// Valve Steam Controllers (USB, BLE, and Puck controller interfaces): open exclusively so
+    /// GameController is not also on the pipes. Shared opens made feature report 1 STALL; Steam
+    /// retried every ~1–2 s in Desktop Mode and briefly cut input until Options re-inited lizard.
+    /// Puck used to stay shared for GC co-location; that raced with raw HID routing and left the
+    /// same stalls, so Puck slots now seize too and route like BLE via rawPlayers.
     static func seizes(_ ref: IOHIDDevice) -> Bool {
         let vendor = (IOHIDDeviceGetProperty(ref, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue
         let product = (IOHIDDeviceGetProperty(ref, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue
         guard vendor == 0x28de, let product else { return false }
-        return steamControllers.contains { $0.product == product }
+        return product == puck.product || steamControllers.contains { $0.product == product }
     }
 
     private func open(_ ref: IOHIDDevice, id: UInt64, result: IOReturn, generic: Bool) {

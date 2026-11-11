@@ -338,8 +338,8 @@ extension HIDPassthrough {
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)
         let slot = hid.devices.last!
-        check(puck.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeNone),
-              "Puck stays shared (no SeizeDevice) for GameController co-location")
+        check(puck.lastOpenOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice),
+              "Puck controller interfaces open with SeizeDevice like USB/BLE")
         _ = get(hid, slot, .feature, 1)
         check(puck.getRequests.last?.2 == 64, "USB Puck requests are not enlarged")
         var movedInputs = 0

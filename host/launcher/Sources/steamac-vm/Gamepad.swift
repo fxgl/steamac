@@ -679,16 +679,19 @@ enum SteamControllerRouting {
         check(rawPlayers(previous: [10: 1, 20: 0], devices: [10], available: [0, 1]) == [10: 1],
               "generic disconnect frees only its player, BLE stays sticky")
         check(suppressGameControllerSteamStandIn(vendorName: "Steam Controller", productCategory: "Steam Controller",
-                                                 hidNonPuckSteam: 1),
+                                                 hidNonPuckSteam: 1, hidLivePuck: 0),
               "USB GameController stand-in suppressed while HID owns the pad")
         check(!suppressGameControllerSteamStandIn(vendorName: "Steam Controller", productCategory: "Steam Controller",
-                                                  hidNonPuckSteam: 0),
+                                                  hidNonPuckSteam: 0, hidLivePuck: 0),
               "USB GameController kept when no HID Steam Controller")
+        check(suppressGameControllerSteamStandIn(vendorName: "Steam Controller Puck", productCategory: "Steam Controller",
+                                                 hidNonPuckSteam: 0, hidLivePuck: 1),
+              "Puck GameController suppressed while a live HID Puck slot is routed")
         check(!suppressGameControllerSteamStandIn(vendorName: "Steam Controller Puck", productCategory: "Steam Controller",
-                                                  hidNonPuckSteam: 1),
-              "Puck GameController is not suppressed")
+                                                  hidNonPuckSteam: 1, hidLivePuck: 0),
+              "Puck GameController kept when no live HID Puck slot")
         check(!suppressGameControllerSteamStandIn(vendorName: "Xbox Wireless Controller", productCategory: "Xbox One",
-                                                  hidNonPuckSteam: 1),
+                                                  hidNonPuckSteam: 1, hidLivePuck: 1),
               "unrelated GameController is not suppressed")
         log("selftest-settings: Steam Controller routing: \(checks) checks, \(failures.isEmpty ? "PASS" : failures.joined(separator: "; "))")
         return failures
@@ -698,15 +701,15 @@ enum SteamControllerRouting {
         !rawPlayers.contains { $0.value == index && !genericDevices.contains($0.key) }
     }
 
-    /// USB-wired (and any non-Puck) Steam Controllers are both an IOHIDDevice and a GameController
+    /// USB/BLE Steam Controllers and live Puck slots are both an IOHIDDevice and a GameController
     /// publication of the same hardware. Once HID owns the guest pad, keep the GameController
     /// stand-in off other players so SteamOS does not also see an Xbox 360 pad (glyph flicker).
-    /// The Puck stays: GameController names it "Steam Controller Puck" and puckPlayer() co-locates it.
     static func suppressGameControllerSteamStandIn(vendorName: String?, productCategory: String,
-                                                   hidNonPuckSteam: Int) -> Bool {
-        guard hidNonPuckSteam > 0 else { return false }
+                                                   hidNonPuckSteam: Int, hidLivePuck: Int = 0) -> Bool {
         let isSteam = vendorName == "Steam Controller Puck" || productCategory == "Steam Controller"
-        return isSteam && vendorName != "Steam Controller Puck"
+        guard isSteam else { return false }
+        if vendorName == "Steam Controller Puck" { return hidLivePuck > 0 }
+        return hidNonPuckSteam > 0
     }
 }
 
@@ -1091,8 +1094,8 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's raw controller: an unambiguous Puck slot follows GameController,
-        // while BLE and generic devices keep their reserved players.
+        // Each player's raw controller: live Puck slots, BLE/USB, and generic devices keep
+        // sticky rawPlayers reservations (Puck no longer co-locates via GameController).
         for s in slots {
             let playerIndex = s.index
             s.rawControllerDevice = { [weak self] in self?.assignedRawDevice(for: playerIndex) }
@@ -1146,16 +1149,11 @@ final class GamepadBridge {
             hidCapable: slots.indices.filter { slots[$0].hidCapable })
     }
 
-    /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
-    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE/generic reserve players.
+    /// BLE, USB, live Puck slots, and generic devices reserve players via `rawPlayers` only.
+    /// Puck no longer co-locates through GameController (`puckPlayer`): that path raced with
+    /// rawPlayers and could put the same HID on two pads.
     private func assignedRawDevice(for index: Int) -> HIDPassthrough.Device? {
         guard usable(index), slots[index].remote == nil else { return nil }
-        let steamPlayers = matchesValveControllers
-            ? slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false } : []
-        let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
-        if SteamControllerRouting.puckPlayer(steamPlayers, liveSlots: livePuckSlots.count) == index {
-            return livePuckSlots.first
-        }
         return hid.devices.first { rawPlayers[$0.registryID] == index }
     }
 
@@ -1175,9 +1173,13 @@ final class GamepadBridge {
         let hidNonPuckSteam = hid.devices.filter {
             !$0.generic && HIDPassthrough.isSteamController($0) && $0.puckSlot == nil
         }.count
+        let hidLivePuck = hid.devices.filter {
+            $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0)
+        }.count
         let candidates = GamepadBridge.connected.filter {
             !SteamControllerRouting.suppressGameControllerSteamStandIn(
-                vendorName: $0.vendorName, productCategory: $0.productCategory, hidNonPuckSteam: hidNonPuckSteam)
+                vendorName: $0.vendorName, productCategory: $0.productCategory,
+                hidNonPuckSteam: hidNonPuckSteam, hidLivePuck: hidLivePuck)
         }
         // Moonlight controllers come first: the remote player is the one using SteamOS during a
         // stream (with one usable player, a Mac controller waits until the stream ends).
