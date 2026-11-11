@@ -697,6 +697,9 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 - connected to the Mac over Bluetooth LE (`28de:1303`): passed through with its own IDs and the
   Bluetooth bus. GameController does not show it, so it does not need a GameController controller,
   and it cannot wake a sleeping guest (HID input is dropped while the VM is paused);
+- plugged into the Mac over USB (`28de:1302`): passed through with its own IDs and the USB bus
+  (same Input Monitoring requirement as Bluetooth). Without this match SteamOS only saw the
+  GameController Xbox 360 stand-in while the Mac still listed a Steam Controller;
 - through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
   controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
   number, which a uhid device does not have, so the slot that carries controller state goes to

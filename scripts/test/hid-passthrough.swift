@@ -60,12 +60,13 @@ final class TestHIDDevice: NSObject {
     var inputBuffer: UnsafeMutablePointer<UInt8>?
     var inputCapacity = 0
 
-    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil) {
+    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil, product: Int? = nil) {
         self.id = id
         service = nextService
         nextService += 1
+        let valveProduct = product ?? (puckSlot == nil ? 0x1303 : 0x1304)
         properties = [kIOHIDVendorIDKey: valve ? 0x28de : 0x054c,
-                      kIOHIDProductIDKey: valve ? (puckSlot == nil ? 0x1303 : 0x1304) : 0x0ce6,
+                      kIOHIDProductIDKey: valve ? valveProduct : 0x0ce6,
                       kIOHIDTransportKey: bluetooth ? kIOHIDTransportBluetoothLowEnergyValue : kIOHIDTransportUSBValue,
                       kIOHIDReportDescriptorKey: Data([0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
                                                        0x85, 0x01, 0x75, 0x08, 0x95, 0x3f, 0x81, 0x02, 0xc0]),
@@ -293,6 +294,16 @@ extension HIDPassthrough {
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
         _ = get(hid, valve, .input, 1)
         check(ble.getRequests.last?.2 == 64, "BLE input requests are not enlarged")
+
+        let usbWired = TestHIDDevice(id: 23, valve: true, product: 0x1302)
+        hid.manager!.emitMatch(usbWired)
+        let wired = hid.devices.last!
+        check(HIDPassthrough.isSteamController(wired) && wired.puckSlot == nil
+              && wired.identity.product == HIDPassthrough.wiredSteamController
+              && wired.identity.bus == HIDPassthrough.busUSB,
+              "USB-wired Steam Controller (28de:1302) is matched and passed through as itself")
+        _ = get(hid, wired, .feature, 1)
+        check(usbWired.getRequests.last?.2 == 64, "USB-wired Steam Controller feature requests stay at descriptor size")
 
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)
