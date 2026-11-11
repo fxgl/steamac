@@ -65,6 +65,22 @@ if let disk = options.growDisk {
         exit(1)
     }
 }
+if let disk = options.shrinkDisk {
+    do {
+        guard options.explicit.contains("--home-gib") else { throw OptionError("--shrink-disk requires --home-gib N") }
+        let request = try DiskShrinker.request(path: disk, homeGiB: options.createHomeGiB)
+        guard request.filesystemFits else {
+            throw OptionError("home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot",
+                              localized: String(localized: "home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot"))
+        }
+        try DiskShrinker.shrinkGPT(request)
+        print("Disk shrunk to \(request.homeGiB) GiB home capacity.")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write("shrink-disk: \(error)\n".data(using: .utf8)!)
+        exit(1)
+    }
+}
 if let disk = options.showSSHPassword {
     guard let id = GuestPassword.identity(ofDisk: disk) else { fatal("\(disk): not a GPT disk image") }
     guard let state = GuestPassword.state(disk: id), let pw = GuestPassword.password(disk: id) else {

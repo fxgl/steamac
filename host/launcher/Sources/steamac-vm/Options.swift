@@ -141,6 +141,9 @@ struct Options {
     var createDisk: String?
     /// --grow-disk PATH --home-gib N (no VM): enlarge an existing disk, never shrink.
     var growDisk: String?
+    /// --shrink-disk PATH --home-gib N (no VM): shrink home capacity (FS must already fit, or
+    /// use Settings Shrink Disk… for the initramfs pass).
+    var shrinkDisk: String?
     var createBranch: String?
     var createHomeGiB = DiskLayout.defaultHomeGiB
     var createPassword: String?
@@ -297,6 +300,10 @@ struct Options {
                            SteamOS Disk window or an earlier --accept-eula), remembered afterwards
       --grow-disk PATH     grow an existing disk's home capacity to --home-gib N (grow only).
                            SteamOS must be stopped; partition and filesystem grow on its next boot.
+      --shrink-disk PATH   shrink home capacity to --home-gib N (VM stopped). Refuses when used
+                           data would not fit. If the ext4 still exceeds N GiB, Shrink Disk… in
+                           Settings runs a one-shot boot first; this flag only rewrites GPT/truncate
+                           when the filesystem already fits.
 
     SSH: --ssh-password DISK prints user, generated password and state (pending / applied) of DISK
     (the password Settings > Advanced shows; it exists once SSH was enabled for that disk).
@@ -480,6 +487,7 @@ struct Options {
             case "--reference-disk": o.referenceDisk = try value(a)
             case "--create-disk": o.createDisk = try value(a)
             case "--grow-disk": o.growDisk = try value(a)
+            case "--shrink-disk": o.shrinkDisk = try value(a)
             case "--branch":
                 let v = try value(a)
                 guard DiskCreator.branches.contains(v) else { throw OptionError("--branch: stable or rc") }
@@ -519,7 +527,7 @@ struct Options {
     var isSelftest: Bool {
         selftestDisplay || selftestOverlay || selftestStall || selftestPill || selftestSettings || selftestProvision || selftestRemotePlay
             || selftestMetalCache || selftestPointer || selftestGameLayers || selftestStream || createDisk != nil || growDisk != nil
-            || showSSHPassword != nil
+            || shrinkDisk != nil || showSSHPassword != nil
     }
 
     /// Command line + saved settings (+ app bundle resources): what this boot runs with, and which
@@ -543,6 +551,7 @@ struct Options {
             AppBundle.fill(&o, settings: settings, overrides: &overrides)
             Provision.attachPending(&o)
             Provision.attachConfig(&o)
+            DiskShrinker.attachPending(&o)
             let words = o.cmdline.split(separator: " ")
             func add(_ key: String, _ value: @autoclosure () -> String?) {
                 guard !words.contains(where: { $0.hasPrefix(key + "=") }), let v = value() else { return }

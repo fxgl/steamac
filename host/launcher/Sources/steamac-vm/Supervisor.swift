@@ -153,6 +153,14 @@ enum Supervisor {
                 cleanup()
                 exit(1)
             }
+            do {
+                try DiskShrinker.applyPending(runDir: dir, disks: o.disks)
+            } catch {
+                log("shrink-disk: \(error)")
+                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be shrunk", error.localizedDescription) }
+                cleanup()
+                exit(1)
+            }
             // No disk yet (app bundle first run): the VM process shows the first-run sheet instead.
             gvproxy = nil
             if o.network && !o.needsDisk {
@@ -219,6 +227,23 @@ enum Supervisor {
                 frame = text
                 log("guest rebooted (VM exit status \(status)): starting boot #\(boot)")
                 continue
+            }
+            // Shrink Disk one-shot (`steamac.slot=stop`) powers off without a reboot marker.
+            // When resize2fs succeeded, continue so applyPending can truncate GPT and boot again.
+            if DiskShrinker.pendingReadyForGPT(runDir: dir) {
+                boot += 1
+                log("shrink-disk: filesystem now fits; truncating GPT and starting boot #\(boot)")
+                continue
+            }
+            if DiskShrinker.pending(runDir: dir) != nil {
+                log("shrink-disk: one-shot boot ended but home still exceeds the target; not truncating")
+                MainActor.assumeIsolated {
+                    AppBundle.alertIfLaunchedFromFinder(
+                        "SteamOS disk could not be shrunk",
+                        String(localized: "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again."))
+                }
+                cleanup()
+                exit(status == 0 ? 1 : status)
             }
             // Unexpected exit (crash, error): offer Report a Problem before cleaning up (the
             // report reads this session's logs from the run dir).

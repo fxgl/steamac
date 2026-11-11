@@ -127,6 +127,7 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck() + PadPort.coalesceSelfCheck()
+            + Ext4Probe.selfCheck() + DiskShrinker.selfCheck()
             + sharedLibrarySelfCheck()
         var lowDPI = Options()
         lowDPI.dpi = 50

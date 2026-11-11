@@ -41,6 +41,9 @@
 #   steamac.layer=/dev/vdX  layer device (default: autodetect erofs disk)
 #   steamac.provision=1  first boot of a launcher-created disk: format and fill
 #                      the blank partitions from the payload disk (see "provisioning")
+#   steamac.shrink-home=N  shrink the unmounted home ext4 to N GiB (resize2fs via
+#                      chroot into the assembled rootfs), then power off when
+#                      steamac.slot=stop so the host can rewrite GPT and truncate
 #   steamac.config=1   apply the launcher's config payload disk (see "config payload")
 #   steamac.ssh=0|1    0: no SSH server this boot (see "SSH switch"); 1/absent: as enabled
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
@@ -742,6 +745,63 @@ if ! assemble_slot "$SLOT"; then
     assemble_slot "$SLOT" || { set_left "$SLOT" 0; save_state; fatal "both slots failed to assemble"; }
 fi
 echo "$SLOT" > /run/steamac/slot
+
+# ---------------------------------------------------------------- shrink home
+# Host Shrink Disk: filesystem must shrink before GPT/truncate. With
+# steamac.shrink-home=N (GiB), after the read-only rootfs is assembled and
+# before /var or /home are mounted, e2fsck + resize2fs from the rootfs shrink
+# the home partition in place. steamac.slot=stop then powers off so the host
+# can rewrite GPT and ftruncate the image (DiskShrinker). growfs must not run
+# against the still-large GPT, so we never switch_root on this boot.
+shrink_home() {
+    _gib=$(getarg steamac.shrink-home)
+    [ -n "$_gib" ] || return 0
+    case $_gib in
+        *[!0-9]*|"") fatal "steamac.shrink-home=$_gib: need an integer GiB count" ;;
+    esac
+    [ "$_gib" -ge 8 ] && [ "$_gib" -le 4096 ] || fatal "steamac.shrink-home=$_gib: need 8..4096"
+    _d=$(part_dev home) || fatal "steamac.shrink-home: no home partition"
+    msg "shrink-home: e2fsck/resize2fs home ($_d) to ${_gib}G"
+    mount -o bind /dev /newroot/dev && mount -t proc proc /newroot/proc \
+        || fatal "shrink-home: cannot prepare chroot"
+    # -f: force check after possible unclean VM kill; -y: answer yes (fsck.repair style).
+    if ! chroot /newroot /usr/sbin/e2fsck -f -y "$_d"; then
+        _rc=$?
+        # e2fsck: 1 = corrected, 2 = corrected and reboot needed — both OK offline.
+        [ "$_rc" -eq 1 ] || [ "$_rc" -eq 2 ] || {
+            umount /newroot/proc; umount /newroot/dev
+            fatal "shrink-home: e2fsck failed (exit $_rc)"
+        }
+    fi
+    _min=$(chroot /newroot /usr/sbin/resize2fs -P "$_d" 2>/dev/null | sed -n 's/.*: //p')
+    _target_blocks=$((_gib * 1024 * 1024 * 1024 / 4096))
+    # Block size is usually 4 KiB on SteamOS home (-T huge); resize2fs -P prints blocks.
+    if [ -n "$_min" ] && [ "$_min" -gt 0 ] && [ "$_min" -gt "$_target_blocks" ]; then
+        umount /newroot/proc; umount /newroot/dev
+        fatal "shrink-home: filesystem needs at least $_min 4KiB blocks; ${_gib}G is too small"
+    fi
+    chroot /newroot /usr/sbin/resize2fs "$_d" "${_gib}G" \
+        || { umount /newroot/proc; umount /newroot/dev; fatal "shrink-home: resize2fs ${_gib}G failed"; }
+    umount /newroot/proc; umount /newroot/dev
+    sync
+    if esp_rw_mount; then
+        mkdir -p /esp/steamac
+        echo "$_gib" > /esp/steamac/shrink-home-done
+        sync /esp/steamac/shrink-home-done
+        esp_rw_umount || warn "shrink-home: could not unmount esp after marker"
+    else
+        warn "shrink-home: esp not writable; host must trust progress/console alone"
+    fi
+    fx_find_port
+    fx_say shrink "done $_gib"
+    msg "shrink-home: filesystem now ${_gib}G"
+    if [ "$(getarg steamac.slot)" = stop ]; then
+        msg "steamac.slot=stop: shrink complete; powering off for host GPT truncate"
+        poweroff -f
+    fi
+    fatal "steamac.shrink-home set without steamac.slot=stop; refusing to boot into a still-large GPT (growfs would undo the shrink)"
+}
+shrink_home
 
 # ---------------------------------------------------------------- factory reset
 # Stock hook `factory_reset`: a *.cfg in esp:/efi/steamos/factory-reset/
