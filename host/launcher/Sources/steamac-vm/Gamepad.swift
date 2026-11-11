@@ -126,7 +126,14 @@ final class PadPort {
     }
 
     deinit {
-        writable?.cancel()
+        // libdispatch: cancel/release of a suspended DispatchSource traps
+        // ("BUG IN CLIENT OF LIBDISPATCH: Release of a suspended object").
+        if let s = writable {
+            s.setEventHandler {}
+            if !writableArmed { s.resume() }
+            s.cancel()
+            writable = nil
+        }
         for fd in [readFd, writeFd, guestOutputFd, guestInputFd] { Darwin.close(fd) }
     }
 
@@ -187,7 +194,9 @@ final class PadPort {
     }
 
     private func armWritable(_ on: Bool) {
-        if writable == nil {
+        // Only create the write source when we need it armed. Creating it for `on: false`
+        // left a never-resumed (suspended) source that crashed in deinit during selftest.
+        if on, writable == nil {
             let s = DispatchSource.makeWriteSource(fileDescriptor: writeFd, queue: .main)
             s.setEventHandler { [weak self] in self?.flush() }
             writable = s
