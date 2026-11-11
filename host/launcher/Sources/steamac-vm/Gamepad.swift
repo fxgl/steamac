@@ -244,6 +244,7 @@ final class PadPort {
             check(port.testLatestUTF8() == "hid-input bb\n", "latest slot holds only the newest report")
             // Promote without a live write-source: flush once into the guest pipe, then read.
             port.testFlush()
+            _ = fcntl(port.guestInputFd, F_SETFL, fcntl(port.guestInputFd, F_GETFL) | O_NONBLOCK)
             var got = Data()
             var buf = [UInt8](repeating: 0, count: 4096)
             for _ in 0..<20 {
