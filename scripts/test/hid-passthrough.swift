@@ -200,19 +200,28 @@ func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: 
                          _ report: UnsafeMutablePointer<UInt8>, _ size: UnsafeMutablePointer<CFIndex>) -> IOReturn {
     device.getRequests.append((type, id, size.pointee))
     guard device.live && device.isOpen else { return kIOReturnNotOpen }
-    let valveBLE = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let valve = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let valveBLE = valve
         && (device.properties[kIOHIDTransportKey] as? String) == kIOHIDTransportBluetoothLowEnergyValue
     if !valveBLE && type == kIOHIDReportTypeFeature && id == 32 && size.pointee != 64 { return kIOReturnTimeout }
     let count = valveBLE && type == kIOHIDReportTypeFeature ? 65 : (id == 9 ? 20 : 64)
     guard size.pointee >= count else { return kIOReturnNoSpace }
     for i in 0..<count { report[i] = i == 0 ? UInt8(id) : UInt8(i) }
     size.pointee = count
+    // USB Steam Controller feature report 1: macOS fills the buffer then returns pipe stalled.
+    if valve && !valveBLE && type == kIOHIDReportTypeFeature {
+        return HIDPassthrough.usbPipeStalled
+    }
     return kIOReturnSuccess
 }
 func IOHIDDeviceSetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafePointer<UInt8>, _ size: CFIndex) -> IOReturn {
     device.setRequests.append((type, id, Array(UnsafeBufferPointer(start: report, count: size))))
-    return device.live && device.isOpen ? kIOReturnSuccess : kIOReturnNotOpen
+    guard device.live && device.isOpen else { return kIOReturnNotOpen }
+    let valve = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
+    let ble = (device.properties[kIOHIDTransportKey] as? String) == kIOHIDTransportBluetoothLowEnergyValue
+    if valve && !ble && type == kIOHIDReportTypeFeature { return HIDPassthrough.usbPipeStalled }
+    return kIOReturnSuccess
 }
 
 extension HIDPassthrough {
@@ -302,8 +311,23 @@ extension HIDPassthrough {
               && wired.identity.product == HIDPassthrough.wiredSteamController
               && wired.identity.bus == HIDPassthrough.busUSB,
               "USB-wired Steam Controller (28de:1302) is matched and passed through as itself")
-        _ = get(hid, wired, .feature, 1)
+        let wiredFeature = get(hid, wired, .feature, 1)
+        check(wiredFeature?.count == 64 && wiredFeature?.first == 1,
+              "USB-wired Steam Controller accepts feature GET after USB pipe stall")
         check(usbWired.getRequests.last?.2 == 64, "USB-wired Steam Controller feature requests stay at descriptor size")
+        check(HIDPassthrough.getReportSucceeded(HIDPassthrough.usbPipeStalled, length: 64),
+              "pipe stall with filled buffer is a successful GET")
+        check(!HIDPassthrough.getReportSucceeded(HIDPassthrough.usbPipeStalled, length: 0),
+              "pipe stall with empty buffer remains a failed GET")
+        check(HIDPassthrough.setReportSucceeded(HIDPassthrough.usbPipeStalled, valveController: true),
+              "Valve SET tolerates USB pipe stall")
+        check(!HIDPassthrough.setReportSucceeded(HIDPassthrough.usbPipeStalled, valveController: false),
+              "non-Valve SET does not mask USB pipe stall")
+        var setDone: IOReturn?
+        hid.setReport(wired, type: .feature, data: [1] + [UInt8](repeating: 0, count: 63)) { setDone = $0 }
+        let setDeadline = Date(timeIntervalSinceNow: 2)
+        while setDone == nil && Date() < setDeadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)) }
+        check(setDone == kIOReturnSuccess, "USB-wired Steam Controller SET maps pipe stall to success")
 
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)

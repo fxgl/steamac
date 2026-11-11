@@ -729,6 +729,22 @@ final class HIDPassthrough {
         }
     }
 
+    /// kUSBHostReturnPipeStalled: USB HID GET/SET for Steam Controller feature report 1 often
+    /// returns this after the data stage already succeeded (buffer filled / command accepted).
+    /// Treating it as hard failure made SteamOS retry about once a second in Desktop Mode and
+    /// briefly stall input.
+    static let usbPipeStalled: IOReturn = IOReturn(bitPattern: 0xe0005000)
+
+    /// GET succeeded, or USB returned pipe-stalled with a filled buffer (keep the bytes).
+    static func getReportSucceeded(_ status: IOReturn, length: CFIndex) -> Bool {
+        status == kIOReturnSuccess || (status == usbPipeStalled && length > 0)
+    }
+
+    /// SET succeeded, or a Valve controller's USB pipe reported a spurious stall after accept.
+    static func setReportSucceeded(_ status: IOReturn, valveController: Bool) -> Bool {
+        status == kIOReturnSuccess || (valveController && status == usbPipeStalled)
+    }
+
     /// GET_REPORT of report `id`: the report (ID first) or an error, on the main queue.
     func getReport(_ d: Device, type: ReportType, id: UInt8, done: @escaping (Result<[UInt8], IOReturnError>) -> Void) {
         // The IOHIDDevice, not the Device: a Device is released on the main thread only (deinit).
@@ -746,12 +762,14 @@ final class HIDPassthrough {
             let r = buf.withUnsafeMutableBufferPointer {
                 IOHIDDeviceGetReport(ref, type.io, CFIndex(id), $0.baseAddress!, &len)
             }
-            if r != kIOReturnSuccess {
+            let ok = HIDPassthrough.getReportSucceeded(r, length: len)
+            if !ok || r == HIDPassthrough.usbPipeStalled {
                 log("hid passthrough: GET \(type.rawValue) report \(id) from \(name) (bus \(bus), registry \(registryID)): "
-                    + "\(HIDPassthrough.describe(r)) (requested \(size) bytes, result length \(len))")
+                    + "\(HIDPassthrough.describe(r)) (requested \(size) bytes, result length \(len)"
+                    + (ok && r != kIOReturnSuccess ? ", accepting filled buffer" : "") + ")")
             }
             let result: Result<[UInt8], IOReturnError> =
-                r == kIOReturnSuccess ? .success(Array(buf.prefix(len))) : .failure(IOReturnError(code: r))
+                ok ? .success(Array(buf.prefix(Int(len)))) : .failure(IOReturnError(code: r))
             DispatchQueue.main.async { done(result) }
         }
     }
@@ -762,12 +780,18 @@ final class HIDPassthrough {
         let ref = d.ref
         let numbered = d.numbered
         let reportID = GenericHIDRouting.reportID(numbered: numbered, firstByte: data[0])
+        let valve = HIDPassthrough.isSteamController(d)
         io.async {
             let r = data.withUnsafeBufferPointer {
                 IOHIDDeviceSetReport(ref, type.io, CFIndex(reportID), $0.baseAddress!, data.count)
             }
-            if r != kIOReturnSuccess { log("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))") }
-            if let done { DispatchQueue.main.async { done(r) } }
+            let ok = HIDPassthrough.setReportSucceeded(r, valveController: valve)
+            if !ok || r == HIDPassthrough.usbPipeStalled {
+                log("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))"
+                    + (ok && r != kIOReturnSuccess ? " (accepting for Valve)" : "")
+                    + ", \(data.count) bytes")
+            }
+            if let done { DispatchQueue.main.async { done(ok ? kIOReturnSuccess : r) } }
         }
     }
 
@@ -781,6 +805,9 @@ final class HIDPassthrough {
         }
         if r == kIOReturnNotOpen {
             return "device not open"
+        }
+        if r == usbPipeStalled {
+            return "USB pipe stalled (kUSBHostReturnPipeStalled)"
         }
         return String(format: "IOReturn 0x%08x", UInt32(bitPattern: r))
     }
