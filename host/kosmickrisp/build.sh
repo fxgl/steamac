@@ -407,6 +407,27 @@
 #              unbound sparse buffers, keep the existing path. Repro: test/copy-buffer-null.py <dylib>
 #              (six NULL-source/destination/both cases crash before; after, 1024 calls per case log
 #              once, then a valid copy succeeds; dense and unbound-sparse controls pass before/after).
+#   0092       steamac: vkCreateGraphicsPipelines rejects a complete graphics pipeline without a vertex (or
+#              mesh) shader before compiling, logging its stages, libraries and flags. STEAMAC-AH
+#              (1.9.13, M4 Pro) faulted kk_cmd_bind_shaders+128 (`ldr x8, [x26, #0xe8]`, x26 = the NULL
+#              vertex kk_shader) and took the VM process down; KosmicKrisp exposes neither pipeline
+#              libraries nor shader objects, so the pipeline came without a vertex stage. Venus keeps
+#              a placeholder and drops its draws. Repro: REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh
+#              <dylib> (a fragment-only pipeline faulted the process before; vertex + fragment control).
+#   0094       steamac: single-layer non-array 2D views with an explicit overflowing layer count
+#              retain their one real slice before Mesa/Metal narrowing (STEAMAC-G: layers 0+65536/1,
+#              RGBA8 1920x288 and 1952x288, flags 0x8, usage 0x480097). Empty ranges, arrays and
+#              volumes remain rejected as in 0065. No format/backing substitution. Venus creates
+#              views asynchronously, so rejecting the otherwise usable slice killed the context.
+#              Repro: image_views.c, exact shapes and usage-pNext control, dynamic-render clear and
+#              every RGBA8 readback byte checked; all thirteen original cases still pass.
+#   0095       steamac: rejected image views identify their guest application/engine, full image and
+#              view shape, swizzles and bounded pNext chain (usage override and sliced-view fields).
+#              STEAMAC-G's RGBA8 -> R8 producer is not yet proven: the usage mask and 65536 arithmetic
+#              point to Zink, not REMAINING or a uint16 Venus wire conversion; nearby explorer.exe
+#              teardown does not identify the failing context. Keep 0066's format rejection rather
+#              than return a view with unproven pixels or reintroduce Metal's assertion.
+#              Repro: image_views.c, incompatible 1920/1952x288 and usage-pNext controls.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -634,6 +655,9 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0089 = steamac: opt-in MESA_KK_DEBUG=syncs traces queue synchronization and CPU waits past 1 s (STEAMAC-94)"
 	echo "  0090 = steamac: materialize deep MSL selection predicates past depth 128 (Metal's 256 bracket limit, STEAMAC-G)"
 	echo "  0091 = steamac: skip vkCmdCopyBuffer[2] with NULL buffer handles, bounded warning (STEAMAC-9S/9T)"
+	echo "  0092 = steamac: reject graphics pipelines without a vertex shader, logged (STEAMAC-AH)"
+	echo "  0094 = steamac: overflowing non-array views of single-layer 2D images retain the real slice (STEAMAC-G)"
+	echo "  0095 = steamac: rejected image views identify their guest producer, full shape and pNext arguments"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

@@ -1,0 +1,88 @@
+From: steamac <steamac@fxgam.es>
+Subject: [PATCH] kk: identify rejected image view producers and extension arguments
+
+STEAMAC-G sub-pattern A also contains five events rejecting RGBA8 -> R8
+views (one event rejects twice). Those reports have no image extent,
+subresource range, swizzles, application/engine name or pNext data. Nearby
+explorer.exe teardown messages belong to other contexts and cannot identify
+the producer of the bad view.
+
+Keep the incompatible block-size rejection: neither a different-format
+alias of tiled backing nor substituting RGBA8 for an R8 attachment has
+proven pixel semantics, and the direct Metal view asserts. Log the guest
+application and engine from VkApplicationInfo, the full image/view shape,
+and the bounded pNext chain (including usage and sliced-view fields) before
+range/format rejections. Valid object creation has no extra work or logs.
+
+Repro: image_views.c, invalid-sentry-format-{1920,1952} and usage-pNext
+control. Under Metal API validation all reject without aborting and print
+producer, complete range and any explicit usage override. This is a
+diagnostic for the unresolved invalid-format producer, not its resolution.
+
+Generated-by: LLM
+---
+--- a/src/kosmickrisp/vulkan/kk_image_view.c
++++ b/src/kosmickrisp/vulkan/kk_image_view.c
+@@ -47,6 +47,46 @@
+    if (type == VK_IMAGE_VIEW_TYPE_1D_ARRAY)
+       return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    return type;
++}
++
++static void
++kk_log_image_view_request(struct kk_device *dev, const struct kk_image *image,
++                          const VkImageViewCreateInfo *info)
++{
++   char app[256];
++   kk_device_app_name(dev, app, sizeof(app));
++   const VkImageSubresourceRange *range = &info->subresourceRange;
++   mesa_loge("kk: image view producer=%s image=%p image-format=%u "
++             "extent=%ux%ux%u mips=%u layers=%u samples=%u tiling=%u "
++             "flags=0x%llx usage=0x%llx",
++             app, (const void *)image, image->vk.format, image->vk.extent.width,
++             image->vk.extent.height, image->vk.extent.depth,
++             image->vk.mip_levels, image->vk.array_layers, image->vk.samples,
++             image->vk.tiling, (unsigned long long)image->vk.create_flags,
++             (unsigned long long)image->vk.usage);
++   mesa_loge("kk: image view request type=%u format=%u flags=0x%x "
++             "swizzle=%u,%u,%u,%u aspects=0x%x mips=%u+%u layers=%u+%u",
++             info->viewType, info->format, info->flags, info->components.r,
++             info->components.g, info->components.b, info->components.a,
++             range->aspectMask, range->baseMipLevel, range->levelCount,
++             range->baseArrayLayer, range->layerCount);
++   const VkBaseInStructure *ext = info->pNext;
++   for (unsigned i = 0; ext && i < 8; i++, ext = ext->pNext) {
++      if (ext->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO) {
++         const VkImageViewUsageCreateInfo *usage = (const void *)ext;
++         mesa_loge("kk: image view pNext[%u] sType=%u usage=0x%x",
++                   i, ext->sType, usage->usage);
++      } else if (ext->sType ==
++                 VK_STRUCTURE_TYPE_IMAGE_VIEW_SLICED_CREATE_INFO_EXT) {
++         const VkImageViewSlicedCreateInfoEXT *sliced = (const void *)ext;
++         mesa_loge("kk: image view pNext[%u] sType=%u slices=%u+%u",
++                   i, ext->sType, sliced->sliceOffset, sliced->sliceCount);
++      } else {
++         mesa_loge("kk: image view pNext[%u] sType=%u", i, ext->sType);
++      }
++   }
++   if (ext)
++      mesa_loge("kk: image view pNext truncated after 8 entries");
+ }
+ 
+ VkResult
+@@ -98,6 +138,7 @@
+        range->baseArrayLayer >= layers || range->layerCount == 0 ||
+        (range->layerCount != VK_REMAINING_ARRAY_LAYERS &&
+         range->layerCount > layers - range->baseArrayLayer)) {
++      kk_log_image_view_request(dev, image, pCreateInfo);
+       mesa_loge("kk: invalid image view range: type %u, format %u, "
+                 "mips %u+%u/%u, layers %u+%u/%u; image type %u, "
+                 "extent %ux%ux%u, flags 0x%llx, usage 0x%llx, tiling %u",
+@@ -122,6 +163,7 @@
+        range->aspectMask == VK_IMAGE_ASPECT_COLOR_BIT &&
+        vk_format_get_blocksize(format) !=
+           vk_format_get_blocksize(image->vk.format)) {
++      kk_log_image_view_request(dev, image, pCreateInfo);
+       mesa_loge("kk: incompatible image view format %u for image "
+                 "format %u, type %u, flags 0x%llx, usage 0x%llx",
+                 format, image->vk.format, pCreateInfo->viewType,

@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000092 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Wed, 11 Nov 2026 18:00:00 +0000
+Subject: [PATCH] vulkan: reject graphics pipelines without a vertex shader (STEAMAC-AH)
+
+STEAMAC-AH event ef17b253337c4bedb98fa721faae7bb3 (1.9.13, M4 Pro,
+appid 1449560) faults at kk_cmd_bind_shaders+128 with KERN_INVALID_ADDRESS
+0xe8, under vk_graphics_pipeline_cmd_bind / vkCmdBindPipeline on the vkr
+ring thread. The shipped driver (UUID 632D1882-1FCA-36D6-B695-FAC5EC96A7DB,
+matching the event) has `ldr x8, [x26, #0xe8]` there for the vertex stage:
+x26 is the vertex kk_shader and 0xe8 its pipeline.gfx.ds_handle, so the
+bound graphics pipeline had no vertex shader. KosmicKrisp exposes neither
+graphics pipeline libraries nor shader objects, so such a pipeline can only
+come from vkCreateGraphicsPipelines without a vertex stage
+(VUID-VkGraphicsPipelineCreateInfo-stage-02096). Which pipeline of the game
+did that is not established by the report.
+
+Reject a complete graphics pipeline whose stages have no vertex or mesh
+shader before any shader is compiled or looked up in a cache, and log the
+stages it was given, its libraries and flags. Venus creates pipelines
+asynchronously: virglrenderer keeps a placeholder for the failed pipeline
+and drops its draws instead of losing the context, and the next report
+names the request.
+
+Repro host/moltenvk/repro/sentry-ah-no-vertex.c (REPRO_CASE=sentry-ah),
+Metal API validation on:
+- Before (main, 0091): a fragment-shader-only pipeline faults the process
+  (SIGSEGV at creation in kk_gather_program).
+- After: its creation fails with VK_ERROR_UNKNOWN and a NULL handle, the
+  rejection is logged; a vertex + fragment control draws every pixel green.
+---
+--- a/src/vulkan/runtime/vk_pipeline.c
++++ b/src/vulkan/runtime/vk_pipeline.c
+@@ -2105,6 +2105,42 @@
+       vk_dynamic_graphics_state_fill(&pipeline->linked.dynamic, &state_tmp);
+    }
+ 
++   /* steamac: a complete graphics pipeline must have a vertex (or mesh)
++    * shader (VUID-VkGraphicsPipelineCreateInfo-stage-02096). Created without
++    * one (pStages with only a fragment shader, or a link whose libraries and
++    * own pStages give none), it binds with no vertex shader, and KosmicKrisp
++    * dereferences that at vkCmdBindPipeline (STEAMAC-AH: the VM process
++    * faulted). Fail its creation: Venus creates pipelines asynchronously, so
++    * virglrenderer keeps a placeholder whose draws it drops, and the log
++    * names what the pipeline was given. */
++   if (!is_library) {
++      VkShaderStageFlags linked_stages = 0;
++      for (uint32_t i = 0; i < compile_info.stage_count; i++)
++         linked_stages |= mesa_to_vk_shader_stage(compile_info.stages[i].stage);
++      if (!(linked_stages & (VK_SHADER_STAGE_VERTEX_BIT |
++                             VK_SHADER_STAGE_MESH_BIT_EXT))) {
++         const VkPipelineLibraryCreateInfoKHR *libs_info =
++            vk_find_struct_const(pCreateInfo->pNext,
++                                 PIPELINE_LIBRARY_CREATE_INFO_KHR);
++         const VkGraphicsPipelineLibraryCreateInfoEXT *gpl_info =
++            vk_find_struct_const(pCreateInfo->pNext,
++                                 GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT);
++         VkShaderStageFlags given_stages = 0;
++         for (uint32_t i = 0; i < pCreateInfo->stageCount; i++)
++            given_stages |= pCreateInfo->pStages[i].stage;
++         mesa_loge("vk: graphics pipeline without a vertex shader rejected: "
++                   "stages 0x%x, pStages 0x%x (%u), libraries %u, "
++                   "library flags %s0x%x, flags 0x%llx",
++                   linked_stages, given_stages, pCreateInfo->stageCount,
++                   libs_info != NULL ? libs_info->libraryCount : 0,
++                   gpl_info != NULL ? "" : "absent ",
++                   gpl_info != NULL ? gpl_info->flags : 0,
++                   (unsigned long long)pipeline_flags);
++         result = vk_error(device, VK_ERROR_UNKNOWN);
++         goto fail_stages;
++      }
++   }
++
+    if (bin_info != NULL && bin_info->binaryCount > 0) {
+       const uint32_t expected_binary_count = compile_info.retain_precomp ?
+          (2 * pCreateInfo->stageCount) : pCreateInfo->stageCount;
+-- 
+2.50.0

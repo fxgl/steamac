@@ -1,0 +1,61 @@
+From: steamac <steamac@fxgam.es>
+Subject: [PATCH] kk: retain the real slice for overflowing non-array 2D views
+
+STEAMAC-G sub-pattern A includes three requests for a single-layer 2D
+RGBA8 image, extent 1920x288 or 1952x288, flags 0x8, usage 0x480097,
+with a 2D view of mips 0+1 and layers 0+65536. Patch 0065 rejects these;
+Venus creates views asynchronously so the next vkCmdBeginRendering fails
+an object-type-14 lookup and kills the guest context.
+
+A non-array 2D view of a single-layer 2D image can only address its one
+real slice. Normalize an explicit count greater than one to that slice
+before common Vulkan initialization and Metal's uint16 narrowing. Do not
+change empty ranges, non-zero base layers, arrays, 3D views or REMAINING.
+No format or backing allocation is substituted.
+
+Zink's create_ivci forms layerCount as 1 + last_layer - first_layer,
+where pipe_surface's layers are 16-bit; last_layer == 65535 produces the
+captured 65536 without a protocol width conversion. Its resource usage
+construction also produces the captured HOST_TRANSFER/FEEDBACK_LOOP mask.
+The guest process and the cause of the bad pipe_surface remain unproven;
+this is a safe host recovery, not a claim to fix that guest producer.
+
+Repro: image_views.c, sentry-wide-1920 / sentry-wide-1952 and a usage-pNext
+control. The baseline returns VK_ERROR_FORMAT_NOT_SUPPORTED. With this
+patch each creates, clears via dynamic rendering and reads back every
+RGBA8 byte under Metal API validation. All thirteen original cases pass.
+
+Generated-by: LLM
+---
+--- a/src/kosmickrisp/vulkan/kk_image_view.c
++++ b/src/kosmickrisp/vulkan/kk_image_view.c
+@@ -55,6 +55,29 @@
+ {
+    VK_FROM_HANDLE(kk_image, image, pCreateInfo->image);
+    const VkImageSubresourceRange *range = &pCreateInfo->subresourceRange;
++
++   /* A non-array 2D view of a single-layer 2D image can only name that one
++    * slice. Zink can send 65536 when a uint16_t last_layer underflows. Keep
++    * the real slice rather than narrowing the count to zero in Metal or
++    * failing an asynchronous Venus object creation. Do not manufacture a
++    * slice for empty ranges, or change array and 3D view semantics. */
++   VkImageViewCreateInfo normalized_info;
++   if (image->vk.image_type == VK_IMAGE_TYPE_2D &&
++       image->vk.array_layers == 1 &&
++       pCreateInfo->viewType == VK_IMAGE_VIEW_TYPE_2D &&
++       range->baseArrayLayer == 0 && range->layerCount > 1 &&
++       range->layerCount != VK_REMAINING_ARRAY_LAYERS) {
++      char app[256];
++      kk_device_app_name(dev, app, sizeof(app));
++      mesa_loge("kk: %s: clamping non-array image view layers %u to 1 "
++                "(image %ux%u, format %u, view format %u)",
++                app, range->layerCount, image->vk.extent.width,
++                image->vk.extent.height, image->vk.format, pCreateInfo->format);
++      normalized_info = *pCreateInfo;
++      normalized_info.subresourceRange.layerCount = 1;
++      pCreateInfo = &normalized_info;
++      range = &pCreateInfo->subresourceRange;
++   }
+ 
+    /* Mesa's common initializer resolves REMAINING_* but only asserts validity.
+     * In release builds an empty range (including base == size with REMAINING)
