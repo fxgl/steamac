@@ -212,6 +212,9 @@
 # encoder_shapes.c (KosmicKrisp only; STEAMAC-74/73): with MESA_KK_DEBUG=shapes (Apple9+ logs without it) each
 # render encoder shape is logged once per thread: 100 shapes over 30 frames must log exactly the lines of one frame
 # (0073's direct-mapped cache logged 2275 render shape lines), and 300 shapes stop at 256 with one note.
+# sentry-ah-no-vertex.c (KosmicKrisp only; STEAMAC-AH): a graphics pipeline without a vertex shader (fragment
+# shader only) must fail creation instead of faulting the process (the bind dereferenced the missing vertex
+# shader); a vertex + fragment control draws every pixel green.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -287,6 +290,13 @@ fi
 if [ "${REPRO_CASE:-}" = sentry-g-brackets ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-g-brackets requires KosmicKrisp" >&2; exit 2; }
 	exec "$here/sentry-g-brackets.sh" "$kk"
+fi
+if [ "${REPRO_CASE:-}" = sentry-ah ]; then
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-ah-no-vertex -I"$work"
+	"$work/sentry-ah-no-vertex"
+	exit
 fi
 
 src=$work/gamescope
@@ -580,6 +590,12 @@ if [ "$driver" = kosmickrisp ]; then
 
 	# STEAMAC-G: Metal's 256-level parser limit, deep divergent control flow and jumps.
 	"$here/sentry-g-brackets.sh" "$kk"
+
+	# STEAMAC-AH: a graphics pipeline without a vertex shader must fail creation.
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-ah-no-vertex -I"$work"
+	"$work/sentry-ah-no-vertex"
 
 	# STEAMAC-6H/6G: unused NULL sets and missing descriptor declarations.
 	build sentry_descriptors
