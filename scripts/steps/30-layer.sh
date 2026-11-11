@@ -103,6 +103,8 @@ for f in usr/bin/splctl usr/lib/rauc/post-install.sh usr/lib/steamac/kernelsetup
     bash -n "$ST/$f"
 done
 # steam-gfx-path's Python helper (Proton Experimental as Steam's default tool while DXMT is on).
+[[ -x $ST/usr/lib/steamac/steam-native-resolution && -x $ST/usr/lib/steamac/steam-idle-screensaver ]] \
+    || { echo "[layer] Steam display defaults helpers missing or not executable" >&2; exit 1; }
 [[ -x $ST/usr/lib/steamac/steam-compat-default ]] \
     || { echo "[layer] usr/lib/steamac/steam-compat-default missing or not executable" >&2; exit 1; }
 [[ -x $ST/usr/lib/steamac/steam-dxmt-arm64ec ]] \
