@@ -123,7 +123,7 @@ final class HIDPassthrough {
     }
 
     private var manager: IOHIDManager?
-    /// Whether to match Valve's Steam Controllers (the BLE controller and its Puck): their
+    /// Whether to match Valve's Steam Controllers (USB, BLE and Puck): their
     /// descriptors have keyboard/mouse collections, so matching them triggers the Input
     /// Monitoring prompt. Only Auto / Steam Controller pass them through.
     var matchSteamControllers = false {
@@ -636,6 +636,12 @@ final class HIDPassthrough {
     /// A Steam Controller (itself, or a Puck slot) — whether or not it can be passed through now.
     static func isSteamController(_ d: Device) -> Bool {
         d.puckSlot != nil || steamControllers.contains { $0.vendor == Int(d.identity.vendor) && $0.product == Int(d.identity.product) }
+    }
+
+    /// The physical USB-wired controller, not a Puck slot with the same guest identity.
+    static func isUSBSteamController(_ d: Device) -> Bool {
+        !d.generic && d.puckSlot == nil && d.identity.bus == busUSB
+            && d.identity.vendor == 0x28de && d.identity.product == wiredSteamController
     }
 
     /// A Steam Controller to pass through now: connected, and for a Puck slot, sending state.
