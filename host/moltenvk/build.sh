@@ -139,6 +139,20 @@
 #   logging, and explain how to enable status/shader capture when absent.
 #   sentry_ag_gpu uses synthetic Metal error records to test the real formatter;
 #   it does not induce a GPU fault or claim to reproduce/fix the Story-mode hang.
+#   SPIRV-Cross 0061 (STEAMAC-AS): Metal has no threadgroup atomic_float. The
+#   captured shader needs atomic stores, loads and float adds, not only stores.
+#   Keep logical float storage; use atomic_uint bitcasts and a CAS loop for FAdd.
+#   Device atomic_float stays native. sentry-as-shared-float.sh fails before and
+#   passes after in MSL 2.4/3/4, checking 512 contended GPU adds, original values,
+#   NaN termination, signed zero, exchange and ordinary shared accesses.
+#   SPIRV-Cross 0062 (STEAMAC-AV, appid 3489700): the object-stage vertex fetch
+#   cast a single packed_half2 to an entire float2[2] input. Recurse through
+#   array elements/matrix columns, fetching each location's own format and binding.
+#   sentry-av-array-input.sh reproduces that error before and checks all three
+#   vertex payloads after, with separate offsets/strides and half/float/normalized/
+#   packed formats, in MSL 3 and 4. Neither report retained original SPIR-V.
+#   STEAMAC-57's new 33024-byte recurrence is NOT the vec3-padding case fixed by
+#   0057: float2[2752] + float[2752] genuinely exceeds the 32768-byte limit.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -544,6 +558,10 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         (STEAMAC-A9); nested unpacking helpers preserve all decoded channels"
 	echo "  0060 = steamac: emit geometry mesh ClipDistance user(clipN) copies alongside"
 	echo "         native clip_distance arrays (STEAMAC-A2); block/native-only paths preserved"
+	echo "  0061 = steamac: emulate Workgroup float atomic load/store/exchange with uint bits"
+	echo "         and float FAdd with a CAS loop (STEAMAC-AS); device atomic_float unchanged"
+	echo "  0062 = steamac: fetch array/matrix vertex inputs one location at a time"
+	echo "         with each location's binding/offset/format (STEAMAC-AV, half2[2])"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

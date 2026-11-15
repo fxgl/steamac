@@ -1,0 +1,5 @@
+#version 450
+#extension GL_EXT_shader_atomic_float : require
+layout(local_size_x=1) in;
+layout(set=0,binding=0,std430) buffer Counter { float value; float previous; } counter;
+void main() { counter.previous = atomicAdd(counter.value, 0.5); }
