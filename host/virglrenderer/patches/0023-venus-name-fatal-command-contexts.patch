@@ -1,0 +1,108 @@
+From: steamac <steamac@fxgam.es>
+Date: Sun, 15 Nov 2026 15:00:00 +0000
+Subject: [PATCH] venus: identify contexts in fatal command and object lookup logs
+
+STEAMAC-G/A rejects incompatible image views and later loses a guest
+context asynchronously. The final command-stream error and missing-object
+lines identify neither context nor guest process. Nearby explorer.exe
+teardown is not evidence that its context sent the invalid image view;
+Xwayland/glamor may be a separate Vulkan client.
+
+Append the renderer context ID and its debug name to dispatch diagnostics
+(including the first fatal command and suppressed-bystander report) and
+all failed object lookup variants. Preserve the existing diagnostic text
+and fatal/lenient-destroy behavior. Decoders borrow the owning context's
+immutable debug name, already alive until after the decoders are freed;
+there is no extra allocation or log on a successful lookup.
+
+Regression: host/virglrenderer/test/context-diagnostics.py uses the
+renderer API and in-process server, no VM. Two contexts named Xwayland and
+explorer.exe use the same missing command-buffer ID, and a third has an
+invalid reply stream. Before: all five fatal/lookup lines lack identity
+and the regression fails. After: all five identify their correct context.
+
+Generated-by: LLM
+---
+diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
+index 02fbf952..e81f4ed7 100644
+--- a/src/venus/vkr_context.c
++++ b/src/venus/vkr_context.c
+@@ -66,8 +66,9 @@ vkr_context_remove_instance(struct vkr_context *ctx, struct vkr_instance *instan
+ }
+ 
+ static void
+-vkr_dispatch_debug_log(UNUSED struct vn_dispatch_context *dispatch, const char *msg)
++vkr_dispatch_debug_log(struct vn_dispatch_context *dispatch, const char *msg)
+ {
++   const struct vkr_context *ctx = dispatch->data;
+    /* vn_dispatch_command logs "<command> resulted in CS error" whenever the shared fatal
+     * flag is set after the command, also when another thread set it meanwhile (a long
+     * vkCreateGraphicsPipelines is the usual bystander).  Only the thread that made the
+@@ -77,12 +78,14 @@ vkr_dispatch_debug_log(UNUSED struct vn_dispatch_context *dispatch, const char *
+    const size_t len = strlen(msg);
+    if (!vkr_fatal_raised_here && len > sizeof(cs_error) - 1 &&
+        !strcmp(msg + len - (sizeof(cs_error) - 1), cs_error)) {
+-      vkr_log("%.*s stopped: the context went fatal on another thread",
+-              (int)(len - (sizeof(cs_error) - 1)), msg);
++      vkr_log("%.*s stopped: the context went fatal on another thread "
++              "[context %u (%s)]",
++              (int)(len - (sizeof(cs_error) - 1)), msg,
++              ctx->ctx_id, ctx->debug_name);
+       return;
+    }
+ 
+-   vkr_log("%s", msg);
++   vkr_log("%s [context %u (%s)]", msg, ctx->ctx_id, ctx->debug_name);
+ }
+ 
+ /* The object type a vkDestroy* / vkFree* command destroys (not the device or instance,
+diff --git a/src/venus/vkr_cs.c b/src/venus/vkr_cs.c
+index a9e3f098..c50ebd45 100644
+--- a/src/venus/vkr_cs.c
++++ b/src/venus/vkr_cs.c
+@@ -56,6 +56,8 @@ vkr_cs_decoder_init(struct vkr_cs_decoder *dec, struct vkr_context *ctx)
+    dec->fatal_error = &ctx->cs_fatal_error;
+    dec->object_table = ctx->object_table;
+    dec->object_mutex = &ctx->object_mutex;
++   dec->ctx_id = ctx->ctx_id;
++   dec->debug_name = ctx->debug_name;
+    return mtx_init(&dec->resource_mutex, mtx_plain);
+ }
+ 
+diff --git a/src/venus/vkr_cs.h b/src/venus/vkr_cs.h
+index f7c88754..0baae40a 100644
+--- a/src/venus/vkr_cs.h
++++ b/src/venus/vkr_cs.h
+@@ -64,6 +64,10 @@ struct vkr_cs_decoder {
+    const struct hash_table *object_table;
+    mtx_t *object_mutex;
+ 
++   /* Borrowed from the owning context; its decoders are destroyed first. */
++   uint32_t ctx_id;
++   const char *debug_name;
++
+    bool *fatal_error;
+    struct vkr_cs_decoder_temp_pool temp_pool;
+ 
+@@ -325,14 +329,17 @@ vkr_cs_decoder_lookup_object(const struct vkr_cs_decoder *dec,
+    mtx_unlock(dec->object_mutex);
+    if (unlikely(!obj || obj->type != type)) {
+       if (obj) {
+-         vkr_log("object %" PRIu64 " has type %d, not %d", id, obj->type, type);
++         vkr_log("object %" PRIu64 " has type %d, not %d [context %u (%s)]",
++                 id, obj->type, type, dec->ctx_id, dec->debug_name);
+       } else if (type == dec->lenient_type) {
+          vkr_log("object %" PRIu64 " of type %d to destroy does not exist (its creation "
+-                 "failed on the host); ignored",
+-                 id, type);
++                 "failed on the host); ignored [context %u (%s)]",
++                 id, type, dec->ctx_id, dec->debug_name);
+          return NULL;
+       } else {
+-         vkr_log("failed to look up object %" PRIu64 " of type %d", id, type);
++         vkr_log("failed to look up object %" PRIu64 " of type %d "
++                 "[context %u (%s)]",
++                 id, type, dec->ctx_id, dec->debug_name);
+       }
+       vkr_cs_decoder_set_fatal(dec);
+    }
