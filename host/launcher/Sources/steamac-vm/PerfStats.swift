@@ -221,6 +221,7 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
     private var samples: [String] = []
     private let device = MTLCreateSystemDefaultDevice()
     private let regionDiagnostics = MemoryRegionDiagnostics()
+    private var instrumentation = MetalInstrumentation()
     private typealias VulkanStats = @convention(c) (UnsafeMutablePointer<UInt64>) -> Void
     private let vulkanStats: VulkanStats? = {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "virgl_steamac_memory_stats") else { return nil }
@@ -247,6 +248,10 @@ final class VMMemoryDiagnostics: @unchecked Sendable {
     }
 
     private func sample() {
+        if let changed = instrumentation.sample() {
+            log("Metal instrumentation loaded: \(changed.tag); dyld images: \(changed.images.isEmpty ? "none" : changed.images.joined(separator: ","))")
+            CrashReporting.metalInstrumentationChanged(changed.tag)
+        }
         let host = CrashReporting.HostMemory.current()
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)

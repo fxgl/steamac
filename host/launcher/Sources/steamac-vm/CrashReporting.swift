@@ -364,6 +364,7 @@ enum CrashReporting {
             "metal_cache": MetalCompilerCache.outcome,
         ]
         context.merge(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD)) { _, new in new }
+        context["metal_instrumentation"] = MetalInstrumentation.current().tag
         vmContext(context)
         let kernel = options.kernel
         guard !kernel.isEmpty else { return }
@@ -381,7 +382,7 @@ enum CrashReporting {
         }
         guard role == .vm, let dir = Supervisor.runDir else { return }
         let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache",
-                    "metal_hud", "metal_hud_injected", "metal_hud_requested", "metal_hud_driver"]
+                    "metal_hud", "metal_hud_injected", "metal_hud_requested", "metal_hud_driver", "metal_instrumentation"]
         let snapshot = locked { tags.filter { keys.contains($0.key) } }
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) {
             try? data.write(to: URL(fileURLWithPath: dir + "/sentry-tags.json"), options: .atomic)
@@ -393,6 +394,12 @@ enum CrashReporting {
     static func metalHUDChanged() {
         guard configured, role == .vm else { return }
         vmContext(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD))
+    }
+
+    /// The serial VM memory timer observes dyld changes even when the HUD setting did not change.
+    static func metalInstrumentationChanged(_ summary: String) {
+        guard configured, role == .vm else { return }
+        vmContext(["metal_instrumentation": summary])
     }
 
     /// VM process: the game that has the guest's focus (`appid` tag of both processes' events

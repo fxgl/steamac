@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import MachO
 
 /// libMTLHud installs completion handlers independently of the layer's visibility. Loading it
 /// is a per-boot opt-in; hiding cannot unload its handlers (STEAMAC-59/7K/7Q/9X/9Y).
@@ -93,6 +94,82 @@ enum MetalHUD {
                 }
             }
         }
+        return failures
+    }
+}
+
+/// Actual dyld state, independent of our HUD injection request. Xcode, environment settings,
+/// or Apple's tooling can load Metal interposers even when the launcher's HUD is off.
+struct MetalInstrumentation {
+    struct Snapshot: Equatable {
+        let tag: String
+        let images: [String]
+    }
+    private var previous: Snapshot?
+
+    private static func category(_ name: UnsafePointer<CChar>) -> UInt8 {
+        if strcmp(name, "libMTLHud.dylib") == 0 { return 1 }
+        if strcmp(name, "libMetalMetricsInterpose.dylib") == 0 { return 2 }
+        if strstr(name, "MTLDebugLayer") != nil || strstr(name, "MetalDebug") != nil { return 4 }
+        if strstr(name, "MTLCapture") != nil || strstr(name, "MetalCapture") != nil { return 8 }
+        return 0
+    }
+
+    private static func tag(_ categories: UInt8) -> String {
+        var result = ""
+        if categories & 1 != 0 { result = "hud" }
+        if categories & 2 != 0 { result += (result.isEmpty ? "" : ",") + "metrics" }
+        if categories & 4 != 0 { result += (result.isEmpty ? "" : ",") + "debug" }
+        if categories & 8 != 0 { result += (result.isEmpty ? "" : ",") + "capture" }
+        return result.isEmpty ? "none" : result
+    }
+
+    static func current() -> Snapshot {
+        var categories: UInt8 = 0
+        var images: [String] = []
+        for index in 0..<_dyld_image_count() {
+            guard let path = _dyld_get_image_name(index) else { continue }
+            let name = strrchr(path, 47).map { UnsafePointer($0.advanced(by: 1)) } ?? path
+            let bit = category(name)
+            guard bit != 0 else { continue }
+            categories |= bit
+            let image = String(cString: name)
+            if !images.contains(image) { images.append(image) }
+        }
+        return Snapshot(tag: tag(categories), images: images.sorted())
+    }
+
+    mutating func update(_ snapshot: Snapshot) -> Snapshot? {
+        guard previous != snapshot else { return nil }
+        previous = snapshot
+        return snapshot
+    }
+
+    mutating func sample() -> Snapshot? { update(Self.current()) }
+
+    static func selfCheck() -> [String] {
+        var failures: [String] = []
+        let cases: [(String, UInt8)] = [
+            ("libMTLHud.dylib", 1), ("libMetalMetricsInterpose.dylib", 2),
+            ("MTLDebugLayer", 4), ("libMTLCapture.dylib", 8), ("MetalCapture", 8),
+            ("Metal", 0), ("MetalPerformanceShaders", 0), ("libvulkan_kosmickrisp.dylib", 0),
+        ]
+        for (name, expected) in cases {
+            if name.withCString({ category($0) }) != expected { failures.append("instrumentation image classification: \(name)") }
+        }
+        if tag(3) != "hud,metrics" || tag(15) != "hud,metrics,debug,capture" || tag(0) != "none" {
+            failures.append("instrumentation category tag ordering")
+        }
+        var monitor = MetalInstrumentation()
+        let none = Snapshot(tag: "none", images: [])
+        let metrics = Snapshot(tag: "metrics", images: ["libMetalMetricsInterpose.dylib"])
+        if monitor.update(none) != none || monitor.update(none) != nil
+            || monitor.update(metrics) != metrics || monitor.update(metrics) != nil
+            || monitor.update(none) != none {
+            failures.append("instrumentation change-only logging gate")
+        }
+        let live = current()
+        if live.images.contains(where: { $0.contains("/") }) { failures.append("instrumentation diagnostic exposes paths") }
         return failures
     }
 }

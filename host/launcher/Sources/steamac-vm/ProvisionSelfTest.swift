@@ -18,6 +18,8 @@ enum ProvisionSelfTest {
         check(memoryFailures.isEmpty, "host memory-region diagnostics: \(memoryFailures)")
         let gameModeFailures = GameModeDiagnostics.selfCheck()
         check(gameModeFailures.isEmpty, "Game Mode eligibility diagnostics (STEAMAC-9V): \(gameModeFailures)")
+        let instrumentationFailures = MetalInstrumentation.selfCheck()
+        check(instrumentationFailures.isEmpty, "loaded Metal instrumentation diagnostics: \(instrumentationFailures)")
         for (name, host) in [
             ("hypervisor flag", VM.HostEnvironment(vmmPresent: 1, hypervisorSupported: 0, model: "Mac16,12", gpu: "Apple M4")),
             ("VirtualMac model", VM.HostEnvironment(vmmPresent: nil, hypervisorSupported: nil, model: "VirtualMac2,1", gpu: nil)),
