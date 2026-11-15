@@ -13,9 +13,10 @@
 #define CK(x) do { VkResult r = (x); if (r) { fprintf(stderr, "FAIL %s = %d\n", #x, r); exit(1); } } while (0)
 
 static void check_rendered_slice(VkPhysicalDevice pd, VkDevice dev,
-	VkImage image, VkImageView view, uint32_t width, uint32_t height)
+	VkImage image, VkImageView view, uint32_t width, uint32_t height, VkFormat format)
 {
-	const VkDeviceSize bytes = (VkDeviceSize)width * height * 4;
+	const unsigned channels = format == VK_FORMAT_R8_UNORM ? 1 : 4;
+	const VkDeviceSize bytes = (VkDeviceSize)width * height * channels;
 	VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = bytes, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT };
 	VkBuffer buffer;
@@ -87,15 +88,47 @@ static void check_rendered_slice(VkPhysicalDevice pd, VkDevice dev,
 	CK(vkInvalidateMappedMemoryRanges(dev, 1, &mapped));
 	const unsigned char expected[] = { 255, 0, 255, 255 };
 	for (VkDeviceSize i = 0; i < bytes; i++)
-		if (pixels[i] != expected[i % 4]) {
+		if (pixels[i] != expected[channels == 1 ? 0 : i % 4]) {
 			fprintf(stderr, "FAIL rendered slice byte %llu: %u expected %u\n",
-				(unsigned long long)i, pixels[i], expected[i % 4]);
+				(unsigned long long)i, pixels[i], expected[channels == 1 ? 0 : i % 4]);
 			exit(1);
 		}
 	vkUnmapMemory(dev, memory);
 	vkDestroyCommandPool(dev, pool, NULL);
 	vkDestroyBuffer(dev, buffer, NULL);
 	vkFreeMemory(dev, memory, NULL);
+}
+
+/* Compare the features Zink uses, including its exact captured image query.
+ * R8 is not emulated as RGBA8 by Zink: a missing host feature must be shown,
+ * rather than inferred from the two different formats in a rejected view. */
+static void probe_formats(VkPhysicalDevice pd)
+{
+	const VkFormat formats[] = { VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
+	for (unsigned f = 0; f < 2; f++) {
+		VkFormatProperties3 p3 = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+		VkFormatProperties2 p2 = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &p3 };
+		vkGetPhysicalDeviceFormatProperties2(pd, formats[f], &p2);
+		printf("format %u: linear=0x%llx optimal=0x%llx buffer=0x%llx\n", formats[f],
+			(unsigned long long)p3.linearTilingFeatures,
+			(unsigned long long)p3.optimalTilingFeatures,
+			(unsigned long long)p3.bufferFeatures);
+		for (unsigned tiling = 0; tiling < 2; tiling++) {
+			VkPhysicalDeviceImageFormatInfo2 info = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+				.format = formats[f], .type = VK_IMAGE_TYPE_2D, .tiling = tiling,
+				.usage = 0x480097, .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT };
+			VkHostImageCopyDevicePerformanceQueryEXT perf = {
+				VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT };
+			VkImageFormatProperties2 props = { VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, .pNext = &perf };
+			VkResult result = vkGetPhysicalDeviceImageFormatProperties2(pd, &info, &props);
+			printf("format %u: tiling=%u usage=0x480097 flags=0x8 result=%d "
+				"extent=%ux%u layers=%u mips=%u samples=0x%x optimal=%u identical=%u\n",
+				formats[f], tiling, result, props.imageFormatProperties.maxExtent.width,
+				props.imageFormatProperties.maxExtent.height, props.imageFormatProperties.maxArrayLayers,
+				props.imageFormatProperties.maxMipLevels, props.imageFormatProperties.sampleCounts,
+				perf.optimalDeviceAccess, perf.identicalMemoryLayout);
+		}
+	}
 }
 
 static int run_case(const char *name)
@@ -111,6 +144,11 @@ static int run_case(const char *name)
 	uint32_t n = 1;
 	VkPhysicalDevice pd;
 	CK(vkEnumeratePhysicalDevices(instance, &n, &pd));
+	if (!strcmp(name, "format-features")) {
+		probe_formats(pd);
+		vkDestroyInstance(instance, NULL);
+		return 0;
+	}
 	float priority = 1;
 	VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = 1, .pQueuePriorities = &priority };
 	const char *extensions[] = { VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
@@ -135,9 +173,18 @@ static int run_case(const char *name)
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
 		.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT };
 	if (sentry) {
-		ci.extent = (VkExtent3D){ strstr(name, "1952") ? 1952 : 1920, 288, 1 };
+		ci.extent = (VkExtent3D){ strstr(name, "1952") ? 1952 : strstr(name, "1664") ? 1664 : 1920, 288, 1 };
 		ci.mipLevels = ci.arrayLayers = 1;
 		ci.usage = 0x480097;
+	}
+	if (strstr(name, "r8-control")) ci.format = VK_FORMAT_R8_UNORM;
+	const int bc3 = strstr(name, "bc3") != NULL;
+	if (bc3) {
+		ci.format = VK_FORMAT_BC3_UNORM_BLOCK;
+		ci.extent = (VkExtent3D){ 16, 16, 1 };
+		ci.mipLevels = ci.arrayLayers = 1;
+		ci.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		if (strstr(name, "block")) ci.flags |= VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT;
 	}
 	VkImage image;
 	CK(vkCreateImage(dev, &ci, NULL, &image));
@@ -172,6 +219,11 @@ static int run_case(const char *name)
 			strstr(name, "wide") ? 65536 : 1 };
 		if (strstr(name, "usage")) vi.pNext = &usage;
 	}
+	if (bc3) {
+		vi.subresourceRange = (VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		vi.format = strstr(name, "rgba32") ? VK_FORMAT_R32G32B32A32_UINT :
+			strstr(name, "rgba8") ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_BC3_SRGB_BLOCK;
+	}
 	fprintf(stderr, "image_views: %s\n", name);
 	VkImageView view = VK_NULL_HANDLE;
 	VkResult result = vkCreateImageView(dev, &vi, NULL, &view);
@@ -181,7 +233,7 @@ static int run_case(const char *name)
 		return 1;
 	}
 	if (result == VK_SUCCESS) {
-		if (sentry) check_rendered_slice(pd, dev, image, view, ci.extent.width, ci.extent.height);
+		if (sentry) check_rendered_slice(pd, dev, image, view, ci.extent.width, ci.extent.height, ci.format);
 		vkDestroyImageView(dev, view, NULL);
 	}
 	vkDestroyImage(dev, image, NULL);
@@ -199,7 +251,9 @@ int main(int argc, char **argv)
 		"invalid-zero-2d", "invalid-end-2d", "invalid-past-2d", "invalid-wide-2d",
 		"invalid-zero-3d", "invalid-end-3d", "invalid-past-3d", "invalid-format-2d",
 		"sentry-wide-1920", "sentry-wide-1952", "sentry-wide-usage-1920",
-		"invalid-sentry-format-1920", "invalid-sentry-format-1952", "invalid-sentry-format-usage-1920" };
+		"invalid-sentry-format-1920", "invalid-sentry-format-1952", "invalid-sentry-format-usage-1920",
+		"sentry-r8-control-1664", "sentry-r8-control-1920", "sentry-r8-control-1952",
+		"invalid-bc3-rgba8", "invalid-bc3-block-rgba8", "bc3-srgb", "bc3-block-rgba32" };
 	int failed = 0;
 	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		pid_t child = fork();

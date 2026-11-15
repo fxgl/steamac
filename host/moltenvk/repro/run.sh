@@ -307,6 +307,11 @@ if [ "${REPRO_CASE:-}" = sentry-g-brackets ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-g-brackets requires KosmicKrisp" >&2; exit 2; }
 	exec "$here/sentry-g-brackets.sh" "$kk"
 fi
+if [ "${REPRO_CASE:-}" = sentry-g-views ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-g-views requires KosmicKrisp" >&2; exit 2; }
+	build image_views
+	exec python3 "$here/image-view-diagnostics.py" "$work/image_views"
+fi
 if [ "${REPRO_CASE:-}" = sentry-ah ]; then
 	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
 	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
@@ -565,7 +570,7 @@ build d3d12_caps
 
 if [ "$driver" = kosmickrisp ]; then
 	build image_views
-	"$work/image_views"
+	python3 "$here/image-view-diagnostics.py" "$work/image_views"
 	build linear_images
 	"$work/linear_images"
 
