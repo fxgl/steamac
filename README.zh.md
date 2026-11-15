@@ -18,6 +18,7 @@ Metal 4 上的 Vulkan 驱动）是 macOS 26+ 上的实验性替代（见“Vulka
 ## 要求
 
 - Apple Silicon Mac，macOS 15+，约 150 GB 可用空间（磁盘映像为稀疏文件）。
+  启动器需要 Mac 本机的 Hypervisor.framework：在 macOS 虚拟机内（Paravirtual GPU、`kern.hv_vmm_present`）或没有 `kern.hv_support` 时，它会说明原因并在启动虚拟机前退出，而不是上报 libkrun 的 `krun_start_enter failed: -22`（STEAMAC-15）。
 - Xcode 26+（完整安装：其 `actool` 从 Icon Composer 文档构建应用图标）、Homebrew、rustup。
 - KosmicKrisp（可选，替代 Vulkan 驱动）：仅在 macOS 26+ 上构建；`host/kosmickrisp/build.sh`
   会安装其 Homebrew 依赖（`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`）。
@@ -148,6 +149,7 @@ steam-download`）；经 显示 → 显示启动进度收起的则保持小条�
 `--perf-stats` 下每 5 秒加一行 `perf: gpu ctrl/s=… ring/s=… longest-idle=…`。在 设置 > 通用中关闭。代理跑在每个
 gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换到桌面、返回游戏模式），在新会话代理发来心跳前不期待心跳；虚拟机挂起或睡眠期间指示器关闭，恢复、客户机唤醒与 Mac 睡眠后，空闲与心跳计时重来。
 每次检查在同一时刻取 GPU 空闲时间与心跳时长，因此被 Mac 自身延迟（换页、主线程繁忙）的检查不会只让心跳“变老”而报告无响应（STEAMAC-8）。
+“回收磁盘空间”的确认、错误与结果对话框改为表单或独立窗口，不再以模态循环阻塞（接收心跳的）主队列（STEAMAC-8）。
 
 | 窗口中的按键 | |
 |---|---|
@@ -605,6 +607,7 @@ work/out/steamac-vm --create-disk ~/steamos.img [--branch stable] [--home-gib 64
 预期存储错误（目标已存在、缓存正被使用、只读卷、没有写入权限、空间耗尽、磁盘断开、创建过程中磁盘或缓存文件夹消失或文件系统 I/O 错误）
 会显示处理建议并只记日志，不作为错误发送到 Sentry；创建开始后的错误也遵循此规则。元数据/包下载的网络错误
 （离线、DNS、超时、连接中断和系统 TLS 验证拒绝）与 desync 重试耗尽一样处理，包括读取分块 HTTP 响应正文时超时（STEAMAC-92），绝不绕过 HTTPS 证书验证。若 desync 无法把分块存入缓存（exFAT 缓存上的 `invalid argument`，STEAMAC-90/91），日志会记录出错缓存分片的状态（模式、条目与临时文件数、读取错误）以便诊断。
+不是 JSON 的元数据响应（空、截断、门户或代理的 HTML 页面）与 HTTP 拒绝同样处理，并在日志中记录 HTTP 状态、Content-Type、长度和前 160 字节（STEAMAC-AQ：`stable.json` 的 `NSCocoaErrorDomain 3840`）；JSON 合法但结构不兼容时仍会上报。
 非预期创建错误和包签名错误仍会上报，事件详情保留原始诊断。若内置的 desync 缺失、不可读或不可执行（STEAMAC-8K），窗口会说明安装不完整：请从官方 DMG 重新安装到“应用程序”，并检查安全软件。每次安装只发送一条警告，记录 translocation、desync 的存在与权限、代码签名结果以及 Resources 中相对于包的文件名与大小；包的绝对路径只留在本地日志中，不打开崩溃报告对话框。
 警告还记录应用包、`Contents` 和 `Resources` 是否仍然存在（类型和 errno）：应用在运行时被移动、删除或替换会让三者全部消失（STEAMAC-AE），因此建议在替换或移动前完全退出 FX Steam Launcher，然后从“应用程序”重新打开。
 启动器记录目标和缓存的文件系统类型。缓存分块重命名冲突时，以单工作线程、不使用缓存重试一次。
@@ -693,6 +696,8 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。嵌套超过 128 层的分支改为带已保存条件的并列块输出，因为 Metal 拒绝括号嵌套超过 256 层的源码（STEAMAC-G 报告；`sentry-g-brackets.sh` 在 GPU 上校验 320 路发散分支阶梯）。对可复现的 KosmicKrisp 卡顿，启动 macOS 启动器时（而不是作为游戏参数）设置 `MESA_KK_DEBUG=syncs,cbs`，会追踪队列同步以及每次超过一秒的 CPU 等待（STEAMAC-94）。源缓冲或目标缓冲为 NULL 的缓冲复制会被跳过并仅警告一次，而不是让虚拟机进程崩溃（Dota 2，STEAMAC-9S/9T；`host/kosmickrisp/test/copy-buffer-null.py`）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。Workgroup（共享内存）数组中的 `vec3` 成员按 Vulkan 填充规则所计的大小紧凑存放，968 个 `{float; vec3; float}` 只需 19360 字节，而不是 Metal 布局下超过 32768 的 46464 字节（STEAMAC-57）。同一 Location 上比片段输入更窄的顶点输出（float3 → float4）会加宽到输入宽度；缺失的 varying 与不同数值类型仍不支持（STEAMAC-2M/88）。名为 `rgb9e5` 的着色器函数会被重命名，以免与 Metal 的 `rgb9e5` 像素类型冲突（STEAMAC-A9）；只写入 `ClipDistance` 的几何/网格阶段也会写入片段着色器读取的 `user(clip0)` 副本（STEAMAC-A2）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
 
 没有顶点着色器的图形管线创建失败（日志记录其阶段），而不是在绑定时使虚拟机进程崩溃（STEAMAC-AH；`REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh`）。单层 2D 图像的视图若层数溢出（Zink 的 `0+65536`），保留这一层，而不是让 GPU 上下文终止；格式不兼容的视图（RGBA8 图像、R8 视图）仍被拒绝，日志记录客户机应用和完整视图参数（STEAMAC-G）。指向上下文所没有资源的回复流仍是致命错误；virglrenderer 记录该资源是已从此上下文分离（及多久之前）、从未附加，还是不是共享内存（`host/virglrenderer/test/reply-resource.py`，STEAMAC-G）。MoltenVK：Red Dead Redemption 2 的 Vulkan 渲染器在 MoltenVK 不提供管线统计查询时仍创建此类查询池；现在它们会被创建并返回零（该特性仍关闭），不再失败并终止 GPU 上下文；超过 4096 个查询的时间戳池使用多个 Metal 采样缓冲；经 CPU 影子副本复制的宿主内存图像使用真实的纹素/块行距（AGX `bytes_per_row` 断言，STEAMAC-AG/G；`REPRO_CASE=sentry-ag`）。在 GPU 上失败的命令缓冲会记录其编码器与着色器。
+
+致命命令与对象查找失败的日志行会标明客户机上下文（编号与进程名），不必再根据相邻的 `destroying context … (explorer.exe)` 行猜测哪个上下文终止；被拒绝的图像视图还会记录实际格式特性和块兼容性（STEAMAC-G：Zink 的 RGBA8 图像上的 R8 视图仍被拒绝）。KosmicKrisp 在创建 Metal 编码器前记录其命令分配器、编码器与上传内存的有界峰值快照（`REPRO_CASE=command-allocator`）；启动器记录实际加载的 Apple Metal 工具库（`metal_instrumentation` 标签：关闭 HUD 时 `libMetalMetricsInterpose` 也可能通过 macOS 帧节奏机制加载），并在虚拟机占用 30 秒内增长超过 8 GiB 时记录一次 VM 标签分解（STEAMAC-AK/AP/AN/AX：占用从 52 GB 跳到 95 GB 后 IOGPU 命令存储分配失败，原因尚不明确）。MoltenVK：Metal 只支持设备内存上的浮点原子操作，工作组（`shared`）内存上的浮点原子操作改用 `atomic_uint` 位转换和比较交换循环模拟（STEAMAC-AS）；几何/曲面细分模拟中的顶点获取按 location 逐个读取数组与矩阵类型的顶点输入并使用各自格式（`half2[2]`，STEAMAC-AV）。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。

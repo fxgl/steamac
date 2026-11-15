@@ -18,6 +18,9 @@ Metal 4) is an experimental alternative on macOS 26+ (see “Vulkan driver”).
 ## Requirements
 
 - Apple Silicon Mac, macOS 15+, ~150 GB of free space (the disk image is sparse).
+  The launcher needs Hypervisor.framework on the Mac itself: inside a macOS virtual machine (Paravirtual GPU,
+  `kern.hv_vmm_present`) or without `kern.hv_support` it explains that and exits before starting the VM
+  instead of reporting libkrun's `krun_start_enter failed: -22` (STEAMAC-15).
 - Xcode 26+ (full installation: its `actool` builds the app icon from an Icon Composer document), Homebrew, rustup.
 - KosmicKrisp (optional, alternative Vulkan driver): built only on macOS 26+; `host/kosmickrisp/build.sh`
   installs its Homebrew dependencies (`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`).
@@ -168,7 +171,8 @@ Mode), no heartbeat is expected until the new session's agent sends one; while t
 asleep the indicator is off, and after resume, guest wake, and Mac sleep, idle and heartbeat timers
 start over. Each check measures GPU idle time and heartbeat age at one instant, so a check the Mac
 itself delayed (paging, a busy main thread) does not age only the heartbeat into “not responding”
-(STEAMAC-8).
+(STEAMAC-8). The Reclaim Disk Space confirmation, error and result dialogs are sheets or separate windows, not
+modal loops that stop the main queue (which delivers heartbeats) while SteamOS runs.
 
 | Keys in the window | |
 |---|---|
@@ -889,7 +893,10 @@ full volume, disconnected drive, a destination or cache folder that disappears d
 filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
 connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries,
-including a timeout while reading a chunk's HTTP response body (STEAMAC-92). If desync cannot store a
+including a timeout while reading a chunk's HTTP response body (STEAMAC-92), and so does a metadata response
+that is not JSON (empty, truncated, an HTML portal or proxy page) or an HTTP rejection, logged with its HTTP
+status, Content-Type, length and first 160 bytes (STEAMAC-AQ: `NSCocoaErrorDomain 3840` from `stable.json`;
+valid JSON with an incompatible schema still reports). If desync cannot store a
 chunk in the cache (`invalid argument` on an exFAT cache, STEAMAC-90/91), the log records the failing
 cache shard's state (mode, entry and temporary-file counts, read errors) for diagnosis.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
@@ -1054,6 +1061,14 @@ killing the GPU context; a view in an incompatible format (RGBA8 image, R8 view)
 log names the guest application and the full view arguments (STEAMAC-G). A reply stream on a resource the
 context does not have stays fatal; virglrenderer logs whether it was detached from that context (and how
 long ago), never attached, or not shared memory (`host/virglrenderer/test/reply-resource.py`, STEAMAC-G).
+Fatal-command and failed-lookup lines name the guest context (id and process name), so the context that died is
+no longer guessed from neighbouring `destroying context … (explorer.exe)` lines; rejected image views also log the
+real format features and block compatibility (STEAMAC-G: R8 views of RGBA8 Zink images, still refused). Before
+creating Metal encoders KosmicKrisp logs bounded high-water snapshots of its command allocators, encoders and
+upload memory (`REPRO_CASE=command-allocator`), and the launcher records which Apple Metal instrumentation is
+loaded (`metal_instrumentation` tag: `libMetalMetricsInterpose` also loads through macOS frame pacing with the
+HUD off) and a VM-tag breakdown when the VM footprint grows by more than 8 GiB in 30 s (STEAMAC-AK/AP/AN/AX:
+an IOGPU command-storage allocation failed after the footprint jumped from 52 to 95 GB; cause not yet known).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -1082,6 +1097,10 @@ offer them; they are now created and return zeros (the feature stays off) instea
 the GPU context, timestamp pools larger than 4096 queries use several Metal sample buffers, and host-memory
 images copied through a CPU shadow use the real texel/block row pitch (the AGX `bytes_per_row` assertion,
 STEAMAC-AG/G; `REPRO_CASE=sentry-ag`). A command buffer that fails on the GPU logs its encoders and shaders.
+Floating-point atomics on workgroup (`shared`) memory, which Metal only offers on device memory, are emulated
+with `atomic_uint` bit casts and a compare-and-swap loop (STEAMAC-AS), and geometry/tessellation vertex
+fetch reads array- and matrix-typed vertex inputs one location at a time with each location's format
+(`half2[2]`, STEAMAC-AV; `sentry-as-shared-float.sh`, `sentry-av-array-input.sh`).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
