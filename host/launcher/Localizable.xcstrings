@@ -1183,6 +1183,22 @@
         }
       }
     },
+    "Can't download SteamOS information from Valve's servers. The response was empty, incomplete, or invalid. Check your internet connection, sign in to the network if required, or try without a VPN, proxy, or network filter, then try again. Technical details are in the launcher log." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить сведения о SteamOS с серверов Valve: получен пустой, неполный или некорректный ответ. Проверьте подключение к интернету, при необходимости войдите в сеть через страницу авторизации или отключите VPN, прокси либо сетевой фильтр и повторите попытку. Технические подробности — в журнале лаунчера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从 Valve 服务器下载 SteamOS 信息：响应为空、不完整或无效。请检查网络连接，按需登录网络认证页面，或关闭 VPN、代理或网络过滤器后重试。技术详情见启动器日志。"
+          }
+        }
+      }
+    },
     "Can't reach Valve's servers securely. A VPN, proxy, or network filter may be interfering; try without it or on another network. Technical details are in the launcher log." : {
       "localizations" : {
         "ru" : {
@@ -2774,6 +2790,22 @@
         }
       }
     },
+    "FX Steam Launcher cannot start SteamOS inside a macOS virtual machine. Nested virtualization is not supported. Run the launcher directly on your Mac, not inside a virtual machine." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher не может запустить SteamOS внутри виртуальной машины macOS: вложенная виртуализация не поддерживается. Запустите лаунчер непосредственно на Mac, а не в виртуальной машине."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher 无法在 macOS 虚拟机内启动 SteamOS：不支持嵌套虚拟化。请直接在 Mac 上运行启动器，而不是在虚拟机中运行。"
+          }
+        }
+      }
+    },
     "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n" : {
       "localizations" : {
         "ru" : {
@@ -3380,6 +3412,22 @@
       }
     },
     "H" : {},
+    "Hardware virtualization is unavailable on this system. FX Steam Launcher needs the macOS Hypervisor framework to start SteamOS. Run the launcher directly on a supported Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этой системе недоступна аппаратная виртуализация. Для запуска SteamOS FX Steam Launcher требуется фреймворк macOS Hypervisor. Запустите лаунчер непосредственно на поддерживаемом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此系统无法使用硬件虚拟化。FX Steam Launcher 需要 macOS Hypervisor 框架才能启动 SteamOS。请直接在受支持的 Mac 上运行启动器。"
+          }
+        }
+      }
+    },
     "Help" : {
       "comment" : "Application help menu",
       "localizations" : {

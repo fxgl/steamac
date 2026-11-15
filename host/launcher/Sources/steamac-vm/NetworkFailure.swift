@@ -10,6 +10,7 @@ enum NetworkFailure {
 
     /// Connectivity and system TLS failures are environmental; never weaken TLS to recover.
     static func isExpected(_ error: Error) -> Bool {
+        if error is DiskCreator.MetadataResponseFailure { return true }
         let e = error as NSError
         guard e.domain == NSURLErrorDomain else { return false }
         switch e.code {

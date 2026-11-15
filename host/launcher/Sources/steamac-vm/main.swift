@@ -73,6 +73,15 @@ if let disk = options.showSSHPassword {
     print("user \(GuestPassword.user)\npassword \(pw)\nstate \(state.rawValue)\ndisk \(id)")
     exit(0)
 }
+// Refuse before first-run disk creation, gvproxy, or libkrun startup. A VM's paravirtual GPU
+// can initialise Metal successfully while the nested Hypervisor API cannot create a guest.
+let hostEnvironment = VM.HostEnvironment.current
+log("virtualization host: \(hostEnvironment.diagnostic)")
+if let reason = hostEnvironment.rejection {
+    log("SteamOS startup refused: \(reason)")
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", reason) }
+    exit(CrashReporting.startupRejectedStatus)
+}
 // The process the user runs supervises one VM process per boot (see Supervisor); it re-reads
 // the settings before every boot.
 if !Supervisor.isChild {
