@@ -428,6 +428,31 @@
 #              teardown does not identify the failing context. Keep 0066's format rejection rather
 #              than return a view with unproven pixels or reintroduce Metal's assertion.
 #              Repro: image_views.c, incompatible 1920/1952x288 and usage-pNext controls.
+#   0096       steamac: diagnose command-allocator storage growth before Metal encoder creation,
+#              encoder end and command-buffer end (STEAMAC-AK/AP/AN/AX). Doubling process-wide
+#              high waters (64 MiB allocator heaps / 1024 KK encoders) include allocator identities
+#              and bytes, per-Metal-buffer encoder counts, whole-recording counts, upload/large
+#              BO bytes, pool cache counts, residency allocation count and last-committed bytes,
+#              and Metal resource bytes; MESA_KK_DEBUG=cbs logs every recording. Allocator storage
+#              is not fully included in MTLDevice.currentAllocatedSize. No reset/lifetime change:
+#              shared allocators can still back executable siblings. The reported IOGPU +512
+#              branch aborts after a pooled-resource allocation returns NULL, not the separate
+#              out-of-range resource-class assertion. Neither a KK leak nor a fixed slot limit
+#              is proven. On M1 Max, 1024 render/fill pairs use ~362 MB of allocator heaps but
+#              ~3.8 MB of Metal resources; repeated completed recordings plateau (~730 MB with
+#              two executable siblings). Repro: REPRO_CASE=command-allocator REPRO_DRIVER=kosmickrisp
+#              host/moltenvk/repro/run.sh <dylib>. Diagnostics fail before / pass after; no exact
+#              game-crash reproduction. libMetalMetricsInterpose can load through FramePacing
+#              even with MTL_HUD_ENABLED=0: this is not proof Apple's HUD was enabled.
+#   0098       steamac: rejected image views log the real image/view format features and
+#              differences, external-memory types, texel-block dimensions/sizes and the
+#              BLOCK_TEXEL_VIEW_COMPATIBLE flag (STEAMAC-G/A). On M1 Max R8/RGBA8 expose
+#              identical features and exact usage 0x480097 queries succeed; Zink has no
+#              R8 -> RGBA8 fallback. BC3 -> RGBA8 is incompatible even with the block-view
+#              flag (16 vs 4 bytes). No pixel substitution or change to view rejection.
+#              Repro: REPRO_CASE=sentry-g-views, 26 view cases including three real R8
+#              clear/readbacks at 1664/1920/1952x288, valid BC3 sRGB/16-byte block views,
+#              and diagnostic assertions that fail before / pass after 0098.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -658,6 +683,8 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0092 = steamac: reject graphics pipelines without a vertex shader, logged (STEAMAC-AH)"
 	echo "  0094 = steamac: overflowing non-array views of single-layer 2D images retain the real slice (STEAMAC-G)"
 	echo "  0095 = steamac: rejected image views identify their guest producer, full shape and pNext arguments"
+	echo "  0096 = steamac: bounded command-allocator/encoder/upload growth diagnostics before Metal calls (STEAMAC-AK/AP/AN/AX)"
+	echo "  0098 = steamac: rejected image views log real format features, external memory and block compatibility (STEAMAC-G)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
