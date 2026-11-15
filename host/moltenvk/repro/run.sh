@@ -307,6 +307,10 @@ if [ "${REPRO_CASE:-}" = sentry-g-brackets ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-g-brackets requires KosmicKrisp" >&2; exit 2; }
 	exec "$here/sentry-g-brackets.sh" "$kk"
 fi
+if [ "${REPRO_CASE:-}" = command-allocator ]; then
+	[ "$driver" = kosmickrisp ] || { echo "command-allocator requires KosmicKrisp" >&2; exit 2; }
+	exec "$here/command-allocator.sh" "$kk"
+fi
 if [ "${REPRO_CASE:-}" = sentry-g-views ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-g-views requires KosmicKrisp" >&2; exit 2; }
 	build image_views
