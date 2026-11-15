@@ -14,16 +14,19 @@ import GameController
 final class HIDPassthrough {
     /// DualSense, DualSense Edge (the products hid-playstation binds to as a DualSense).
     static let dualSenses: [(vendor: Int, product: Int)] = [(0x054c, 0x0ce6), (0x054c, 0x0df2)]
-    /// Steam Controller (2026) connected to the Mac directly (Bluetooth LE). Not its Puck
-    /// dongle (28de:1304): SDL and Steam take the dongle's controllers only on USB interfaces
-    /// 2-5, which a uhid device does not have; the controller itself they take by its IDs.
-    static let steamControllers: [(vendor: Int, product: Int)] = [(0x28de, 0x1303)]
+    /// Steam Controller (2026) on the Mac itself: Bluetooth LE (`28de:1303`) and USB cable
+    /// (`28de:1302`). Not the Puck dongle (`28de:1304`): SDL and Steam take the dongle's
+    /// controllers only on USB interfaces 2-5, which a uhid device does not have; the controller
+    /// itself they take by its IDs. Without matching USB `1302`, GameController still sees the
+    /// wired pad as a Steam Controller but SteamOS only gets the Xbox 360 uinput stand-in (#94).
+    static let steamControllers: [(vendor: Int, product: Int)] = [(0x28de, 0x1303), (0x28de, 0x1302)]
     /// The Steam Controller Puck: interfaces 2-5 are its controller slots, each with the
     /// controller's own descriptor and reports. A slot goes to SteamOS as a wired Steam
     /// Controller (28de:1302), which SDL and Steam take without a USB interface number, and only
     /// while a controller sends on it (an idle slot would be a phantom pad).
     static let puck = (vendor: 0x28de, product: 0x1304)
     static let puckSlots = 2...5
+    /// Guest identity for a Puck slot (and the Mac PID of a USB-plugged controller).
     static let wiredSteamController: UInt16 = 0x1302
     /// The controller-state report IDs: USB/dongle (0x42), BLE (0x45) and the newer "Ibex" with
     /// a trackpad timestamp (0x47). Outside Desktop Mode only these keep a Puck slot alive.
