@@ -1,0 +1,81 @@
+From: steamac <steamac@fxgam.es>
+Date: Mon, 16 Nov 2026 15:00:00 +0000
+Subject: [PATCH] kk: reject render pipelines whose vertex function does not resolve
+
+STEAMAC-BN/BP (1.9.14, Apple M2, macOS 27.2.0, CS2): the VM process
+aborted in Metal's render pipeline descriptor validation, "vertexFunction
+must not be nil", under mtl_new_render_pipeline (kk_draw <-
+kk_CmdDrawIndexedIndirect2KHR). A library function descriptor carries
+only a name: when the library has no vertex function of that name,
+Metal resolves it to nil and aborts the process even though an NSError
+pointer is passed. The reports carry no MSL, so the program that named a
+missing function is not known yet.
+
+Resolve the vertex function before creating the pipeline. A missing,
+non-vertex or absent function fails the pipeline like any other compile
+failure (the cache drops the reservation; the draw path already handles
+a NULL pipeline) and logs the name, the library's functions and, from
+kk_compile_graphics_pipeline, the stage, entry points and MSL hashes of
+the program, so the next report names it.
+
+Regression: REPRO_CASE=sentry-bn REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/run.sh <dylib> calls the driver's
+mtl_new_render_pipeline with a missing, fragment-stage and absent vertex
+function: the 1.9.14 driver aborts on the first; with this patch all
+three return NULL and a valid pair draws 16 green pixels.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/bridge/mtl_compiler.m b/src/kosmickrisp/bridge/mtl_compiler.m
+index 9aab72f..0f73b35 100644
+--- a/src/kosmickrisp/bridge/mtl_compiler.m
++++ b/src/kosmickrisp/bridge/mtl_compiler.m
+@@ -366,6 +366,30 @@
+       id<MTL4Compiler> comp = (id<MTL4Compiler>)compiler;
+       MTL4RenderPipelineDescriptor *desc = (MTL4RenderPipelineDescriptor *)descriptor;
+ 
++      /* A library function descriptor is only a name. When it names no vertex
++       * function of its library, Metal resolves it to a nil vertexFunction
++       * and aborts the process in render pipeline descriptor validation even
++       * though an error pointer is passed (STEAMAC-BN/BP). Resolve it first
++       * and fail the pipeline like any other compile failure. */
++      MTL4LibraryFunctionDescriptor *vertex =
++         (MTL4LibraryFunctionDescriptor *)desc.vertexFunctionDescriptor;
++      id<MTLFunction> function = vertex != nil && vertex.library != nil && vertex.name != nil
++                                    ? [vertex.library newFunctionWithName:vertex.name]
++                                    : nil;
++      const MTLFunctionType type = function != nil ? function.functionType : (MTLFunctionType)0;
++      [function release];
++      if (type != MTLFunctionTypeVertex) {
++         NSArray<NSString *> *names = vertex.library.functionNames;
++         fprintf(stderr,
++                 "kk: render pipeline rejected: vertex function \"%s\" %s in its library "
++                 "(%lu function(s), first \"%s\")\n",
++                 vertex.name != nil ? vertex.name.UTF8String : "(none)",
++                 function != nil ? "is not a vertex function" : "not found",
++                 (unsigned long)names.count,
++                 names.count != 0 ? names.firstObject.UTF8String : "");
++         return NULL;
++      }
++
+       struct mtl_compile c;
+       mtl_compile_begin(&c, compiler, "render", 2u);
+       NSError *error = nil;
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index af97042..acf465a 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -2194,6 +2194,13 @@ kk_compile_graphics_pipeline(struct kk_device *device, mtl_compiler *compiler,
+       /* Takes the key, which this caller no longer owns */
+       kk_metal_cache_publish(&device->metal_render_pipelines, key, render);
+       if (render == NULL) {
++         /* Names the program for the bridge's failure line (STEAMAC-BN/BP) */
++         mesa_loge("kk: render pipeline failed: %s entry %s MSL %08x, fragment "
++                   "entry %s MSL %08x, stages 0x%x",
++                   _mesa_shader_stage_to_abbrev(vs_stage),
++                   vs_data->entrypoint_name, _mesa_hash_string(vs_data->code),
++                   fs_data->entrypoint_name, _mesa_hash_string(fs_data->code),
++                   vs->info.vs.additional_stages_bits);
+          mtl_release(fragment_library);
+          mtl_release(vertex_library);
+          return VK_ERROR_INVALID_SHADER_NV;

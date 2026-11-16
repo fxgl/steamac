@@ -453,6 +453,19 @@
 #              Repro: REPRO_CASE=sentry-g-views, 26 view cases including three real R8
 #              clear/readbacks at 1664/1920/1952x288, valid BC3 sRGB/16-byte block views,
 #              and diagnostic assertions that fail before / pass after 0098.
+#   0099       steamac: a render pipeline whose vertex function does not resolve in its library
+#              fails like any other compile failure, logged with the name, the library's
+#              functions, stage, entry points and MSL hashes, instead of Metal's process abort
+#              "vertexFunction must not be nil" (STEAMAC-BN/BP: M2, CS2; Metal aborts even with
+#              an NSError pointer). The program that named a missing function is not known yet.
+#              Repro: REPRO_CASE=sentry-bn; missing / fragment-stage / absent vertex functions
+#              abort the 1.9.14 driver and return NULL after; a valid pair draws 16 green pixels.
+#   0100       steamac: the device keeps its live image views; vkCmdBeginRenderPass2 names an
+#              attachment whose view was destroyed before Mesa's common code dereferences it
+#              (STEAMAC-BJ/BK: transition_attachment+60 read image_view->image = NULL of a freed,
+#              libmalloc-cleared view; DOOM 2016). Diagnostic only, recording is unchanged.
+#              Repro: REPRO_CASE=sentry-bj; a destroyed framebuffer view faults at the reported
+#              frames and offsets on 1.9.14 and is named first after; a live view logs nothing.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -685,6 +698,8 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0095 = steamac: rejected image views identify their guest producer, full shape and pNext arguments"
 	echo "  0096 = steamac: bounded command-allocator/encoder/upload growth diagnostics before Metal calls (STEAMAC-AK/AP/AN/AX)"
 	echo "  0098 = steamac: rejected image views log real format features, external memory and block compatibility (STEAMAC-G)"
+	echo "  0099 = steamac: render pipelines whose vertex function does not resolve fail, logged, instead of aborting (STEAMAC-BN/BP)"
+	echo "  0100 = steamac: render pass begin names attachments whose image view was destroyed (STEAMAC-BJ/BK)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

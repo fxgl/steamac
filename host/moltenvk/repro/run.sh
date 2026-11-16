@@ -222,6 +222,12 @@
 # sentry-ah-no-vertex.c (KosmicKrisp only; STEAMAC-AH): a graphics pipeline without a vertex shader (fragment
 # shader only) must fail creation instead of faulting the process (the bind dereferenced the missing vertex
 # shader); a vertex + fragment control draws every pixel green.
+# sentry-bj-destroyed-view.c (KosmicKrisp only, REPRO_CASE=sentry-bj; STEAMAC-BJ/BK): a render pass with a live
+# view clears to green without a log line; one whose framebuffer view was destroyed must be named ("not alive")
+# before Mesa's common vkCmdBeginRenderPass dereferences it (the fault itself remains: invalid application use).
+# sentry-bn-entrypoint.m (KosmicKrisp only, REPRO_CASE=sentry-bn; STEAMAC-BN/BP): the driver's
+# mtl_new_render_pipeline with a missing, fragment-stage or absent vertex function must return NULL instead of
+# Metal's `vertexFunction must not be nil` abort; a valid pair draws 16 green pixels.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -324,6 +330,36 @@ if [ "${REPRO_CASE:-}" = sentry-ah ]; then
 	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
 	build sentry-ah-no-vertex -I"$work"
 	"$work/sentry-ah-no-vertex"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-bj ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-bj requires KosmicKrisp" >&2; exit 2; }
+	build sentry-bj-destroyed-view
+	"$work/sentry-bj-destroyed-view" live > "$work/sentry-bj-live.log" 2>&1 || { cat "$work/sentry-bj-live.log"; exit 1; }
+	cat "$work/sentry-bj-live.log"
+	if grep -q 'not alive' "$work/sentry-bj-live.log"; then
+		echo "sentry-bj: a live view was reported" >&2
+		exit 1
+	fi
+	# Faults after the log line, like the report: the case checks the line, not the exit status.
+	"$work/sentry-bj-destroyed-view" destroyed > "$work/sentry-bj.log" 2>&1 || true
+	cat "$work/sentry-bj.log"
+	grep -q 'attachment 0/1 (framebuffer, format 37, samples 1) image view 0x[0-9a-f]* is not alive' "$work/sentry-bj.log" || {
+		echo "sentry-bj: the destroyed attachment view was not named" >&2
+		exit 1
+	}
+	echo "OK destroyed: the attachment's destroyed view is named before the render pass begins"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-bn ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-bn requires KosmicKrisp" >&2; exit 2; }
+	xcrun clang -Wall -Werror -fno-objc-arc -framework Metal -framework Foundation \
+		"$here/sentry-bn-entrypoint.m" -o "$work/sentry-bn-entrypoint"
+	offset=$(nm "$kk" | awk '$3 == "_mtl_new_render_pipeline" { print $1 }')
+	[ -n "$offset" ] || { echo "sentry-bn: no _mtl_new_render_pipeline in $kk" >&2; exit 1; }
+	for mode in valid missing wrong-stage nil; do
+		"$work/sentry-bn-entrypoint" "$kk" "$offset" "$mode"
+	done
 	exit
 fi
 if [ "${REPRO_CASE:-}" = sentry-ag ]; then
