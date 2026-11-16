@@ -198,6 +198,9 @@
 #    stage_widths.c (MoltenVK, historical STEAMAC-2M/88): ordinary raster vector
 #    widths retain written lanes, zero absent ones, and preserve logical shader
 #    values across plain/component/array/block interfaces and cache round trips.
+#    sentry-87-components.sh (MoltenVK, STEAMAC-87/BB): split location components
+#    retain distinct vertex/fragment user names beside a width-linked varying,
+#    including interface blocks, float3+float, and serialized-cache reversal.
 # 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
@@ -327,6 +330,10 @@ if [ "${REPRO_CASE:-}" = sentry-ag ]; then
 	[ "$driver" = moltenvk ] || { echo "sentry-ag requires MoltenVK" >&2; exit 2; }
 	run_sentry_ag
 	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-87-components ]; then
+	[ "$driver" = moltenvk ] || { echo "sentry-87-components requires MoltenVK" >&2; exit 2; }
+	exec "$here/sentry-87-components.sh" "$libdir" "$work/sentry-87-components"
 fi
 
 src=$work/gamescope
@@ -553,6 +560,7 @@ build frag_output
 if [ "$driver" = moltenvk ]; then
 	"$work/frag_output" "$gspv" dual-source
 	sh "$here/stage-widths.sh" "$libdir" "$work/stage-widths"
+	sh "$here/sentry-87-components.sh" "$libdir" "$work/sentry-87-components"
 	sh "$here/sentry-57-shared.sh" "$libdir/libMoltenVK.dylib" - "$inc" "$work/shared-memory"
 fi
 

@@ -153,6 +153,13 @@
 #   packed formats, in MSL 3 and 4. Neither report retained original SPIR-V.
 #   STEAMAC-57's new 33024-byte recurrence is NOT the vec3-padding case fixed by
 #   0057: float2[2752] + float[2752] genuinely exceeds the 32768-byte limit.
+#   SPIRV-Cross 0063 (STEAMAC-87/BB, 1.9.14 regression of 8959e4b): sparse
+#   width-link maps were mistaken for complete interfaces by the old Component
+#   naming workaround, dropping _2/_3 and duplicating user(locnN) declarations.
+#   Preserve component suffixes on both raster stages while keeping width lookup
+#   exact. sentry-87-components.sh checks plain/block float2+float2 and float3+float
+#   beside linked widths, pixels, equal-width controls and serialized cache reuse.
+#   The patch-series hash invalidates old MSL caches; no cache schema changes.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -562,6 +569,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         and float FAdd with a CAS loop (STEAMAC-AS); device atomic_float unchanged"
 	echo "  0062 = steamac: fetch array/matrix vertex inputs one location at a time"
 	echo "         with each location's binding/offset/format (STEAMAC-AV, half2[2])"
+	echo "  0063 = steamac: preserve vertex/fragment component suffixes with sparse width-link maps"
+	echo "         (STEAMAC-87/BB; 1.9.14 duplicate locnN regression, pixels/cache round trip)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

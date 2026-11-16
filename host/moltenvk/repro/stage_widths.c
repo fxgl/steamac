@@ -8,6 +8,9 @@
  * and flat signed/unsigned integers are rendered into a 16x16 target. Every pixel must be
  * (64,128,191,255), +/-1. Pipelines sharing vertex SPIR-V alternate equal/wider/narrower consumer
  * widths in one cache, then repeat in reverse order after serializing/reloading that cache.
+ * sentry-87-components.sh reuses this harness with --split-components: an unrelated
+ * location contains float2+float2 or float3+float at distinct Components, with
+ * equal/wider/narrower consumers exercising empty and sparse width adapter maps.
  * No tessellation or geometry ABI changes are required by this repro or accommodation.
  */
 #include <stdint.h>
@@ -160,7 +163,11 @@ static int run_pipeline(const char *dir, Case test, VkPipelineCache cache, VkQue
 
 int main(int argc, char **argv)
 {
-    if (argc != 2) { fprintf(stderr, "usage: %s <spv-dir>\n", argv[0]); return 2; }
+    int split_components = argc == 3 && strcmp(argv[2], "--split-components") == 0;
+    if (argc != 2 && !split_components) {
+        fprintf(stderr, "usage: %s <spv-dir> [--split-components]\n", argv[0]); return 2;
+    }
+    const char *name = split_components ? "sentry-87-components" : "stage_widths";
     VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO, .apiVersion = VK_API_VERSION_1_3 };
     VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
     VkInstance instance;
@@ -179,9 +186,9 @@ int main(int argc, char **argv)
     VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &v13 };
     vkGetPhysicalDeviceFeatures2(pd, &features);
     if (!v13.dynamicRendering || !v13.maintenance4) {
-        fprintf(stderr, "SKIP stage_widths: dynamicRendering/maintenance4 unavailable\n");
+        fprintf(stderr, "FAIL %s: dynamicRendering/maintenance4 unavailable\n", name);
         vkDestroyInstance(instance, NULL);
-        return 0;
+        return 1;
     }
     v13 = (VkPhysicalDeviceVulkan13Features){ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
         .dynamicRendering = VK_TRUE, .maintenance4 = VK_TRUE };
@@ -229,14 +236,21 @@ int main(int argc, char **argv)
 
     Case cases[80];
     unsigned total = 0;
-    const unsigned pairs[][2] = { {3,3}, {3,4}, {3,2}, {4,3}, {4,4}, {2,4}, {1,3}, {2,3} };
-    for (unsigned kind = 0; kind < 3; kind++)
+    if (split_components) {
         for (unsigned mode = 0; mode < 3; mode++)
-            for (unsigned pair = 0; pair < sizeof(pairs) / sizeof(*pairs); pair++)
-                cases[total++] = (Case){ pairs[pair][0], pairs[pair][1], kind, mode, 0 };
-    for (unsigned kind = 0; kind < 3; kind++) {
-        cases[total++] = (Case){ 2, 3, kind, 0, 1 };
-        cases[total++] = (Case){ 3, 2, kind, 0, 1 };
+            for (unsigned producer = 3; producer <= 4; producer++)
+                for (unsigned consumer = 3; consumer <= 4; consumer++)
+                    cases[total++] = (Case){ producer, consumer, 0, mode, 0 };
+    } else {
+        const unsigned pairs[][2] = { {3,3}, {3,4}, {3,2}, {4,3}, {4,4}, {2,4}, {1,3}, {2,3} };
+        for (unsigned kind = 0; kind < 3; kind++)
+            for (unsigned mode = 0; mode < 3; mode++)
+                for (unsigned pair = 0; pair < sizeof(pairs) / sizeof(*pairs); pair++)
+                    cases[total++] = (Case){ pairs[pair][0], pairs[pair][1], kind, mode, 0 };
+        for (unsigned kind = 0; kind < 3; kind++) {
+            cases[total++] = (Case){ 2, 3, kind, 0, 1 };
+            cases[total++] = (Case){ 3, 2, kind, 0, 1 };
+        }
     }
     VkPipelineCacheCreateInfo cci = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
     VkPipelineCache cache;
@@ -267,6 +281,6 @@ int main(int argc, char **argv)
     vkDestroyPipelineLayout(dev, layout, NULL);
     vkDestroyDevice(dev, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("%s stage_widths: %u draws, %u failures\n", failures ? "FAIL" : "OK", total * 2, failures);
+    printf("%s %s: %u draws, %u failures\n", failures ? "FAIL" : "OK", name, total * 2, failures);
     return failures != 0;
 }
