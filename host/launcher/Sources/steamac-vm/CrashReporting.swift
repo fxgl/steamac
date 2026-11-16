@@ -561,7 +561,8 @@ enum CrashReporting {
             // heap corruption trap (STEAMAC-31/13: SIGTRAP in libsystem_malloc under
             // mtl_new_compute_pipeline_state, no message).
             var capture = ""
-            if signal != 0, let crash = SystemCrashReport.find(pid: exit.pid, timeout: 8, diagnostics: &capture) {
+            let crash = signal != 0 ? SystemCrashReport.find(pid: exit.pid, timeout: 8, diagnostics: &capture) : nil
+            if let crash {
                 if let site = crash.site {
                     lines[0] = exitSummary(status: exit.status) + " in " + site + lastError
                     key += " " + site
@@ -573,6 +574,9 @@ enum CrashReporting {
             if signal != 0 {
                 extra["macos_crash_report_capture"] = capture
                 log("crash report capture: \(capture)")
+                // Report a Problem attaches this log: with crash reporting off it is the only way the
+                // crash site reaches us (STEAMAC-BC: a SIGSEGV report logged frames=7 but carried none).
+                for line in crash?.summary.components(separatedBy: "\n") ?? [] { log("crash report: \(line)") }
             }
             report(.vmExited, key: key, message: lines.joined(separator: "\n"), tags: exitTags, extra: extra)
         }
