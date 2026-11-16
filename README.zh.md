@@ -700,6 +700,8 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 致命命令与对象查找失败的日志行会标明客户机上下文（编号与进程名），不必再根据相邻的 `destroying context … (explorer.exe)` 行猜测哪个上下文终止；被拒绝的图像视图还会记录实际格式特性和块兼容性（STEAMAC-G：Zink 的 RGBA8 图像上的 R8 视图仍被拒绝）。KosmicKrisp 在创建 Metal 编码器前记录其命令分配器、编码器与上传内存的有界峰值快照（`REPRO_CASE=command-allocator`）；启动器记录实际加载的 Apple Metal 工具库（`metal_instrumentation` 标签：关闭 HUD 时 `libMetalMetricsInterpose` 也可能通过 macOS 帧节奏机制加载），并在虚拟机占用 30 秒内增长超过 8 GiB 时记录一次 VM 标签分解（STEAMAC-AK/AP/AN/AX：占用从 52 GB 跳到 95 GB 后 IOGPU 命令存储分配失败，原因尚不明确）。MoltenVK：Metal 只支持设备内存上的浮点原子操作，工作组（`shared`）内存上的浮点原子操作改用 `atomic_uint` 位转换和比较交换循环模拟（STEAMAC-AS）；几何/曲面细分模拟中的顶点获取按 location 逐个读取数组与矩阵类型的顶点输入并使用各自格式（`half2[2]`，STEAMAC-AV）。
 
+顶点函数在其库中解析不到的渲染管线，会像其他编译失败一样创建失败，并在日志中记录函数名、库中的函数和程序的 MSL 哈希，而不是触发 Metal 的进程中止 `vertexFunction must not be nil`（STEAMAC-BN/BP；`REPRO_CASE=sentry-bn`）。若渲染通道的帧缓冲引用了在通道开始前已销毁的图像视图，会在 Mesa 通用代码访问这个已释放的视图前记录其附件、格式与帧缓冲（STEAMAC-BJ/BK，DOOM 2016：`transition_attachment` 读到该视图的图像为 NULL；尚不清楚由谁销毁；`REPRO_CASE=sentry-bj`）。MoltenVK 在为其他变量匹配向量宽度时，仍保持带不同 Component 的顶点输出及对应片元输入彼此独立，修复了 1.9.14 中重复 `locnN`／顶点函数返回类型无效的回归（STEAMAC-87/BB；`REPRO_CASE=sentry-87-components`，像素测试覆盖普通声明、接口块、两个方向的宽度调整以及序列化管线缓存的重用）。
+
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
 应用捆绑 `libwmtr_host.dylib`；客户机层包含 DXMT 的
@@ -882,7 +884,7 @@ SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）�
   退出，监管器无需 `user-exit` 标记文件即可识别（Mac 磁盘已满时该标记写不进去，STEAMAC-15）。虚拟机进程崩溃时，
   监管器的报告附上 macOS 自己的崩溃报告（`~/Library/Logs/DiagnosticReports/steamac-vm-*.ips`，按 pid 匹配）：
   标题与 `crash_site` 标签中的崩溃位置（报告按其分组），extra `macos_crash_report` 中的异常、Application Specific
-  Information 行（堆损坏陷阱时 libmalloc 的消息）及崩溃线程前 16 帧（库名与符号名）；
+  Information 行（堆损坏陷阱时 libmalloc 的消息）及崩溃线程前 16 帧（库名与符号名）；同一摘要也写入会话日志，因此即使关闭崩溃报告，崩溃后的“报告问题”也包含崩溃位置（STEAMAC-BC）；
   内核的内存终止标志与 SIGKILL 来源未知分开报告（没有该标志并不表示强制退出），并给出峰值占用相对虚拟机与 Mac 内存的比例和采样到的最高内存压力，而不只是 macOS 通告过的等级（STEAMAC-S）。
   `memory_history` 增加最多两分钟的退出前虚拟机 footprint 与宿主内存采样（每 10 秒一次）；
   报告时的独立快照标为退出后状态，因为虚拟机内存已释放。GPU 上下文 fatal 与 SIGKILL 报告附加虚拟机进程最近的 GPU/心跳历史，

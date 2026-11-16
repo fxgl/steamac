@@ -1073,6 +1073,12 @@ upload memory (`REPRO_CASE=command-allocator`), and the launcher records which A
 loaded (`metal_instrumentation` tag: `libMetalMetricsInterpose` also loads through macOS frame pacing with the
 HUD off) and a VM-tag breakdown when the VM footprint grows by more than 8 GiB in 30 s (STEAMAC-AK/AP/AN/AX:
 an IOGPU command-storage allocation failed after the footprint jumped from 52 to 95 GB; cause not yet known).
+A render pipeline whose vertex function does not resolve in its library fails like any other compile failure,
+logged with the name, the library's functions and the program's MSL hashes, instead of Metal's process abort
+`vertexFunction must not be nil` (STEAMAC-BN/BP; `REPRO_CASE=sentry-bn`). A render pass whose framebuffer names
+an image view destroyed before the pass began is logged with the attachment, format and framebuffer before
+Mesa's common code dereferences the freed view (STEAMAC-BJ/BK, DOOM 2016: `transition_attachment` read the
+view's image as NULL; who destroyed it is not yet known; `REPRO_CASE=sentry-bj`).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -1105,6 +1111,10 @@ Floating-point atomics on workgroup (`shared`) memory, which Metal only offers o
 with `atomic_uint` bit casts and a compare-and-swap loop (STEAMAC-AS), and geometry/tessellation vertex
 fetch reads array- and matrix-typed vertex inputs one location at a time with each location's format
 (`half2[2]`, STEAMAC-AV; `sentry-as-shared-float.sh`, `sentry-av-array-input.sh`).
+MoltenVK keeps separate Component-qualified vertex outputs and the matching fragment inputs distinct next to
+width-linked varyings, fixing 1.9.14's duplicated `locnN` / invalid vertex return type regression
+(STEAMAC-87/BB; `REPRO_CASE=sentry-87-components`, pixel-checked for plain and block declarations, both
+width directions and serialized pipeline-cache reuse).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
@@ -1373,7 +1383,8 @@ What is sent:
   (`~/Library/Logs/DiagnosticReports/steamac-vm-*.ips`, matched by pid): the crash site in the title
   and the `crash_site` tag (reports group by it), and in extra `macos_crash_report` the exception, the
   Application Specific Information lines (libmalloc's message on a heap corruption trap) and the
-  crashed thread's first 16 frames (library and symbol names);
+  crashed thread's first 16 frames (library and symbol names); the same summary is written to the session
+  log, so Report a Problem after a crash carries the crash site with crash reporting off (STEAMAC-BC);
   Not-responding reports include `stall_history`: up to 32 one-second GPU command-counter, heartbeat age,
   guest uptime/load, process CPU-time and host polling-gap samples, even with performance statistics
   off (STEAMAC-8). Missing agent heartbeats alone do not prove that the whole guest or GPU hung.
