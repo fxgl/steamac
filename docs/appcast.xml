@@ -6,6 +6,57 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>FX Steam Launcher</title>
         <item>
+            <title>1.9.15</title>
+            <pubDate>Mon, 16 Nov 2026 19:25:26 +0400</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.15</sparkle:version>
+            <sparkle:shortVersionString>1.9.15</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.14.
+
+- **Shader compile regression fixed (MoltenVK).** 1.9.14 broke some vertex shaders that pack two values into one location, for example two `float2` texture coordinates. Metal rejected them with "duplicated user-defined name 'locnN'" and the draws were skipped. Several games were affected. They compile again.
+- **Fewer crashes (KosmicKrisp):**
+  - a render pipeline whose vertex function is missing from its shader library now fails cleanly and is logged, instead of Metal aborting the whole VM (seen in Counter-Strike 2);
+  - when a game begins a render pass with an image view it has already destroyed, the log now names the attachment and framebuffer before the crash (seen in DOOM (2016)), so the next report shows where it comes from.
+- **Better problem reports:** after a VM crash, the session log that Help → Report a Problem attaches now contains macOS's crash report (exception and crashed-thread frames), even with crash reporting turned off.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. If you run 1.9.11 or later, this version also arrives through **FX Steam Launcher → Check for Updates…**. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.15-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.14.
+
+- **Исправлена регрессия компиляции шейдеров (MoltenVK).** В 1.9.14 перестали компилироваться некоторые вершинные шейдеры, которые упаковывают два значения в одну location, например две текстурные координаты `float2`. Metal отклонял их с ошибкой «duplicated user-defined name 'locnN'», и отрисовка пропускалась. Это затронуло несколько игр. Теперь такие шейдеры снова компилируются.
+- **Меньше сбоев (KosmicKrisp):**
+  - конвейер рендеринга, вершинной функции которого нет в библиотеке шейдеров, теперь корректно завершается ошибкой с записью в журнал, а не прерывает всю ВМ через Metal (встречалось в Counter-Strike 2);
+  - если игра начинает проход рендеринга с уже уничтоженным представлением изображения, журнал теперь называет вложение и фреймбуфер до падения (встречалось в DOOM (2016)), чтобы следующий отчёт показал, откуда это берётся.
+- **Более полные отчёты о проблемах:** после падения ВМ журнал сеанса, который прикладывает «Справка → Сообщить о проблеме», содержит отчёт macOS о сбое (исключение и кадры упавшего потока), даже если отчёты о сбоях выключены.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Если у вас 1.9.11 или новее, эта версия приходит и через **FX Steam Launcher → Проверить обновления…**. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.15-gpl-sources.tar`.
+
+---
+
+1.9.14 以来的新内容。
+
+- **修复着色器编译回归（MoltenVK）。** 1.9.14 中，部分把两个值打包进同一个 location 的顶点着色器（例如两个 `float2` 纹理坐标）无法编译：Metal 报告“duplicated user-defined name 'locnN'”并跳过绘制。多款游戏受到影响，现在已恢复正常。
+- **更少崩溃（KosmicKrisp）：**
+  - 顶点函数不在着色器库中的渲染管线，现在会正常创建失败并记录日志，而不是由 Metal 中止整个虚拟机（见于《反恐精英 2》）；
+  - 游戏用已销毁的图像视图开始渲染通道时，日志会在崩溃前记录附件与帧缓冲（见于《毁灭战士（2016）》），以便下一份报告查明来源。
+- **更完整的问题报告：** 虚拟机崩溃后，“帮助 → 报告问题”附带的会话日志现在包含 macOS 的崩溃报告（异常与崩溃线程的调用帧），即使关闭了崩溃报告也是如此。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。若你在用 1.9.11 或更新版本，也可通过 **FX Steam Launcher → 检查更新…** 获得此版本。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.15-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX-Steam-Launcher-1.9.15.dmg" length="95953886" type="application/octet-stream" sparkle:edSignature="wYLMqQy1h/iq1ypEoNM5R54PlXV5U/4AfzcS4jF0/pE5QZR1NC9D5hm0NEh7VPYnIGWfaUc3IACnihm2e+XaAQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.14.delta" sparkle:deltaFrom="1.9.14" length="389226" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="jCNviy/oSHS9JZdnjOnH5T1F0egBBk3CwM8UMsWJBz6k249jRd0W1BNAAb2pCLgMxKeGrFxfF/LARFQNU9F7Dw=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.13.delta" sparkle:deltaFrom="1.9.13" length="1401682" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="FtiWKAIubg9BkbXWSYcOyD7b2p6jmVUc4WqSotpEbGs/wsfxyG0OjfBxttT5fSSD62uTrpxklZvVuXPntCwCDw=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.12.delta" sparkle:deltaFrom="1.9.12" length="2464946" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WGMkXgkGnweHKg41AUnKfK8ohKXYDJs5qxNBRtoenn7Yvi+CL0+5BQQzSVF0n+UVCAO06qsDccQcBksb3K88Aw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.9.14</title>
             <pubDate>Sun, 15 Nov 2026 16:42:55 +0400</pubDate>
             <link>https://fxgl.github.io/steamac/</link>
@@ -160,49 +211,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
                 <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.13/FX.Steam.Launcher1.9.13-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="2700050" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="St6HY1XNGEuZRLb9SWn0u/5FThoS66NfcNW38QN6cnzgAmCGK2TuvyHbyyGve7cvFGaVmBsT3E+SVzIL5tkCCw=="/>
             </sparkle:deltas>
         </item>
-        <item>
-            <title>1.9.12</title>
-            <pubDate>Wed, 04 Nov 2026 23:44:41 +0300</pubDate>
-            <link>https://fxgl.github.io/steamac/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1.9.12</sparkle:version>
-            <sparkle:shortVersionString>1.9.12</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[New since 1.9.11.
-
-- **Stream SteamOS to Moonlight.** FX Steam Launcher now has a built-in GameStream host: turn on **Settings → Streaming → Enable Moonlight streaming**, pick this Mac in [Moonlight](https://moonlight-stream.org/) on a phone, tablet, TV or another computer on your local network, and enter the PIN on the Mac. The stream carries the SteamOS display (DXMT games included) and SteamOS sound, encoded in hardware (H.264 / HEVC, Opus); keyboard, mouse, touch and controllers work on the other device, with rumble. No Screen Recording permission or audio driver is needed. Off by default; paired devices can be revoked in the same tab. Use it on a trusted local network only. Proposed in #63.
-- **First update delivered in the app.** If you run 1.9.11, this version arrives through **FX Steam Launcher → Check for Updates…** (or the automatic check) — no DMG needed.
-
-**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
-
----
-
-Новое с 1.9.11.
-
-- **Трансляция SteamOS в Moonlight.** В FX Steam Launcher появился встроенный хост GameStream: включите **Настройки → Трансляция → Включить трансляцию Moonlight**, выберите этот Mac в [Moonlight](https://moonlight-stream.org/) на телефоне, планшете, телевизоре или другом компьютере в вашей локальной сети и введите PIN-код на Mac. В трансляции — экран SteamOS (включая игры на DXMT) и звук SteamOS с аппаратным кодированием (H.264 / HEVC, Opus); клавиатура, мышь, касания и контроллеры работают на другом устройстве, с вибрацией. Не нужны ни разрешение на запись экрана, ни аудиодрайвер. По умолчанию выключено; доступ сопряжённых устройств можно отозвать в той же вкладке. Используйте только в доверенной локальной сети. Предложено в #63.
-- **Первое обновление прямо в приложении.** Если у вас 1.9.11, эта версия приходит через **FX Steam Launcher → Проверить обновления…** (или автоматическую проверку) — DMG не нужен.
-
-**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
-
----
-
-1.9.11 以来的新内容。
-
-- **将 SteamOS 串流到 Moonlight。** FX Steam Launcher 内置了 GameStream 主机：打开 **设置 → 串流 → 启用 Moonlight 串流**，在本地网络中的手机、平板、电视或另一台电脑上用 [Moonlight](https://moonlight-stream.org/) 选择这台 Mac，并在 Mac 上输入 PIN。串流内容为 SteamOS 画面（含 DXMT 游戏）与 SteamOS 声音，硬件编码（H.264 / HEVC、Opus）；键盘、鼠标、触控与手柄可在另一台设备上使用，支持震动。无需屏幕录制权限或音频驱动。默认关闭；可在同一标签页撤销已配对设备。仅在可信的本地网络中使用。提议见 #63。
-- **首次应用内更新。** 如果你在用 1.9.11，可通过 **FX Steam Launcher → 检查更新…**（或自动检查）获得此版本——无需 DMG。
-
-**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.12-gpl-sources.tar`。
-
-]]></description>
-            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX-Steam-Launcher-1.9.12.dmg" length="95607600" type="application/octet-stream" sparkle:edSignature="JidsYPzXHqusdgNXIPuIVako9td7293SXU2pE/M4U+k0gQoXtz7GEe2gqMWa78oim0xgi6iafZ1/y4mzeVw3Dg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX.Steam.Launcher1.9.12-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="1833646" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="7TU7Az4GElQ1NvYXktjztVyzzckl9l1rg17tRhuLF2a62R7zGhyZxhxS60MUCueuYZxRHNmPptzTxEtJPniEDg=="/>
-            </sparkle:deltas>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: 76S/U4mk+d16MW6QbfGEcawnuZLf7aojjo+aetBQDWqpcG0Rnud+2psqBeMmswzrQAqM1JKu1KoQB9A6bu9zBg==
-length: 30135
+edSignature: VdDCl2KRIijvZIqnd09GEgTMJrpTJBmjtFSyy1r5M5OnzhBHsvp+a+IKK6BpAK6IWMCpfzC/OZEP5GUJWnFMCg==
+length: 31878
 -->
