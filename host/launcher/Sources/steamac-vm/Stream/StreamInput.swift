@@ -114,8 +114,10 @@ final class StreamInput {
                 guard b.count == 16, b[8] < 16 else { return }
                 let n = UInt16(b[8])
                 var pad = pads[n] ?? GamepadBridge.RemotePad(number: n)
-                pad.kind = b[9] == 2 ? .dualShock4 : .xbox360
                 pad.capabilities = u16(10)
+                // GameStream collapses PS4 and PS5 into LI_CTYPE_PS without a reliable model ID.
+                // Treat that family as DualSense so PS5 clients keep their PlayStation identity.
+                pad.kind = b[9] == 2 ? .dualSense : .xbox360
                 pad.supportedButtons = u32(12)
                 pads[n] = pad
                 deliverPads()

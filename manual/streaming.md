@@ -69,5 +69,7 @@ touch-as-mouse and controllers control the same running guest; local and remote 
 Moonlight controllers take the first SteamOS player slots ahead of Mac controllers during the
 session; with **Additional controllers** off, a Mac controller waits until the stream ends.
 The Mac controllers return to their usual slots afterwards.
+Moonlight reports PS4 and PS5 controllers under the same PlayStation type, so the launcher maps
+that type to DualSense to preserve PS5 identity; the protocol does not distinguish PS4 from PS5.
 No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
 `--selftest-stream` runs the component protocol/media checks without booting a VM.
