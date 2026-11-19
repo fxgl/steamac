@@ -53,9 +53,12 @@ exFAT 立即分配全部新增容量，故先检查其空闲空间。终端（St
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`。
 
 **减小容量（缩小磁盘）：** **设置 → 高级 → 缩小磁盘…** 在已用数据仍能放下时降低 home 容量
-（否则拒绝）。必须先缩小 ext4，再改 GPT/截断：一次性启动带 `steamac.shrink-home=N` 与
-`steamac.slot=stop`，在 initramfs 中运行 `e2fsck`/`resize2fs` 后关机，宿主再重写 GPT 并截断映像。
-若文件系统已够小，宿主可立即截断。终端（文件系统已够小、SteamOS 已停止）：
+（1 GiB 余量只是预检，最终以 `resize2fs` 为准）。SteamOS 停止时（或在**缩小并重启**关机之后），
+一次性启动带 `steamac.shrink-home=N` 和 `steamac.slot=stop`，使用 rootfs 中的 `e2fsck` 和
+`resize2fs` 处理未挂载的 home 并关机；随后启动器重写分区表并截断映像。若文件系统已够小，无需
+一次性启动。主 GPT 和第一个分区之间的日志可在操作中断后继续。`resize2fs` 若被中断会将文件系统标记为
+有错误；下次启动时 `e2fsck` 会先尝试修复，再重新尝试缩小。修复不保证成功，因此请先备份映像。
+终端（文件系统已够小、虚拟机已停止）：
 `work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`。
 
 **回收 Mac 上的空间：** 卸载游戏（或大幅扩容）后，稀疏的 `steamos.img` 在磁盘上仍可能很大，

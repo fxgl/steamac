@@ -409,7 +409,20 @@
       }
     },
     "%@: home is not an ext4 filesystem" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: раздел home не содержит файловую систему ext4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@：home 不是 ext4 文件系统"
+          }
+        }
+      }
     },
     "%@: not a SteamOS disk with home as its last partition" : {
       "localizations" : {
@@ -3193,7 +3206,20 @@
       }
     },
     "Games currently have %@ GiB of capacity. Enter a smaller home size in GiB (at least 8). Shrink refuses when the data already on /home would not fit. This rewrites the disk image; keep a backup if the games matter." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас для игр доступно %@ GiB. Введите меньший размер home в GiB (не меньше 8). Если данные в /home не поместятся, уменьшение откажет. Операция переписывает образ диска; если игры важны, сделайте резервную копию."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "游戏当前有 %@ GiB 容量。请输入更小的 home 大小（GiB，至少 8）。如果 /home 中已有数据放不下，缩小会被拒绝。此操作会重写磁盘映像；如果游戏重要，请先备份。"
+          }
+        }
+      }
     },
     "Games currently have %@ GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space." : {
       "localizations" : {
@@ -3487,7 +3513,20 @@
       }
     },
     "Home capacity is now %lld GiB." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ёмкость home теперь %lld GiB."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "home 容量现为 %lld GiB。"
+          }
+        }
+      }
     },
     "Home partition (games, sparse)" : {
       "localizations" : {
@@ -6479,19 +6518,84 @@
       }
     },
     "Shrink Disk" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшить диск"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小磁盘"
+          }
+        }
+      }
     },
     "Shrink Disk…" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшить диск…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小磁盘…"
+          }
+        }
+      }
     },
     "Shrink SteamOS Disk" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшить диск SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小 SteamOS 磁盘"
+          }
+        }
+      }
     },
     "Shrink and Restart" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшить и перезапустить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小并重启"
+          }
+        }
+      }
     },
     "Shrink boot queued" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка для уменьшения поставлена в очередь"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小启动已排队"
+          }
+        }
+      }
     },
     "Shut Down SteamOS" : {
       "localizations" : {
@@ -6691,8 +6795,21 @@
         }
       }
     },
-    "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start." : {
-
+    "Start SteamOS. It will shrink the filesystem in a one-shot boot and power off, then the launcher finishes the partition table. If anything interrupts it, the next start continues." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустите SteamOS. Она сожмёт файловую систему при одноразовой загрузке и выключится, затем лаунчер завершит работу с таблицей разделов. Если что-то прервёт процесс, следующий запуск продолжит его."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请启动 SteamOS。它会在一次性启动中缩小文件系统并关机，然后启动器完成分区表。如果中途被打断，下次启动会继续。"
+          }
+        }
+      }
     },
     "Starting Steam" : {
       "localizations" : {
@@ -7102,7 +7219,20 @@
       }
     },
     "SteamOS disk could not be shrunk" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось уменьшить диск SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法缩小 SteamOS 磁盘"
+          }
+        }
+      }
     },
     "SteamOS disk enlarged" : {
       "localizations" : {
@@ -7121,7 +7251,20 @@
       }
     },
     "SteamOS disk shrunk" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диск SteamOS уменьшен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 磁盘已缩小"
+          }
+        }
+      }
     },
     "SteamOS gets a gamepad while a controller is connected." : {
       "localizations" : {
@@ -7301,7 +7444,20 @@
       }
     },
     "SteamOS must be stopped. A one-shot boot shrinks the filesystem when needed, then the image is truncated." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS должна быть остановлена. При необходимости одноразовая загрузка сожмёт файловую систему, затем образ будет усечён."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 必须处于停止状态。必要时一次性启动会先缩小文件系统，然后截断映像。"
+          }
+        }
+      }
     },
     "SteamOS must be stopped. The partition and filesystem grow on its next boot." : {
       "localizations" : {
@@ -7320,7 +7476,20 @@
       }
     },
     "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Shrink Disk… lowers home capacity when used space fits (one-shot boot to shrink ext4, then GPT/truncate). After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диск SteamOS (raw GPT), используется на месте, без копирования. Если Steam пишет, что не хватает места, «Увеличить диск…» добавит место для игр без пересоздания диска. «Уменьшить диск…» снижает ёмкость home, если занятое место помещается (одноразовая загрузка сжимает ext4, затем перезаписывается GPT и образ усекается). После удаления игр «Освободить место на диске…» может уменьшить выделенный размер образа, но только на APFS (ёмкость не меняется). Клоны и снимки могут удерживать место на Mac. Свободное место на Mac само по себе не увеличивает ёмкость SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 原始 GPT 磁盘，原地使用（不会复制）。如果 Steam 提示空间不足，“扩展磁盘…”可在不重建的情况下为游戏增加空间。已用空间能放下时，“缩小磁盘…”可降低 home 容量（一次性启动缩小 ext4，然后重写 GPT 并截断映像）。卸载游戏后，“回收磁盘空间…”仅在 APFS 上可以减小映像的已分配大小（容量不变）。克隆和快照可能仍在 Mac 上占用空间。Mac 上的可用空间不会自动增加 SteamOS 的容量。"
+          }
+        }
+      }
     },
     "SteamOS set up" : {
       "localizations" : {
@@ -7420,7 +7589,20 @@
       }
     },
     "SteamOS will shut down, run a one-shot boot to shrink the filesystem if needed, then truncate the image and restart." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS выключится, при необходимости выполнит одноразовую загрузку для сжатия файловой системы, затем образ будет усечён, и она перезапустится."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 将关机，必要时通过一次性启动缩小文件系统，然后截断映像并重启。"
+          }
+        }
+      }
     },
     "Stick deadzone" : {
       "localizations" : {
@@ -8072,7 +8254,20 @@
       }
     },
     "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка для уменьшения завершилась, но файловая система не вошла в выбранный размер. Проверьте журнал, освободите место внутри SteamOS или повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小启动已结束，但文件系统没有缩到所选大小。请查看日志、释放 SteamOS 内部空间，或重试。"
+          }
+        }
+      }
     },
     "The statistics service is not reachable. Sessions waiting to be sent: %lld." : {
       "localizations" : {
@@ -9024,6 +9219,22 @@
         }
       }
     },
+    "an earlier Shrink Disk is unfinished; start SteamOS to finish it first" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "предыдущее уменьшение диска не завершено; сначала запустите SteamOS, чтобы завершить его"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "之前的缩小磁盘尚未完成；请先启动 SteamOS 完成它"
+          }
+        }
+      }
+    },
     "another SteamOS disk is being created with the download cache %@: wait for it to finish or cancel it" : {
       "localizations" : {
         "ru" : {
@@ -9328,11 +9539,21 @@
         }
       }
     },
-    "home filesystem is still larger than %lld GiB; start the shrink boot first" : {
-
-    },
     "home filesystem still exceeds %lld GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "файловая система home всё ещё больше %lld GiB; для одноразовой загрузки сжатия используйте Настройки → Дополнительно → Уменьшить диск…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "home 文件系统仍大于 %lld GiB；请使用 设置 → 高级 → 缩小磁盘… 进行一次性缩小启动"
+          }
+        }
+      }
     },
     "home size must be 8..4096 GiB" : {
       "localizations" : {
@@ -9351,7 +9572,20 @@
       }
     },
     "home uses about %@ GiB; free space inside SteamOS or pick a larger size" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "home занимает около %@ GiB; освободите место внутри SteamOS или выберите размер больше"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "home 已使用约 %@ GiB；请释放 SteamOS 内部空间或选择更大的大小"
+          }
+        }
+      }
     },
     "last played %@" : {
       "localizations" : {
@@ -9808,7 +10042,20 @@
       }
     },
     "the disk selected for shrink is no longer the next boot's writable disk" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "диск, выбранный для уменьшения, больше не является записываемым диском следующей загрузки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为缩小选定的磁盘已不是下次启动的可写磁盘"
+          }
+        }
+      }
     },
     "the new home size must be larger than its current %@ GiB (disks cannot be shrunk)" : {
       "localizations" : {
@@ -9827,7 +10074,20 @@
       }
     },
     "the new home size must be smaller than its current %@ GiB (use Grow Disk to enlarge)" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "новый размер home должен быть меньше текущих %@ GiB (чтобы увеличить, используйте «Увеличить диск»)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新的 home 大小必须小于当前的 %@ GiB（要扩大请使用“扩展磁盘”）"
+          }
+        }
+      }
     },
     "the selected SteamOS disk has changed; choose its size again" : {
       "localizations" : {

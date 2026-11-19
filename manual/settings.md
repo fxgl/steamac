@@ -61,10 +61,15 @@ free space first. Terminal, with SteamOS stopped:
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`.
 
 **Less capacity (Shrink Disk):** **Settings → Advanced → Shrink Disk…** lowers home capacity when
-used data still fits (refuses otherwise). Ext4 must shrink **before** GPT/truncate: a one-shot boot
-with `steamac.shrink-home=N` + `steamac.slot=stop` runs `e2fsck`/`resize2fs` in initramfs, powers
-off, then the host rewrites GPT and truncates the image. If the filesystem already fits, the host
-truncates immediately. Terminal (filesystem already fits, VM stopped):
+used data still fits (the 1 GiB margin is only a pre-check; `resize2fs` has the last word). With
+SteamOS stopped, or after it has shut down for **Shrink and Restart**, a one-shot boot with
+`steamac.shrink-home=N` + `steamac.slot=stop` runs `e2fsck` and `resize2fs` from the rootfs on
+unmounted home, then powers off. The launcher then rewrites the partition table and truncates the
+image. If the filesystem already fits, the launcher finishes without the one-shot boot. A journal
+between the primary GPT and the first partition lets the launcher resume after an interruption.
+An interrupted `resize2fs` leaves the filesystem marked with errors; on the next start `e2fsck`
+tries to repair it before another attempt. Repair is not guaranteed, so back up the image first.
+Terminal (filesystem already fits, VM stopped):
 `work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`.
 
 **Reclaim space on the Mac:** after uninstalling games (or after a large Grow), the sparse
