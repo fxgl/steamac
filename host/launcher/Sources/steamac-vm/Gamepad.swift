@@ -1146,6 +1146,7 @@ final class GamepadBridge {
 
     /// The VM was paused (suspend, guest sleep) / runs again.
     func vmPaused(_ paused: Bool) {
+        hid.vmPaused = paused
         for s in slots { s.vmPaused(paused) }
     }
 
