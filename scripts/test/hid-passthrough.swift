@@ -724,7 +724,7 @@ extension HIDPassthrough {
         diagnosticInventory = []
         #endif
         #if HAS_SEIZE
-        // Exclusive only while the USB-wired Steam Controller is passed through and the VM runs.
+        // Exclusive only while a USB Steam Controller (cable or Puck slot) is passed through and the VM runs.
         let seize = IOOptionBits(kIOHIDOptionsTypeSeizeDevice), shared = IOOptionBits(kIOHIDOptionsTypeNone)
         func settle() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
         let seizeHID = HIDPassthrough()
@@ -746,21 +746,19 @@ extension HIDPassthrough {
         seizeHID.activate(seizeDevices[3], owner: seizeOwner) { _ in seizedInputs += 1 }
         check(seizeUSB.openOptionLog == [shared], "activation reopens only after the current turn")
         settle()
-        check(seizeUSB.lastOpenOptions == seize,
-              "the passed-through USB-wired Steam Controller is opened with SeizeDevice")
-        check(seizeBLE.openOptionLog == [shared] && seizePuck.openOptionLog == [shared]
-              && seizeDualSense.openOptionLog == [shared],
-              "BLE Steam Controllers, Puck slots and DualSenses stay shared")
+        check(seizeUSB.lastOpenOptions == seize && seizePuck.lastOpenOptions == seize,
+              "passed-through USB Steam Controllers and Puck slots are opened with SeizeDevice")
+        check(seizeBLE.openOptionLog == [shared] && seizeDualSense.openOptionLog == [shared],
+              "BLE Steam Controllers and DualSenses stay shared")
         seizeUSB.emit([0x42, 1])
         check(seizedInputs == 1, "input still reaches the guest after the exclusive reopen")
         seizeHID.vmPaused = true
-        check(seizeUSB.lastOpenOptions == shared, "a paused VM releases the exclusive open at once")
-        seizeUSB.emit([0x42, 1])
+        check(seizeUSB.lastOpenOptions == shared && seizePuck.lastOpenOptions == shared,
+              "a paused VM releases the exclusive open at once")
+        seizePuck.emit([0x42, 1])
         check(seizedInputs == 2, "reports keep arriving after the shared reopen")
         seizeHID.vmPaused = false
-        check(seizeUSB.lastOpenOptions == seize, "a running VM seizes again")
-        check(seizeHID.diagnosticLines().joined(separator: "\n").contains("forwarding, exclusive"),
-              "diagnostics show the exclusive open")
+        check(seizeUSB.lastOpenOptions == seize && seizePuck.lastOpenOptions == seize, "a running VM seizes again")
         let reopens = seizeUSB.openCalls
         seizeHID.deactivate(seizeDevices[0], owner: otherOwner)
         settle()
@@ -788,6 +786,8 @@ extension HIDPassthrough {
         seizeHID.vmPaused = false
         settle()
         check(refused.openOptionLog == [shared, seize, shared], "a refused seize is not retried on every pause")
+        check(seizeHID.diagnosticLines().joined(separator: "\n").contains("exclusive"),
+              "diagnostics show the exclusive open")
         #endif
         #if HAS_INPUT_MONITORING_WARNING
         let deniedUSBHID = HIDPassthrough()

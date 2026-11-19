@@ -494,8 +494,8 @@ private final class PadSlot {
         if let remote { return (.pad(remote.kind), "Moonlight controller \(remote.number + 1)") }
         let type = typeOverride ?? settings.padType
         // A Steam Controller goes through in Automatic / Steam Controller; a generic HID that
-        // GameController does not publish goes through in Automatic only. Puck slots follow an
-        // unambiguous GameController player; BLE and generic devices reserve free players.
+        // GameController does not publish goes through in Automatic only. USB, BLE, live Puck
+        // slots and generic devices reserve free players (`rawPlayers`).
         if hidCapable, let d = rawControllerDevice(),
            type == .auto || (type == .steamController && !d.generic) {
             return (.hid(d), type == .auto ? "automatic, \(d.generic ? "generic HID controller" : "Steam Controller")" : (typeOverride == nil ? "setting" : "--pad"))
@@ -651,9 +651,18 @@ private final class PadSlot {
 
 /// HID routing policy, independent of GameController and IOKit for the settings selftest.
 enum SteamControllerRouting {
-    /// GameController cannot identify which live Puck slot belongs to which controller.
-    static func puckPlayer(_ steamPlayers: [Int], liveSlots: Int) -> Int? {
-        steamPlayers.count == 1 && liveSlots == 1 ? steamPlayers[0] : nil
+    /// GameController names a Puck controller's publication "Steam Controller Puck".
+    static func isPuckPublication(vendorName: String?, productCategory: String) -> Bool {
+        productCategory == "Steam Controller" && vendorName == "Steam Controller Puck"
+    }
+
+    /// Every live Puck slot is a controller that GameController publishes too (all slots can
+    /// share one publication). GameController cannot say which publication belongs to which
+    /// slot, so that many publications (in connection order) give way to the HID devices; a
+    /// publication beyond the live slots is a controller that is quiet right now and stays an
+    /// ordinary pad.
+    static func suppressedPuckPublications(_ publications: [Int], liveSlots: Int) -> [Int] {
+        Array(publications.prefix(max(0, liveSlots)))
     }
 
     /// BLE reservations stay sticky. Generic reservations stay sticky only while their player
@@ -677,11 +686,17 @@ enum SteamControllerRouting {
             checks += 1
             if !ok { failures.append("Steam Controller routing: \(name)") }
         }
-        check(puckPlayer([1], liveSlots: 1) == 1, "one Puck")
-        check(puckPlayer([0, 1], liveSlots: 1) == nil, "two GameController Steam Controllers")
-        check(puckPlayer([0], liveSlots: 2) == nil, "two live Puck slots")
-        check(puckPlayer([], liveSlots: 1) == nil, "no GameController Steam Controller")
-        check(puckPlayer([0], liveSlots: 0) == nil, "no live Puck")
+        check(suppressedPuckPublications([3, 5], liveSlots: 1) == [3], "one live slot replaces one publication")
+        check(suppressedPuckPublications([3], liveSlots: 2) == [3], "more live slots than publications")
+        check(suppressedPuckPublications([3, 5], liveSlots: 2) == [3, 5], "every live slot replaces its publication")
+        check(suppressedPuckPublications([3, 5], liveSlots: 0).isEmpty, "no live slot keeps every publication")
+        check(suppressedPuckPublications([], liveSlots: 1).isEmpty, "no publication, nothing to replace")
+        check(rawPlayers(previous: [:], devices: [10, 11], available: [0, 1, 2]) == [10: 0, 11: 1],
+              "two live Puck slots take two players")
+        check(isPuckPublication(vendorName: "Steam Controller Puck", productCategory: "Steam Controller"),
+              "Puck publication recognized")
+        check(!isPuckPublication(vendorName: "Steam Controller", productCategory: "Steam Controller"),
+              "USB/BLE publication is not a Puck publication")
         let initial = rawPlayers(previous: [:], devices: [10], available: [1, 2, 3])
         check(initial == [10: 1], "BLE takes lowest free player")
         let sticky = rawPlayers(previous: initial, devices: [10], available: [0, 1, 2, 3])
@@ -709,7 +724,7 @@ enum SteamControllerRouting {
         check(isUSBStandIn(vendorName: "Steam Controller", productCategory: "Steam Controller"),
               "USB Steam Controller publication recognized")
         check(!isUSBStandIn(vendorName: "Steam Controller Puck", productCategory: "Steam Controller"),
-              "GC Puck stays on its existing co-location path")
+              "a Puck publication is not a USB stand-in")
         check(!isUSBStandIn(vendorName: "Xbox Wireless Controller", productCategory: "Xbox One"),
               "unrelated GC pads stay connected")
         check(usbHandoffPlayer(current: 2, reserved: nil, available: [0, 2]) == 2,
@@ -1126,8 +1141,8 @@ final class GamepadBridge {
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's raw controller: an unambiguous Puck slot follows GameController,
-        // while BLE and generic devices keep their reserved players.
+        // Each player's raw controller: whatever `rawPlayers` reserved for it (USB, BLE, a live
+        // Puck slot, or a generic device).
         for s in slots {
             let playerIndex = s.index
             s.rawControllerDevice = { [weak self] in self?.assignedRawDevice(for: playerIndex) }
@@ -1168,13 +1183,15 @@ final class GamepadBridge {
 
     /// Reconcile raw HID reservations only on topology/settings changes, never while querying a slot.
     private func updateRawPlayers() {
-        // USB/BLE remain reserved while matched; Puck keeps its existing GC co-location.
+        // USB, BLE, live Puck slots and generic devices reserve players here; GameController
+        // publications of live Puck slots were already taken out of the candidates.
         let hasUSBPublication = GamepadBridge.connected.contains {
             SteamControllerRouting.isUSBStandIn(vendorName: $0.vendorName, productCategory: $0.productCategory)
         }
         let devices = hid.devices.filter {
             if $0.generic { return matchesGenericControllers }
-            guard matchesValveControllers, HIDPassthrough.isSteamController($0), $0.puckSlot == nil else { return false }
+            guard matchesValveControllers, HIDPassthrough.isSteamController($0) else { return false }
+            if $0.puckSlot != nil { return HIDPassthrough.isLiveSteamController($0) }
             if HIDPassthrough.isUSBSteamController($0), hasUSBPublication {
                 return usbStandInDevice == $0.registryID
             }
@@ -1186,16 +1203,9 @@ final class GamepadBridge {
             hidCapable: slots.indices.filter { slots[$0].hidCapable })
     }
 
-    /// A Puck slot is safe only with exactly one GameController Steam Controller and one live
-    /// Puck slot; ambiguous setups retain their GameController/uinput pads. BLE/generic reserve players.
+    /// The HID device that owns player `index`: USB, BLE, a live Puck slot, or a generic device.
     private func assignedRawDevice(for index: Int) -> HIDPassthrough.Device? {
         guard usable(index), slots[index].remote == nil else { return nil }
-        let steamPlayers = matchesValveControllers
-            ? slots.indices.filter { slots[$0].controller.map(GamepadBridge.isSteamController) ?? false } : []
-        let livePuckSlots = hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }
-        if SteamControllerRouting.puckPlayer(steamPlayers, liveSlots: livePuckSlots.count) == index {
-            return livePuckSlots.first
-        }
         return hid.devices.first { rawPlayers[$0.registryID] == index }
     }
 
@@ -1253,6 +1263,22 @@ final class GamepadBridge {
                 usbStandInDevice = match.device
                 candidates.removeAll { $0 === standIn }
             }
+        }
+        // A live Puck slot reaches SteamOS through HID: GameController must not feed an Xbox
+        // stand-in for the same controller. Free those players before any reservation is made,
+        // otherwise the HID device would be offered player 2 while player 1 ends up empty.
+        let livePuckSlots = matchesValveControllers && settings.virtualPad
+            ? hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }.count : 0
+        let hidCapablePlayers = slots.indices.filter { usable($0) && slots[$0].hidCapable && slots[$0].remote == nil }.count
+        let puckPublications = connected.indices.filter {
+            SteamControllerRouting.isPuckPublication(vendorName: connected[$0].vendorName,
+                                                     productCategory: connected[$0].productCategory)
+        }
+        for i in SteamControllerRouting.suppressedPuckPublications(
+            puckPublications, liveSlots: min(livePuckSlots, hidCapablePlayers)) {
+            let publication = connected[i]
+            for slot in slots where slot.controller === publication { slot.setController(nil) }
+            candidates.removeAll { $0 === publication }
         }
         updateRawPlayers()
         let genericDevices = hid.devices.filter(\.generic).map(\.registryID)
