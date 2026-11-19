@@ -118,6 +118,7 @@ enum Supervisor {
 
         let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
         var boot = 1
+        var shrinkPassRan = false
         var frame: String?
         while true {
             var o: Options
@@ -150,6 +151,33 @@ enum Supervisor {
             } catch {
                 log("grow-disk: \(error)")
                 MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be grown", error.localizedDescription) }
+                cleanup()
+                exit(1)
+            }
+            // A Shrink Disk on one of the disks: continue it from the journal on the disk (queued
+            // by Settings, or left by a launcher that went away). With the ext4 still too large
+            // this boot is the one-shot shrink boot; it runs once per launcher start.
+            do {
+                let shrink = try DiskShrinker.resume(runDir: dir, disks: o.disks)
+                if shrink != .guestPass {
+                    shrinkPassRan = false
+                } else {
+                    if shrinkPassRan {
+                        DiskShrinker.abandon(disks: o.disks)
+                        log("shrink-disk: the shrink boot ended without the filesystem fitting")
+                        MainActor.assumeIsolated {
+                            AppBundle.alertIfLaunchedFromFinder(
+                                "SteamOS disk could not be shrunk",
+                                String(localized: "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again."))
+                        }
+                        cleanup()
+                        exit(1)
+                    }
+                    shrinkPassRan = true
+                }
+            } catch {
+                log("shrink-disk: \(error)")
+                MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be shrunk", error.localizedDescription) }
                 cleanup()
                 exit(1)
             }
@@ -218,6 +246,14 @@ enum Supervisor {
                 boot += 1
                 frame = text
                 log("guest rebooted (VM exit status \(status)): starting boot #\(boot)")
+                continue
+            }
+            // The shrink boot (`steamac.slot=stop`) powers off without a reboot marker. Looping lets
+            // `resume` finish the partition table, or give up when the filesystem still does not fit.
+            // Any other exit leaves the journal: the next launcher start continues from it.
+            if status == 0 && DiskShrinker.isActive(disks: o.disks) {
+                boot += 1
+                log("shrink-disk: the shrink boot ended; checking the filesystem for boot #\(boot)")
                 continue
             }
             // Unexpected exit (crash, error): offer Report a Problem before cleaning up (the

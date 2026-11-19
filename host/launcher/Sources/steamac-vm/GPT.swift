@@ -141,9 +141,22 @@ struct GPT: Equatable {
 
     // MARK: decode
 
+    /// Read and validate the table of a disk image (see `readStrict`). A Shrink Disk interrupted
+    /// between its partition-table writes and the truncation cannot satisfy `readStrict` (the
+    /// headers and the file size disagree for a moment); its journal on the disk then names the
+    /// table the operation is finishing, which is returned instead (`DiskShrinker`).
+    static func read(path: String) throws -> GPT {
+        do {
+            return try readStrict(path: path)
+        } catch {
+            if let finishing = DiskShrinker.interruptedTable(path: path) { return finishing }
+            throw error
+        }
+    }
+
     /// Read and validate the table of a disk image (protective MBR, primary + backup header and
     /// entry CRCs, backup = primary). Never writes.
-    static func read(path: String) throws -> GPT {
+    static func readStrict(path: String) throws -> GPT {
         let fd = open(path, O_RDONLY)
         guard fd >= 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
         defer { close(fd) }
@@ -159,7 +172,7 @@ struct GPT: Equatable {
         return primary
     }
 
-    private static func parse(header h: [UInt8], array a: [UInt8], myLBA: UInt64, sectors: UInt64) throws -> GPT {
+    static func parse(header h: [UInt8], array a: [UInt8], myLBA: UInt64, sectors: UInt64) throws -> GPT {
         guard Array(h[0..<8]) == Array("EFI PART".utf8), get32(h, 12) == 92 else { throw OptionError("GPT header signature") }
         var z = Array(h[0..<92])
         z[16] = 0; z[17] = 0; z[18] = 0; z[19] = 0

@@ -341,6 +341,23 @@ only as SteamOS writes; exFAT allocates the full added capacity immediately, so 
 free space first. Terminal, with SteamOS stopped:
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`.
 
+**Less capacity (Shrink Disk):** **Settings → Advanced → Shrink Disk…** lowers home capacity when
+used data still fits (refuses otherwise; the 1 GiB margin is only a pre-check, `resize2fs` has the
+last word). The ext4 must shrink **before** the partition table and the file: with SteamOS stopped
+(or after it has shut down for **Shrink and Restart**) a one-shot boot with
+`steamac.shrink-home=N` + `steamac.slot=stop` assembles no system, only runs `e2fsck` and
+`resize2fs` from the rootfs on the unmounted home and powers off; the launcher then rewrites the
+partition table and truncates the image. If the filesystem already fits, the launcher does that
+at once. The operation is kept on the disk image itself, in the unused sectors between the
+primary GPT and the first partition (a journal with the target, the phase and the finished
+tables): quitting the launcher or killing the VM at any point is fine, the next launcher start
+continues from the journal (an interrupted `resize2fs` is repaired by `e2fsck` and run again;
+it flags the filesystem with errors until it is done, which is how the launcher knows). A boot
+that finds the filesystem still too large gives the operation up and leaves the partition table
+alone. Back up the image first if the games matter: a resize that is killed mid-way is
+repairable, not guaranteed. Terminal (filesystem already fits, VM stopped):
+`work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`.
+
 **Reclaim space on the Mac:** after uninstalling games (or after a large Grow), the sparse
 `steamos.img` can stay large on disk even though SteamOS no longer needs those blocks.
 **Settings → Advanced → Reclaim Disk Space…** (SteamOS running) asks the guest to `fstrim`
@@ -348,7 +365,7 @@ free space first. Terminal, with SteamOS stopped:
 is unchanged — allocated size can drop **only when the image is on APFS**. HFS+ and exFAT cannot
 reclaim space this way; the launcher checks the volume before starting. APFS clones and snapshots
 may retain the freed blocks, so the Mac's free space need not increase by the same amount.
-This is not a GPT/home shrink (that remains grow-only).
+Shrink Disk changes capacity; Reclaim only punches holes.
 
 For tests: `STEAMAC_DEFAULTS_DOMAIN=<domain>` substitutes the settings domain; `--selftest-settings
 --selftest-out DIR` opens the window without a VM and writes a PNG of each tab; `--control-fifo` has
