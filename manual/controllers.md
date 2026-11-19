@@ -109,7 +109,14 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 - plugged into the Mac over USB (`28de:1302`): passed through with its own IDs and the USB bus,
   with the same Input Monitoring requirement as Bluetooth. When one USB controller can be matched
   unambiguously to its GameController stand-in, HID keeps that player's slot without an extra Xbox
-  360 pad; BLE passthrough does not suppress other GameController pads;
+  360 pad; BLE passthrough does not suppress other GameController pads. While it is passed through
+  and the VM runs, the launcher opens it exclusively (`SeizeDevice`): a shared open alongside
+  GameController made feature report 1 (Steam's command channel) STALL, and Steam's retries cut
+  Desktop Mode input every 1–2 s. While held, the controller's mouse and keyboard (lizard mode)
+  and its GameController input are unavailable on the Mac, and other apps get an exclusive-access
+  error. A paused VM (suspended or asleep), a controller not passed through, or a refusal from
+  macOS (logged) leaves it shared. Like Bluetooth, it does not wake a sleeping guest while
+  passed through (HID input is dropped while the VM is paused);
 - through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
   controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
   number, which a uhid device does not have, so the slot that carries controller state goes to
