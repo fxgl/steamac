@@ -73,7 +73,7 @@ if let disk = options.shrinkDisk {
             throw OptionError("home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot",
                               localized: String(localized: "home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot"))
         }
-        try DiskShrinker.shrinkGPT(request)
+        _ = try DiskShrinker.apply(request)
         print("Disk shrunk to \(request.homeGiB) GiB home capacity.")
         exit(0)
     } catch {

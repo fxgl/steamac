@@ -1459,25 +1459,23 @@ private struct AdvancedTab: View {
                 throw OptionError("enter a whole number of GiB", localized: String(localized: "enter a whole number of GiB"))
             }
             let request = try DiskShrinker.request(path: path, homeGiB: size)
-            if request.filesystemFits {
-                try DiskShrinker.shrinkGPT(request)
+            if running, let runDir = Supervisor.runDir {
+                // The running VM holds the disk, whether or not the ext4 already fits: only the request
+                // is queued; the launcher writes the journal once the VM has stopped (as Grow does).
+                try DiskShrinker.queue(request, runDir: runDir)
+                context.restart?()
+                return
+            }
+            switch try DiskShrinker.apply(request) {
+            case .completed:
                 let done = NSAlert()
                 done.messageText = String(localized: "SteamOS disk shrunk")
                 done.informativeText = String(localized: "Home capacity is now \(size) GiB.")
                 done.runModal()
-                return
-            }
-            guard let runDir = Supervisor.runDir else {
-                throw OptionError("start SteamOS once so a run directory exists, then shrink again",
-                                  localized: String(localized: "start SteamOS once so a run directory exists, then shrink again"))
-            }
-            try DiskShrinker.queue(request, runDir: runDir)
-            if running {
-                context.restart?()
-            } else {
+            case .guestPass, .idle:
                 let next = NSAlert()
                 next.messageText = String(localized: "Shrink boot queued")
-                next.informativeText = String(localized: "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start.")
+                next.informativeText = String(localized: "Start SteamOS. It will shrink the filesystem in a one-shot boot and power off, then the launcher finishes the partition table. If anything interrupts it, the next start continues.")
                 next.runModal()
             }
         } catch {
