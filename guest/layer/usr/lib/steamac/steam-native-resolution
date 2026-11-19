@@ -3,30 +3,53 @@
 
 Steam otherwise requests a 1920x1080 Xwayland surface even when gamescope's
 output follows the launcher's Retina display. GameResolutionGlobal controls
-games, not this surface. Before enabling native UI, seed each account's missing/Default
-game resolution with the former UI cap, once per account. Explicit global and
-per-game choices are untouched. This install-scoped UI setting lives directly
-under InstallConfigStore/Gamescope (not Software/Valve/Steam/Gamescope).
-Only supply a missing value, once per Steam installation. The marker prevents
-reapplying the default even if Steam later removes the key for a user choice.
-A new gamescope session is required to lift an existing 1080p cap.
+games, not this surface, but its Default follows the UI: with the native UI on, a
+game left on Default jumps to the native resolution. So the native UI is enabled
+only once at least one account has been looked at, and each account's missing/Default
+game resolution is first set to the former UI cap. This install-scoped UI setting
+lives directly under InstallConfigStore/Gamescope (not Software/Valve/Steam/Gamescope).
+
+What the hook writes, and what it leaves alone:
+- A value the user chose (an explicit global resolution, Native, per-game overrides)
+  is never touched, and a key Steam removed later is not supplied again.
+- The cap it seeds is derived from the display. On every Steam start, while the account
+  still holds exactly the value the hook wrote (the marker remembers it), it is
+  recomputed for the current display; a value the user changed stays.
+- The native UI is enabled once per Steam installation (marker). On a fresh install
+  that waits for the first sign-in: the account's config does not exist before, and
+  Steam keeps it in memory while it runs, so it can only be edited between Steam runs.
+- One account whose config cannot be read or written is skipped and logged.
+A new gamescope session is required to lift an existing 1080p cap. An account that
+signs in for the first time in a session that already runs the native UI gets its cap at
+the next Steam start.
 """
 from pathlib import Path
 import runpy
 import re
 import sys
 
-# Share the byte-preserving VDF editor used by the other config.vdf startup hook.
-vdf = runpy.run_path(str(Path(__file__).with_name("steam-idle-screensaver")))
+MARKER = "steamac-native-resolution"
 GAME_KEY = ("UserLocalConfigStore", "Gamescope", "GameResolutionGlobal")
 KEY = ("InstallConfigStore", "Gamescope", "EnableSteamNativeExternalResolution")
+_vdf = None
+
+
+def vdf():
+    """The byte-preserving VDF editor shared with the other config.vdf startup hook.
+
+    Loaded on first use so that a failure to load it is handled like any other error.
+    """
+    global _vdf
+    if _vdf is None:
+        _vdf = runpy.run_path(str(Path(__file__).with_name("steam-idle-screensaver")))
+    return _vdf
 
 
 def native_resolution(text):
-    values, _ = vdf["vdf_entries"](text)
+    values, _ = vdf()["vdf_entries"](text)
     if tuple(part.lower() for part in KEY) in values:
         return text
-    return vdf["vdf_add"](text, KEY, "1")
+    return vdf()["vdf_add"](text, KEY, "1")
 
 
 def legacy_resolution(width, height):
@@ -45,58 +68,115 @@ def preferred_mode():
     raise ValueError("no preferred DRM display mode; retry next Steam start")
 
 
-def game_resolution(text, size):
-    values, _ = vdf["vdf_entries"](text)
-    key = tuple(part.lower() for part in GAME_KEY)
-    current = values.get(key)
-    if current and current[0].lower() not in ("", "default"):
-        return text
-    value = f"{size[0]}x{size[1]}"
+def format_size(size):
+    return f"{size[0]}x{size[1]}"
+
+
+def current_game_resolution(text):
+    """The account's GameResolutionGlobal as written, or None when the key is absent."""
+    values, _ = vdf()["vdf_entries"](text)
+    current = values.get(tuple(part.lower() for part in GAME_KEY))
+    return current[0] if current else None
+
+
+def is_default(value):
+    return value is None or value.lower() in ("", "default")
+
+
+def set_game_resolution(text, value):
+    values, _ = vdf()["vdf_entries"](text)
+    current = values.get(tuple(part.lower() for part in GAME_KEY))
     if current:
         _, start, end = current
-        return text[:start] + vdf["vdf_quote"](value) + text[end:]
-    return vdf["vdf_add"](text, GAME_KEY, value)
+        return text[:start] + vdf()["vdf_quote"](value) + text[end:]
+    return vdf()["vdf_add"](text, GAME_KEY, value)
+
+
+def game_resolution(text, size):
+    """Supply a missing/Default value; any other value is a choice and stays."""
+    if not is_default(current_game_resolution(text)):
+        return text
+    return set_game_resolution(text, format_size(size))
+
+
+def read_marker(marker):
+    """None: never handled. "": handled, nothing of ours to follow. "WxH": the value we wrote."""
+    try:
+        content = marker.read_text().strip()
+    except FileNotFoundError:
+        return None
+    found = re.fullmatch(r"seeded ([0-9]+x[0-9]+)", content)
+    return found.group(1) if found else ""
+
+
+def write_marker(marker, seeded):
+    vdf()["atomic_write"](marker, f"seeded {seeded}\n" if seeded else "kept\n")
+
+
+def protect_account(config):
+    """Look at one account. True when it is handled (it has a marker afterwards)."""
+    marker = config.parent / MARKER
+    seeded = read_marker(marker)
+    if seeded == "":
+        return True
+    text = config.read_text()
+    current = current_game_resolution(text)
+    if seeded is None:
+        if is_default(current):
+            value = format_size(legacy_resolution(*preferred_mode()))
+            vdf()["atomic_write"](config, set_game_resolution(text, value))
+            print(f"steam-native-resolution: game resolution {value} in {config}", file=sys.stderr)
+            write_marker(marker, value)
+        else:
+            write_marker(marker, None)
+    elif current is not None and current.lower() == seeded:
+        # Still the value we wrote: follow the display, as Default did before.
+        value = format_size(legacy_resolution(*preferred_mode()))
+        if value != seeded:
+            vdf()["atomic_write"](config, set_game_resolution(text, value))
+            print(f"steam-native-resolution: game resolution {seeded} -> {value} in {config}", file=sys.stderr)
+            write_marker(marker, value)
+    else:
+        write_marker(marker, None)
+    return True
 
 
 def preserve_game_defaults(steamroot):
-    # Account files appear after first sign-in. Retry on later starts for new
-    # accounts, but never reapply to an account whose marker already exists.
+    """Protect every account whose config exists; return how many are handled."""
+    handled = 0
     for config in sorted((steamroot / "userdata").glob("*/config/localconfig.vdf")):
         if not config.parent.parent.name.isdecimal():
             continue
-        marker = config.parent / "steamac-native-resolution"
-        if marker.exists():
-            continue
-        text = config.read_text()
-        values, _ = vdf["vdf_entries"](text)
-        current = values.get(tuple(part.lower() for part in GAME_KEY))
-        if not current or current[0].lower() in ("", "default"):
-            changed = game_resolution(text, legacy_resolution(*preferred_mode()))
-            if changed != text:
-                vdf["atomic_write"](config, changed)
-                print("steam-native-resolution: preserve legacy game default in " + str(config), file=sys.stderr)
-        vdf["atomic_write"](marker, "1\n")
+        try:
+            handled += protect_account(config)
+        except (OSError, ValueError) as error:
+            print(f"steam-native-resolution: skipping {config}: {error}", file=sys.stderr)
+    return handled
 
 
 def main():
     steamroot = Path.home() / ".local/share/Steam"
-    # Prepare game defaults before enabling the native UI. Do not bypass this
-    # step when the install marker exists: accounts can be added afterwards.
-    preserve_game_defaults(steamroot)
+    # Account configs first, on every start: accounts can be added after the install marker.
+    handled = preserve_game_defaults(steamroot)
     config = steamroot / "config/config.vdf"
-    marker = config.parent / "steamac-native-resolution"
+    marker = config.parent / MARKER
     if marker.exists():
         return
     text = config.read_text() if config.exists() else ""
-    changed = native_resolution(text if text.strip() else vdf["EMPTY"])
+    changed = native_resolution(text if text.strip() else vdf()["EMPTY"])
+    if changed != text and not handled:
+        print("steam-native-resolution: native UI waits for the first account's game resolution; "
+              "retry next Steam start", file=sys.stderr)
+        return
     if changed != text:
-        vdf["atomic_write"](config, changed)
+        vdf()["atomic_write"](config, changed)
         print("steam-native-resolution: default Steam UI to native display resolution", file=sys.stderr)
-    vdf["atomic_write"](marker, "1\n")
+    vdf()["atomic_write"](marker, "1\n")
 
 
 if __name__ == "__main__":
+    # Never block Steam's start: whatever fails here (including loading the helper) is logged.
     try:
         main()
-    except (OSError, ValueError) as error:
+    except Exception as error:
         print("steam-native-resolution: leaving remaining settings unchanged: " + str(error), file=sys.stderr)
