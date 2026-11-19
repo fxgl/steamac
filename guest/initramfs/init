@@ -41,9 +41,9 @@
 #   steamac.layer=/dev/vdX  layer device (default: autodetect erofs disk)
 #   steamac.provision=1  first boot of a launcher-created disk: format and fill
 #                      the blank partitions from the payload disk (see "provisioning")
-#   steamac.shrink-home=N  shrink the unmounted home ext4 to N GiB (resize2fs via
-#                      chroot into the assembled rootfs), then power off when
-#                      steamac.slot=stop so the host can rewrite GPT and truncate
+#   steamac.shrink-home=N  with steamac.slot=stop: shrink the unmounted home ext4 to N GiB
+#                      (e2fsck + resize2fs from the primary slot's rootfs, see "shrink home"),
+#                      then power off so the host can rewrite GPT and truncate the image
 #   steamac.config=1   apply the launcher's config payload disk (see "config payload")
 #   steamac.ssh=0|1    0: no SSH server this boot (see "SSH switch"); 1/absent: as enabled
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
@@ -672,9 +672,14 @@ msg "A/B state: BOOT_ORDER='$BOOT_ORDER' BOOT_A_LEFT=$BOOT_A_LEFT BOOT_B_LEFT=$B
 FORCED=$(getarg steamac.slot)
 case "$FORCED" in
     A|B) SLOT=$FORCED; msg "slot $SLOT forced by steamac.slot= (counters untouched)" ;;
-    stop) msg "steamac.slot=stop: provisioning/config complete; powering off (counters untouched)"
-          sync
-          poweroff -f ;;
+    stop) if [ -z "$(getarg steamac.shrink-home)" ]; then
+              msg "steamac.slot=stop: provisioning/config complete; powering off (counters untouched)"
+              sync
+              poweroff -f
+          fi
+          # Shrink Disk's guest pass needs a rootfs for its e2fsprogs: the primary slot's one.
+          SLOT=${BOOT_ORDER%% *}
+          msg "steamac.slot=stop with steamac.shrink-home: slot $SLOT's rootfs runs the shrink (counters untouched)" ;;
     "")  if ! pick_slot; then
              warn "no slot has boot attempts left; resetting counters and booting the primary anyway"
              BOOT_A_LEFT=$MAX_TRIES; BOOT_B_LEFT=$MAX_TRIES
@@ -736,70 +741,80 @@ assemble_slot() {
 
 INIT=$(getarg init); [ -n "$INIT" ] || INIT=/sbin/init
 if ! assemble_slot "$SLOT"; then
-    [ -n "$FORCED" ] && fatal "forced slot $SLOT cannot be assembled"
-    warn "slot $SLOT is unusable, marking it bad (BOOT_${SLOT}_LEFT=0)"
-    set_left "$SLOT" 0
-    BAD=$SLOT
-    pick_slot "$BAD" || fatal "slot $BAD failed and no other slot has attempts left"
-    save_state
-    assemble_slot "$SLOT" || { set_left "$SLOT" 0; save_state; fatal "both slots failed to assemble"; }
+    [ -n "$FORCED" ] && [ "$FORCED" != stop ] && fatal "forced slot $SLOT cannot be assembled"
+    if [ "$FORCED" = stop ]; then
+        # The shrink boot marks nothing bad: it tries the other slot's rootfs and otherwise powers off.
+        SLOT=$(other_of "$SLOT")
+        assemble_slot "$SLOT" || { warn "shrink-home: neither slot's rootfs can be assembled"; sync; poweroff -f; }
+    else
+        warn "slot $SLOT is unusable, marking it bad (BOOT_${SLOT}_LEFT=0)"
+        set_left "$SLOT" 0
+        BAD=$SLOT
+        pick_slot "$BAD" || fatal "slot $BAD failed and no other slot has attempts left"
+        save_state
+        assemble_slot "$SLOT" || { set_left "$SLOT" 0; save_state; fatal "both slots failed to assemble"; }
+    fi
 fi
 echo "$SLOT" > /run/steamac/slot
 
 # ---------------------------------------------------------------- shrink home
-# Host Shrink Disk: filesystem must shrink before GPT/truncate. With
-# steamac.shrink-home=N (GiB), after the read-only rootfs is assembled and
-# before /var or /home are mounted, e2fsck + resize2fs from the rootfs shrink
-# the home partition in place. steamac.slot=stop then powers off so the host
-# can rewrite GPT and ftruncate the image (DiskShrinker). growfs must not run
-# against the still-large GPT, so we never switch_root on this boot.
+# Host Shrink Disk (DiskShrinker): the filesystem has to shrink before the host rewrites
+# the partition table and truncates the image. steamac.slot=stop with steamac.shrink-home=N
+# (GiB) boots no system: the read-only rootfs assembled above is only the source of e2fsprogs
+# for the unmounted home, then the VM powers off (never a switch_root: growfs would grow the
+# filesystem back into the still-large partition). Anything that goes wrong powers off too,
+# never a shell: the host finds the filesystem unfit and gives the operation up.
+# It can be repeated after an interruption: e2fsck repairs what resize2fs left half done, then
+# resize2fs starts again (it flags the filesystem with errors until it has finished, which is
+# how the host tells a finished shrink from an interrupted one).
+shrink_abort() {
+    warn "shrink-home: $*"
+    fx_find_port
+    fx_say shrink "failed $*"
+    umount /newroot/proc 2>/dev/null; umount /newroot/dev 2>/dev/null
+    sync
+    poweroff -f
+}
 shrink_home() {
     _gib=$(getarg steamac.shrink-home)
     [ -n "$_gib" ] || return 0
+    [ "$FORCED" = stop ] || shrink_abort "steamac.shrink-home needs steamac.slot=stop"
     case $_gib in
-        *[!0-9]*|"") fatal "steamac.shrink-home=$_gib: need an integer GiB count" ;;
+        *[!0-9]*|"") shrink_abort "steamac.shrink-home=$_gib: need an integer GiB count" ;;
     esac
-    [ "$_gib" -ge 8 ] && [ "$_gib" -le 4096 ] || fatal "steamac.shrink-home=$_gib: need 8..4096"
-    _d=$(part_dev home) || fatal "steamac.shrink-home: no home partition"
+    [ "$_gib" -ge 8 ] && [ "$_gib" -le 4096 ] || shrink_abort "steamac.shrink-home=$_gib: need 8..4096"
+    _d=$(part_dev home) || shrink_abort "no home partition"
     msg "shrink-home: e2fsck/resize2fs home ($_d) to ${_gib}G"
     mount -o bind /dev /newroot/dev && mount -t proc proc /newroot/proc \
-        || fatal "shrink-home: cannot prepare chroot"
-    # -f: force check after possible unclean VM kill; -y: answer yes (fsck.repair style).
-    if ! chroot /newroot /usr/sbin/e2fsck -f -y "$_d"; then
-        _rc=$?
-        # e2fsck: 1 = corrected, 2 = corrected and reboot needed — both OK offline.
-        [ "$_rc" -eq 1 ] || [ "$_rc" -eq 2 ] || {
-            umount /newroot/proc; umount /newroot/dev
-            fatal "shrink-home: e2fsck failed (exit $_rc)"
-        }
+        || shrink_abort "cannot prepare chroot"
+    # -f: check even if the filesystem looks clean (VM killed, interrupted resize2fs); -y: repair.
+    # Exit status: 0 clean, 1 corrected, 2 corrected and reboot advised (both fine offline), 4+ not fixed.
+    chroot /newroot /usr/sbin/e2fsck -f -y "$_d"
+    _rc=$?
+    [ "$_rc" -le 2 ] || shrink_abort "e2fsck failed (exit $_rc)"
+    _bs=$(chroot /newroot /usr/sbin/tune2fs -l "$_d" 2>/dev/null | sed -n 's/^Block size: *//p')
+    case $_bs in
+        ""|*[!0-9]*) shrink_abort "cannot read the block size of $_d" ;;
+    esac
+    _target_blocks=$((_gib * 1024 * 1024 * 1024 / _bs))
+    # resize2fs -P: "Estimated minimum size of the filesystem: <blocks>" (filesystem blocks).
+    _min=$(chroot /newroot /usr/sbin/resize2fs -P "$_d" 2>/dev/null | sed -n 's/.*: *//p')
+    case $_min in
+        *[!0-9]*) _min= ;;
+    esac
+    if [ -n "$_min" ] && [ "$_min" -gt "$_target_blocks" ]; then
+        shrink_abort "filesystem needs at least $_min blocks of $_bs bytes; ${_gib}G is too small"
     fi
-    _min=$(chroot /newroot /usr/sbin/resize2fs -P "$_d" 2>/dev/null | sed -n 's/.*: //p')
-    _target_blocks=$((_gib * 1024 * 1024 * 1024 / 4096))
-    # Block size is usually 4 KiB on SteamOS home (-T huge); resize2fs -P prints blocks.
-    if [ -n "$_min" ] && [ "$_min" -gt 0 ] && [ "$_min" -gt "$_target_blocks" ]; then
-        umount /newroot/proc; umount /newroot/dev
-        fatal "shrink-home: filesystem needs at least $_min 4KiB blocks; ${_gib}G is too small"
+    if ! chroot /newroot /usr/sbin/resize2fs "$_d" "${_gib}G"; then
+        chroot /newroot /usr/sbin/e2fsck -f -y "$_d" >/dev/null 2>&1
+        shrink_abort "resize2fs ${_gib}G failed"
     fi
-    chroot /newroot /usr/sbin/resize2fs "$_d" "${_gib}G" \
-        || { umount /newroot/proc; umount /newroot/dev; fatal "shrink-home: resize2fs ${_gib}G failed"; }
     umount /newroot/proc; umount /newroot/dev
     sync
-    if esp_rw_mount; then
-        mkdir -p /esp/steamac
-        echo "$_gib" > /esp/steamac/shrink-home-done
-        sync /esp/steamac/shrink-home-done
-        esp_rw_umount || warn "shrink-home: could not unmount esp after marker"
-    else
-        warn "shrink-home: esp not writable; host must trust progress/console alone"
-    fi
     fx_find_port
     fx_say shrink "done $_gib"
-    msg "shrink-home: filesystem now ${_gib}G"
-    if [ "$(getarg steamac.slot)" = stop ]; then
-        msg "steamac.slot=stop: shrink complete; powering off for host GPT truncate"
-        poweroff -f
-    fi
-    fatal "steamac.shrink-home set without steamac.slot=stop; refusing to boot into a still-large GPT (growfs would undo the shrink)"
+    msg "shrink-home: filesystem now ${_gib}G; powering off for the host's partition table rewrite"
+    poweroff -f
 }
 shrink_home
 
