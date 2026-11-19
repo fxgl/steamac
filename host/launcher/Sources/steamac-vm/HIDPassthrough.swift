@@ -7,7 +7,11 @@ import GameController
 /// GameController. The guest gets their own descriptors and reports, including output reports.
 ///
 /// GameController keeps the device too (it still picks the controller and wakes a sleeping
-/// guest): both read the same input reports; the IOHIDManager is opened without seizing it.
+/// guest): both read the same input reports. Devices are opened shared, except a USB-wired
+/// Steam Controller while it is passed through and the VM runs: it is then opened with
+/// SeizeDevice (`updateSeize`), because a shared open made feature report 1 STALL and Steam's
+/// retries cut Desktop Mode input every 1-2 s. A paused VM, a released device, or an exclusive
+/// open that IOKit refuses go back to the shared open.
 /// Reports keep the HID convention on both sides: a numbered report starts with its ID.
 /// Callbacks run on the main run loop; Get/SetReport block, so they run on a serial queue and
 /// complete on the main queue.
@@ -91,6 +95,13 @@ final class HIDPassthrough {
         /// per-input allocation. Only read on the main thread, like the callback itself.
         fileprivate var lastInputLength = 0
         fileprivate var lastInputTime: TimeInterval = 0
+        /// Open with SeizeDevice right now (`HIDPassthrough.updateSeize`).
+        fileprivate var seized = false
+        /// IOKit refused the exclusive open: this connection stays shared.
+        fileprivate var seizeRefused = false
+        fileprivate var openOptions: IOOptionBits {
+            IOOptionBits(seized ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone)
+        }
 
         var live: Bool {
             guard puckSlot != nil else { return true }
@@ -117,7 +128,7 @@ final class HIDPassthrough {
         /// delivered on the main run loop, which this unschedules before the buffer goes.
         deinit {
             IOHIDDeviceUnscheduleFromRunLoop(ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(ref, IOOptionBits(kIOHIDOptionsTypeNone))
+            IOHIDDeviceClose(ref, openOptions)
             inputBuffer.deallocate()
         }
     }
@@ -536,7 +547,7 @@ final class HIDPassthrough {
         for d in devices {
             let route = d.onInput == nil ? "not forwarding" : "forwarding"
             var line = String(format: "HID %04x:%04x", d.identity.vendor, d.identity.product)
-                + " \(d.identity.name), registry=\(d.registryID), \(route)"
+                + " \(d.identity.name), registry=\(d.registryID), \(route), \(d.seized ? "exclusive" : "shared")"
             if let slot = d.puckSlot {
                 let age = d.lastState.map { String(format: "%.3fs", now - $0) } ?? "none"
                 line += ", Puck slot=\(slot) live=\(d.live) state age=\(age)"
@@ -713,6 +724,7 @@ final class HIDPassthrough {
     func activate(_ d: Device, owner: AnyObject, handler: @escaping (UnsafeBufferPointer<UInt8>) -> Void) {
         d.inputOwner = ObjectIdentifier(owner)
         d.onInput = handler
+        scheduleSeizeUpdate()
     }
 
     /// Stop passing `d` through for `owner` only: a later slot that already claimed the device
@@ -721,6 +733,58 @@ final class HIDPassthrough {
         guard d.inputOwner == ObjectIdentifier(owner) else { return }
         d.inputOwner = nil
         d.onInput = nil
+        scheduleSeizeUpdate()
+    }
+
+    /// The VM is paused (suspended, guest asleep): nothing is passed through, so the
+    /// controllers go back to the shared open and GameController sees them as it does without
+    /// passthrough. Exclusive again when the VM runs.
+    var vmPaused = false {
+        didSet { if vmPaused != oldValue { for d in devices { updateSeize(d) } } }
+    }
+
+    private var seizeUpdatePending = false
+
+    /// Re-evaluate every device's open mode after the current main-queue turn: a Steam
+    /// Controller moving between players is deactivated and activated again in one reconcile
+    /// and must not be reopened in between.
+    private func scheduleSeizeUpdate() {
+        guard !seizeUpdatePending else { return }
+        seizeUpdatePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.seizeUpdatePending = false
+            for d in self.devices { self.updateSeize(d) }
+        }
+    }
+
+    /// The USB-wired Steam Controller (`28de:1302`): GameController publishes it, so a shared
+    /// open competes with it. BLE is not published by GameController and a Puck slot is
+    /// another Puck controller's business; both stay shared.
+    static func seizable(_ d: Device) -> Bool {
+        isUSBSteamController(d)
+    }
+
+    /// Exclusive only while the device is passed through and the VM runs. Reopening drops the
+    /// callbacks IOKit holds for the old open, so `watch` registers them again.
+    private func updateSeize(_ d: Device) {
+        let want = HIDPassthrough.seizable(d) && d.onInput != nil && !vmPaused && !d.seizeRefused
+        guard want != d.seized else { return }
+        IOHIDDeviceClose(d.ref, d.openOptions)
+        d.seized = want
+        var result = IOHIDDeviceOpen(d.ref, d.openOptions)
+        if result != kIOReturnSuccess && want {
+            d.seized = false
+            d.seizeRefused = true
+            log("hid passthrough: \(d.identity.name) cannot be opened exclusively (\(HIDPassthrough.describe(result))); it stays shared")
+            result = IOHIDDeviceOpen(d.ref, d.openOptions)
+        }
+        guard result == kIOReturnSuccess else {
+            log("hid passthrough: \(d.identity.name) did not reopen: \(HIDPassthrough.describe(result))")
+            return
+        }
+        watch(d)
+        log("hid passthrough: \(d.identity.name) opened \(d.seized ? "exclusively" : "shared")")
     }
 
     enum ReportType: String {
