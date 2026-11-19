@@ -18,6 +18,31 @@ enum ProvisionSelfTest {
         check(memoryFailures.isEmpty, "host memory-region diagnostics: \(memoryFailures)")
         let gameModeFailures = GameModeDiagnostics.selfCheck()
         check(gameModeFailures.isEmpty, "Game Mode eligibility diagnostics (STEAMAC-9V): \(gameModeFailures)")
+        let instrumentationFailures = MetalInstrumentation.selfCheck()
+        check(instrumentationFailures.isEmpty, "loaded Metal instrumentation diagnostics: \(instrumentationFailures)")
+        for (name, host) in [
+            ("hypervisor flag", VM.HostEnvironment(vmmPresent: 1, hypervisorSupported: 0, model: "Mac16,12", gpu: "Apple M4")),
+            ("VirtualMac model", VM.HostEnvironment(vmmPresent: nil, hypervisorSupported: nil, model: "VirtualMac2,1", gpu: nil)),
+            ("paravirtual GPU", VM.HostEnvironment(vmmPresent: 0, hypervisorSupported: 0, model: nil, gpu: "Apple Paravirtual device")),
+            ("VM with advertised hypervisor support", VM.HostEnvironment(vmmPresent: 1, hypervisorSupported: 1, model: nil, gpu: nil)),
+        ] {
+            check(host.isVirtualMachine && host.rejection != nil,
+                  "nested virtualization rejected before disk creation/libkrun: \(name) (STEAMAC-15)")
+        }
+        let physicalHost = VM.HostEnvironment(vmmPresent: 0, hypervisorSupported: 1, model: "MacBookPro18,2", gpu: "Apple M1 Max")
+        let unknownHost = VM.HostEnvironment(vmmPresent: nil, hypervisorSupported: nil, model: nil, gpu: nil)
+        let unsupportedHost = VM.HostEnvironment(vmmPresent: 0, hypervisorSupported: 0, model: "Mac16,12", gpu: nil)
+        check(!physicalHost.isVirtualMachine && physicalHost.rejection == nil && unknownHost.rejection == nil,
+              "physical Mac and missing sysctls are not mistaken for a VM")
+        check(!unsupportedHost.isVirtualMachine && unsupportedHost.rejection != nil,
+              "unavailable Hypervisor API has a separate explanation")
+        check(physicalHost.diagnostic.contains("kern.hv_vmm_present=0")
+              && physicalHost.diagnostic.contains("kern.hv_support=1")
+              && physicalHost.diagnostic.contains("hw.model=MacBookPro18,2")
+              && physicalHost.diagnostic.contains("GPU=Apple M1 Max")
+              && !CrashReporting.unexpectedExit(status: CrashReporting.startupRejectedStatus, runDir: NSTemporaryDirectory()),
+              "virtualization evidence is logged and startup refusal never becomes an unexpected-exit report")
+        log("selftest-provision: current virtualization host: \(VM.HostEnvironment.current.diagnostic)")
         attempt("incomplete app installation (STEAMAC-8K)") {
             let fm = FileManager.default
             let bundle = fm.temporaryDirectory.appendingPathComponent("steamac-incomplete-\(UUID().uuidString).app")
@@ -290,6 +315,66 @@ enum ProvisionSelfTest {
         }
         check(CrashReporting.diskCreationReport(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotParseResponse)) != nil,
               "unexpected URLSession protocol failure remains reportable")
+        attempt("downloaded atomupd metadata (STEAMAC-AQ)") {
+            let url = URL(string: DiskCreator.metaURL + "stable.json")!
+            for (name, status, type, body) in [
+                ("network sign-in HTML", 200, "text/html", "<!DOCTYPE html>\n<title>Sign in to Wi-Fi</title>"),
+                ("empty response", 200, "application/json", ""),
+                ("truncated JSON", 200, "application/json", "{\"minor\":{\"candidates\":["),
+                ("proxy text", 200, "text/plain", "upstream connection failed"),
+                ("HTTP proxy rejection", 407, "text/html", "<h1>Proxy Authentication Required</h1>"),
+                ("HTTP service outage", 503, "application/json", "{\"error\":\"unavailable\"}"),
+            ] {
+                let data = Data(body.utf8)
+                let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                                               headerFields: ["Content-Type": type])!
+                if status == 200 && !body.hasPrefix("{") {
+                    do {
+                        _ = try JSONSerialization.jsonObject(with: data)
+                        check(false, "old metadata parser rejects \(name)")
+                    } catch {
+                        let e = error as NSError
+                        check(e.domain == NSCocoaErrorDomain && e.code == 3840,
+                              "reproduced old raw Foundation JSON error for \(name)")
+                    }
+                }
+                do {
+                    _ = try DiskCreator.candidate(data: data, response: response, url: url)
+                    check(false, "\(name) must not become a SteamOS candidate")
+                } catch {
+                    check(error is DiskCreator.MetadataResponseFailure && NetworkFailure.isExpected(error)
+                          && CrashReporting.diskCreationReport(error) == nil,
+                          "\(name) is an expected log-only download condition")
+                    let detail = "\(error)"
+                    check(detail.contains("HTTP \(status)") && detail.contains(type)
+                          && detail.contains("body \(data.count) bytes") && detail.contains("first bytes")
+                          && detail.contains(String(reflecting: String(decoding: data.prefix(160), as: UTF8.self))),
+                          "\(name) retains HTTP status, content type and escaped first bytes")
+                    check(NetworkFailure.message(error, server: .valve).contains("Check your internet connection")
+                          && !NetworkFailure.localizedMessage(error, server: .valve).isEmpty,
+                          "\(name) explains recovery instead of exposing JSON error 3840")
+                }
+            }
+            let metadata = Data(#"{"minor":{"candidates":[{"image":{"buildid":"20261022.6150929","version":"0.4.5","arch":"aarch64"},"update_path":"vr/old.raucb","chunks_store_path":"vr/chunks.castr"}]},"major":{"candidates":[{"image":{"buildid":"20261101.1","version":"0.5","arch":"aarch64"},"update_path":"vr/new.raucb","chunks_store_path":"vr/chunks.castr"}]}}"#.utf8)
+            for type in ["application/json", "application/octet-stream"] {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                                               headerFields: ["Content-Type": type])!
+                let candidate = try DiskCreator.candidate(data: metadata, response: response, url: url)
+                check(candidate.buildID == "20261101.1" && candidate.updatePath == "vr/new.raucb",
+                      "valid metadata selects newest candidate even when content type is \(type)")
+            }
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            for body in ["[]", "{}"] {
+                do {
+                    _ = try DiskCreator.candidate(data: Data(body.utf8), response: response, url: url)
+                    check(false, "incompatible metadata schema \(body) rejected")
+                } catch {
+                    check(error is OptionError && !NetworkFailure.isExpected(error)
+                          && CrashReporting.diskCreationReport(error) != nil,
+                          "valid JSON with incompatible schema remains reportable: \(body)")
+                }
+            }
+        }
         for type in ["apfs", "hfs", "exfat"] {
             attempt("supported \(type) filesystem") {
                 let dense = try DiskCreationFilesystem.preflight(directory: "/Volumes/Jeux#/StreamOS", type: type,
@@ -359,6 +444,9 @@ enum ProvisionSelfTest {
             check(CrashReporting.diskCreationReport(DiskCreationFilesystem.Rejection(reason)) == nil,
                   "expected location rejection is log-only: \(reason)")
         }
+        check(CrashReporting.diskCreationReport(DiskCreationFilesystem.notEnoughSpace(needed: 20_000_000_000,
+                  directory: NSTemporaryDirectory())) == nil,
+              "real free-space guidance is log-only (STEAMAC-B0, old 1.7.5)")
         check(CrashReporting.diskCreationReport(DiskCreator.Cancelled()) == nil, "cancelled disk creation is log-only")
         let publication = CrashReporting.diskCreationReport(OptionError("rename /Volumes/disk: Operation not supported"))
         let signature = CrashReporting.diskCreationReport(OptionError("bundle signature: certificate chain not trusted"))

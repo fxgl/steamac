@@ -1,0 +1,340 @@
+From 2a6b5bf1daf769e8b71d3c5f66565d3318a15eb3 Mon Sep 17 00:00:00 2001
+From: steamac-build <b@steamac>
+Date: Sun, 15 Nov 2026 15:01:55 +0400
+Subject: [PATCH] kosmickrisp: diagnose command storage growth
+ (STEAMAC-AK/AP/AN/AX)
+
+The abort at IOGPUMetalCommandBufferStorageAllocResourceAtIndex+512 follows a NULL pooled-resource allocation on M1 Max/macOS 27.0.1; it is not the separate invalid resource-class assertion. Report 618cc727 grows from 52116 to 94944 MiB footprint while Metal resources stay near 3023 MiB. The retained reports cannot identify the missing memory owner.
+
+Expose real allocator heap and residency usage, with snapshots before encoder creation/end and recording end. Report per-Metal-buffer encoder attempts separately from Vulkan recording counts, uploads, large buffers and cached pool object counts. Normal reports use doubling high waters; cbs logs each recording. Preserve allocator lifetimes: executable siblings can share an allocator and resetting one would invalidate the other.
+
+Private M1 Max component build and command-allocator regression pass: 85 explicit snapshots, 3 bounded growth snapshots. After warmup, 64 rounds stay at 55825760 bytes; 1024 render/fill pairs with two executable siblings plateau at 735663456 bytes over repeated recordings. The old driver fails only the new diagnostic assertions; its allocations also plateau. Exact game abort not reproduced, so no speculative allocator fix.
+---
+ src/kosmickrisp/bridge/mtl_command_buffer.h   |   1 +
+ src/kosmickrisp/bridge/mtl_command_buffer.m   |   9 ++
+ src/kosmickrisp/bridge/mtl_residency_set.h    |   2 +
+ src/kosmickrisp/bridge/mtl_residency_set.m    |  11 ++
+ .../bridge/stubs/mtl_command_buffer.c         |   6 +
+ .../bridge/stubs/mtl_residency_set.c          |   8 ++
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 106 ++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   4 +
+ 8 files changed, 147 insertions(+)
+
+diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.h b/src/kosmickrisp/bridge/mtl_command_buffer.h
+index f229a46..6a1b26a 100644
+--- a/src/kosmickrisp/bridge/mtl_command_buffer.h
++++ b/src/kosmickrisp/bridge/mtl_command_buffer.h
+@@ -15,6 +15,7 @@
+ void mtl_command_buffer_set_log(bool every_call);
+ 
+ void mtl_command_allocator_reset(mtl_command_allocator *allocator);
++uint64_t mtl_command_allocator_allocated_size(mtl_command_allocator *allocator);
+ 
+ void mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
+                               mtl_command_allocator *allocator);
+diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.m b/src/kosmickrisp/bridge/mtl_command_buffer.m
+index 83d3be3..e89509c 100644
+--- a/src/kosmickrisp/bridge/mtl_command_buffer.m
++++ b/src/kosmickrisp/bridge/mtl_command_buffer.m
+@@ -32,6 +32,15 @@
+    }
+ }
+ 
++uint64_t
++mtl_command_allocator_allocated_size(mtl_command_allocator *allocator)
++{
++   @autoreleasepool {
++      id<MTL4CommandAllocator> alloc = (id<MTL4CommandAllocator>)allocator;
++      return alloc.allocatedSize;
++   }
++}
++
+ void
+ mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
+                          mtl_command_allocator *allocator)
+diff --git a/src/kosmickrisp/bridge/mtl_residency_set.h b/src/kosmickrisp/bridge/mtl_residency_set.h
+index 8591b3c..6875dae 100644
+--- a/src/kosmickrisp/bridge/mtl_residency_set.h
++++ b/src/kosmickrisp/bridge/mtl_residency_set.h
+@@ -17,5 +17,7 @@ void mtl_residency_set_remove_allocation(mtl_residency_set *residency_set,
+ void mtl_residency_set_commit(mtl_residency_set *residency_set);
+ void mtl_residency_set_request_residency(mtl_residency_set *residency_set);
+ void mtl_residency_set_end_residency(mtl_residency_set *residency_set);
++void mtl_residency_set_get_usage(mtl_residency_set *residency_set,
++                                 uint64_t *bytes, uint64_t *allocations);
+ 
+ #endif /* MTL_RESIDENCY_SET_H */
+\ No newline at end of file
+diff --git a/src/kosmickrisp/bridge/mtl_residency_set.m b/src/kosmickrisp/bridge/mtl_residency_set.m
+index 543be2f..3a0f8b8 100644
+--- a/src/kosmickrisp/bridge/mtl_residency_set.m
++++ b/src/kosmickrisp/bridge/mtl_residency_set.m
+@@ -101,3 +101,14 @@
+       [set endResidency];
+    }
+ }
++
++void
++mtl_residency_set_get_usage(mtl_residency_set *residency_set,
++                            uint64_t *bytes, uint64_t *allocations)
++{
++   @autoreleasepool {
++      id<MTLResidencySet> set = (id<MTLResidencySet>)residency_set;
++      *bytes = set.allocatedSize;
++      *allocations = set.allocationCount;
++   }
++}
+diff --git a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
+index 4642eba..d154784 100644
+--- a/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
++++ b/src/kosmickrisp/bridge/stubs/mtl_command_buffer.c
+@@ -16,6 +16,12 @@ mtl_command_allocator_reset(mtl_command_allocator *allocator)
+ {
+ }
+ 
++uint64_t
++mtl_command_allocator_allocated_size(mtl_command_allocator *allocator)
++{
++   return 0;
++}
++
+ void
+ mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
+                          mtl_command_allocator *allocator)
+diff --git a/src/kosmickrisp/bridge/stubs/mtl_residency_set.c b/src/kosmickrisp/bridge/stubs/mtl_residency_set.c
+index f860727..78800ff 100644
+--- a/src/kosmickrisp/bridge/stubs/mtl_residency_set.c
++++ b/src/kosmickrisp/bridge/stubs/mtl_residency_set.c
+@@ -38,3 +38,11 @@ void
+ mtl_residency_set_end_residency(mtl_residency_set *residency_set)
+ {
+ }
++
++void
++mtl_residency_set_get_usage(mtl_residency_set *residency_set,
++                            uint64_t *bytes, uint64_t *allocations)
++{
++   *bytes = 0;
++   *allocations = 0;
++}
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index 0e00989..e34d243 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -9,6 +9,7 @@
+ 
+ #include "kk_buffer.h"
+ #include "kk_cmd_pool.h"
++#include "kk_debug.h"
+ #include "kk_descriptor_set_layout.h"
+ #include "kk_entrypoints.h"
+ #include "kk_format.h"
+@@ -19,8 +20,11 @@
+ #include "kosmickrisp/bridge/mtl_command_buffer.h"
+ #include "kosmickrisp/bridge/mtl_device.h"
+ #include "kosmickrisp/bridge/mtl_encoder.h"
++#include "kosmickrisp/bridge/mtl_residency_set.h"
+ #include "kosmickrisp/bridge/vk_to_mtl_map.h"
+ 
++#include "util/u_atomic.h"
++
+ #include "vk_alloc.h"
+ #include "vk_common_entrypoints.h"
+ #include "vk_format.h"
+@@ -76,6 +80,94 @@ kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd)
+    kk_cmd_release_cmd_bufs(cmd);
+ }
+ 
++/* MTLDevice.currentAllocatedSize does not include all command allocator
++ * storage. STEAMAC-AK/AP grew tens of GiB with nearly flat resource counters,
++ * then aborted inside IOGPU while opening an encoder (also from endEncoding's
++ * internal compute pass). Capture storage before entering those Apple calls.
++ *
++ * Query once at recording end and at powers of two above 1024 encoders.
++ * Default output only records doubling process-wide high waters, so routine
++ * recordings cannot consume a lifetime line cap before a later runaway.
++ * Allocators may be shared by executable siblings: these bytes are not the
++ * current command buffer's exclusive ownership, nor additive with residency.
++ * Do not reset an allocator here: its siblings may not even be submitted yet. */
++static bool
++kk_storage_high_water(uint64_t *high_water, uint64_t value, uint64_t first)
++{
++   uint64_t old = p_atomic_read(high_water);
++   while (value >= first && (!old || value / 2 >= old)) {
++      const uint64_t previous = p_atomic_cmpxchg(high_water, old, value);
++      if (previous == old)
++         return true;
++      old = previous;
++   }
++   return false;
++}
++
++static void
++kk_cmd_note_storage(struct kk_cmd_buffer *cmd, const char *operation,
++                     bool ending)
++{
++   const uint32_t encoders =
++      cmd->record.render_passes + cmd->record.compute_encoders;
++   if (!ending && (encoders < 1024 || (encoders & (encoders - 1))))
++      return;
++
++   const uint64_t bytes =
++      mtl_command_allocator_allocated_size(cmd->metal.allocator);
++   const uint64_t pre_bytes =
++      mtl_command_allocator_allocated_size(cmd->metal.pre_gfx.allocator);
++   static uint64_t storage_high_water, encoder_high_water;
++   const bool storage_growth = kk_storage_high_water(
++      &storage_high_water, bytes + pre_bytes, 64ull * 1024 * 1024);
++   const bool encoder_growth =
++      kk_storage_high_water(&encoder_high_water, encoders, 1024);
++   if (!storage_growth && !encoder_growth && !KK_DEBUG(CBS))
++      return;
++
++   struct kk_device *dev = kk_cmd_buffer_device(cmd);
++   struct kk_cmd_pool *pool = kk_cmd_buffer_pool(cmd);
++   uint64_t upload_bytes = 0, large_bytes = 0;
++   uint32_t upload_bos = 0;
++   list_for_each_entry(struct kk_cmd_bo, bo, &cmd->uploader.bos, link) {
++      upload_bytes += bo->bo->size_B;
++      upload_bos++;
++   }
++   util_dynarray_foreach(&cmd->large_bos, struct kk_bo *, bo)
++      large_bytes += (*bo)->size_B;
++   uint64_t residency_bytes, residency_count;
++   simple_mtx_lock(&dev->residency_set.mutex);
++   mtl_residency_set_get_usage(dev->residency_set.handle, &residency_bytes,
++                               &residency_count);
++   simple_mtx_unlock(&dev->residency_set.mutex);
++   char app[64];
++   kk_device_app_name(dev, app, sizeof(app));
++   mesa_logi("kk: command storage before=%s app=%s cmd=%p metal=%p "
++             "allocator=%p bytes=%" PRIu64 " pre-allocator=%p pre-bytes=%" PRIu64
++             " render=%u compute=%u metal-encoders=%u pre-encoders=%u "
++             "metal-buffers=%zu upload-bos=%u "
++             "upload-bytes=%" PRIu64 " large-bos=%zu large-bytes=%" PRIu64
++             " pool-free-bos=%u pool-free-allocators=%zu pool-free-cbs=%zu "
++             "residency-count=%" PRIu64 " residency-bytes=%" PRIu64
++             " metal-allocated=%" PRIu64,
++             operation, app, (void *)cmd, (void *)cmd->metal.cmd_buf,
++             (void *)cmd->metal.allocator, bytes,
++             (void *)cmd->metal.pre_gfx.allocator, pre_bytes,
++             cmd->record.render_passes, cmd->record.compute_encoders,
++             cmd->metal.encoder_count, cmd->metal.pre_gfx.encoder_count,
++             util_dynarray_num_elements(&cmd->metal.cmd_bufs,
++                                          mtl_command_buffer *),
++             upload_bos, upload_bytes,
++             util_dynarray_num_elements(&cmd->large_bos, struct kk_bo *),
++             large_bytes, pool->num_free_bos,
++             util_dynarray_num_elements(&pool->metal.free_allocators,
++                                          mtl_command_allocator *),
++             util_dynarray_num_elements(&pool->metal.free_cmd_bufs,
++                                          mtl_command_buffer *),
++             residency_count, residency_bytes,
++             mtl_device_current_allocated_size(dev->mtl_handle));
++}
++
+ /* Ends Metal command buffer recording and returns allocators to pool for
+  * reuse */
+ static void
+@@ -84,6 +176,7 @@ end_recording(struct kk_cmd_buffer *cmd)
+    if (cmd->vk.state != MESA_VK_COMMAND_BUFFER_STATE_RECORDING)
+       return;
+ 
++   kk_cmd_note_storage(cmd, "end-recording", true);
+    cs_end(cmd);
+    cmd->record.metal_cmd_bufs = MIN2(
+       util_dynarray_num_elements(&cmd->metal.cmd_bufs, mtl_command_buffer *),
+@@ -263,6 +356,8 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+    util_dynarray_append(&cmd->metal.cmd_bufs, cmd->metal.cmd_buf);
+    cmd->metal.cmd_buf_used = false;
+    cmd->metal.ts_writes = 0;
++   cmd->metal.encoder_count = 0;
++   cmd->metal.pre_gfx.encoder_count = 0;
+    mtl_begin_command_buffer(cmd->metal.cmd_buf, cmd->metal.allocator);
+ 
+    return VK_SUCCESS;
+@@ -332,6 +427,8 @@ kk_cmd_next_cmd_buf_after_pre_gfx(struct kk_cmd_buffer *cmd)
+    mtl_command_allocator *allocator = cmd->metal.pre_gfx.allocator;
+    cmd->metal.pre_gfx.allocator = cmd->metal.allocator;
+    cmd->metal.pre_gfx.cmd_buf = cmd->metal.cmd_buf;
++   cmd->metal.pre_gfx.encoder_count = cmd->metal.encoder_count;
++   cmd->metal.encoder_count = 0;
+    cmd->metal.allocator = allocator;
+ 
+    mtl_begin_command_buffer(next, allocator);
+@@ -369,6 +466,7 @@ kk_cmd_count_ts_writes(struct kk_cmd_buffer *cmd, uint32_t writes)
+    cmd->metal.cmd_buf = next;
+    cmd->metal.cmd_buf_used = false;
+    cmd->metal.ts_writes = 0;
++   cmd->metal.encoder_count = 0;
+ }
+ 
+ /* A Metal command buffer of its own for the pre_gfx pass of the open render
+@@ -395,6 +493,7 @@ kk_cmd_new_pre_gfx_cmd_buf(struct kk_cmd_buffer *cmd)
+       util_dynarray_num_elements(&cmd->metal.cmd_bufs, mtl_command_buffer *);
+    cmd_bufs[count - 2u] = cmd_buf;
+    cmd->metal.pre_gfx.cmd_buf = cmd_buf;
++   cmd->metal.pre_gfx.encoder_count = 0;
+    return true;
+ }
+ 
+@@ -419,6 +518,8 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+    cmd->metal.render_first = !cmd->metal.cmd_buf_used;
+    cmd->metal.cmd_buf_used = true;
+ 
++   cmd->metal.encoder_count++;
++   kk_cmd_note_storage(cmd, "render", false);
+    cmd->metal.render = mtl_new_render_command_encoder_with_descriptor(
+       cmd->metal.cmd_buf, state->render_pass_descriptor);
+ 
+@@ -491,6 +592,8 @@ cs_get_compute(struct kk_cmd_buffer *cmd)
+    }
+ 
+    if (cmd->metal.compute == NULL) {
++      cmd->metal.encoder_count++;
++      kk_cmd_note_storage(cmd, "compute", false);
+       cmd->metal.compute = mtl_new_compute_command_encoder(cmd->metal.cmd_buf);
+       cmd->metal.cmd_buf_used = true;
+       mtl_compute_set_argument_table(cmd->metal.compute, cmd->argument_table);
+@@ -532,6 +635,8 @@ cs_get_pre_gfx(struct kk_cmd_buffer *cmd)
+        (!cmd->metal.render_first || !kk_cmd_new_pre_gfx_cmd_buf(cmd)))
+       return cs_get_compute(cmd);
+ 
++   cmd->metal.pre_gfx.encoder_count++;
++   kk_cmd_note_storage(cmd, "pre-compute", false);
+    mtl_compute_encoder *encoder =
+       mtl_new_compute_command_encoder(cmd->metal.pre_gfx.cmd_buf);
+    mtl_compute_set_argument_table(encoder, cmd->argument_table);
+@@ -563,6 +668,7 @@ end_pre_gfx(struct kk_cmd_buffer *cmd)
+ static void
+ end_encoder(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
+ {
++   kk_cmd_note_storage(cmd, "end-encoder", false);
+    /* TODO_KOSMICKRISP This is probably overkill */
+    mtl_barrier_after_stages(encoder, MTL_STAGE_ALL, MTL_STAGE_ALL);
+    mtl_end_encoding(encoder);
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+index 451eb96..99a2d22 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+@@ -282,6 +282,9 @@ struct kk_cmd_buffer {
+       bool cmd_buf_used;
+       /* Timestamp writes outside render encoders in the current cmd_buf */
+       uint32_t ts_writes;
++      /* Encoder creation attempts in this Metal command buffer, for storage
++       * exhaustion diagnostics (the record counts the whole Vulkan buffer). */
++      uint32_t encoder_count;
+       /* The open render encoder is the first encoder of cmd_buf */
+       bool render_first;
+       mtl_render_encoder *render;
+@@ -296,6 +299,7 @@ struct kk_cmd_buffer {
+          mtl_command_allocator *allocator;
+          mtl_command_buffer *cmd_buf;
+          mtl_compute_encoder *compute;
++         uint32_t encoder_count;
+       } pre_gfx;
+    } metal;
+    /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
+-- 
+2.54.0 (Apple Git-157)
+

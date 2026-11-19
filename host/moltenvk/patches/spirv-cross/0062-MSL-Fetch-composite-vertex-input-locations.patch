@@ -1,0 +1,288 @@
+From 0000000000000000000000000000000000000062 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Sun, 15 Nov 2026 12:01:00 +0000
+Subject: [PATCH] MSL: fetch each composite vertex input location (STEAMAC-AV)
+
+Event 885cb5bf68dc44cdb0c4d619d0f70984 (appid 3489700) declares
+ATTRIBUTE_5 as spvUnsafeArray<float2, 2>, but the geometry object wrapper
+casts one packed_half2 fetch from vb28 to that whole array. No failed-shader
+attachment is retained. Reconstructed SPIR-V gives the exact same error.
+
+Recurse through array elements and matrix columns before converting scalar
+or vector leaves. Each location uses its own binding, offset, stride and
+format, including normalization and packed-format conversion. Never cast a
+format fetch to an aggregate. Reuse existing location-slot counting and
+scalar/vector conversion, and distinguish packed temporaries by location.
+
+sentry-av-array-input.sh fails with the captured conversion error before
+this patch. Afterward it runs the translated object stage and reads all
+three vertex payloads through a mesh stage in MSL 3 and 4. Half2 array
+inputs on independent bindings/offsets/strides are checked with a second
+half, float, normalized uint8 or packed 10:10:10:2 location.
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -2290,6 +2290,132 @@
+ 	statement("");
+ }
+ 
++void CompilerMSL::emit_mesh_vertex_input(const SPIRType &type, const std::string &name,
++                                         uint32_t location, uint32_t id)
++{
++	if (!type.array.empty())
++	{
++		auto &element = get<SPIRType>(type.parent_type);
++		uint32_t slots = mesh_payload_location_slots(element);
++		for (uint32_t i = 0; i < to_array_size_literal(type); i++)
++			emit_mesh_vertex_input(element, join(name, "[", i, "]"), location + i * slots, id);
++		return;
++	}
++	if (type.columns > 1)
++	{
++		auto column = type;
++		column.columns = 1;
++		for (uint32_t i = 0; i < type.columns; i++)
++			emit_mesh_vertex_input(column, join(name, "[", i, "]"), location + i, id);
++		return;
++	}
++	LocationComponentPair key;
++	key.location  = location;
++	key.component = 0;
++
++	auto payload_it = inputs_by_location.find(key);
++	if (payload_it == inputs_by_location.end())
++		return;
++
++	auto variable = payload_it->second;
++
++	const auto &parent_type = type;
++	std::string parent_type_str = type_to_glsl(type, id);
++	uint32_t load_elements = std::min<uint32_t>(variable.vecsize, parent_type.vecsize);
++
++	std::string address = "(vb" + std::to_string(variable.binding) + " + " + std::to_string(variable.offset) + " + spvFetchIndex(drawInfo, " + std::to_string(variable.binding) + ", vertexIndex, positionInGrid.y) * drawInfo->vertexStrides[" + std::to_string(variable.binding) + "])";
++
++	// Packed formats: one memory element holds all components; unpack them to float (Vulkan's
++	// UNORM c / (2^n - 1), SNORM max(c / (2^(n-1) - 1), -1), unsigned 11/10-bit floats, shared
++	// exponent), keep the components the shader has, then fill the rest with (0, 0, 0, 1).
++	uint32_t packed_elements = 0;
++	std::string unpacked;
++	std::string word = "spvPacked" + std::to_string(id) + "_" + std::to_string(location);
++	switch (variable.format)
++	{
++	case MSL_SHADER_VARIABLE_FORMAT_UINT8_BGRA:
++		packed_elements = 4;
++		unpacked = "float4((*(device packed_uchar4 *)" + address + ").zyxw) * (1.f/255.f)";
++		break;
++	case MSL_SHADER_VARIABLE_FORMAT_UNORM1010102:
++		packed_elements = 4;
++		unpacked = "float4(extract_bits(" + word + ", 0, 10), extract_bits(" + word + ", 10, 10), extract_bits(" +
++		           word + ", 20, 10), extract_bits(" + word + ", 30, 2)) * float4(1.f/1023.f, 1.f/1023.f, 1.f/1023.f, 1.f/3.f)";
++		break;
++	case MSL_SHADER_VARIABLE_FORMAT_SNORM1010102:
++		packed_elements = 4;
++		unpacked = "max(float4(extract_bits(int(" + word + "), 0, 10), extract_bits(int(" + word + "), 10, 10), extract_bits(int(" +
++		           word + "), 20, 10), extract_bits(int(" + word + "), 30, 2)) * float4(1.f/511.f, 1.f/511.f, 1.f/511.f, 1.f), -1.f)";
++		break;
++	case MSL_SHADER_VARIABLE_FORMAT_FLOAT_RG11B10:
++		// 5-bit exponent and 6 or 5 mantissa bits, no sign: the bits of a half shifted down.
++		packed_elements = 3;
++		unpacked = "float3(float(as_type<half>(ushort(extract_bits(" + word + ", 0, 11) << 4))), float(as_type<half>(ushort(extract_bits(" +
++		           word + ", 11, 11) << 4))), float(as_type<half>(ushort(extract_bits(" + word + ", 22, 10) << 5))))";
++		break;
++	case MSL_SHADER_VARIABLE_FORMAT_FLOAT_RGB9E5:
++		packed_elements = 3;
++		unpacked = "float3(extract_bits(" + word + ", 0, 9), extract_bits(" + word + ", 9, 9), extract_bits(" + word +
++		           ", 18, 9)) * exp2(float(int(extract_bits(" + word + ", 27, 5)) - 24))";
++		break;
++	default:
++		break;
++	}
++	if (packed_elements)
++	{
++		if (variable.format != MSL_SHADER_VARIABLE_FORMAT_UINT8_BGRA)
++			statement("uint ", word, " = *(device uint *)", address, ";");
++		uint32_t elements = std::min<uint32_t>(packed_elements, parent_type.vecsize);
++		static const char *const swizzles[] = { "", ".x", ".xy", ".xyz" };
++		std::string value = elements < packed_elements ? "(" + unpacked + ")" + swizzles[elements] : unpacked;
++		auto loaded_type = parent_type;
++		loaded_type.vecsize = elements;
++		loaded_type.columns = 1;
++		value = type_to_glsl(loaded_type) + "(" + value + ")";
++		if (elements != parent_type.vecsize)
++		{
++			value = parent_type_str + "(" + value;
++			for (uint32_t i = elements; i < parent_type.vecsize; i++)
++				value += (i == 3) ? ", 1" : ", 0";
++			value += ")";
++		}
++		statement(name, " = ", value, ";");
++		return;
++	}
++
++	// Load the format's components from memory, convert them to the shader's component type
++	// (integers to float for SCALED formats), normalize NORM formats, then fill the components
++	// the format does not have with (0, 0, 0, 1).
++	std::string type_name = get_variable_format_string(variable.format);
++	std::string component = type_name + get_vertex_loader_component_suffix(load_elements);
++	std::string packed = load_elements > 1 ? "packed_" : "";
++	std::string load_string = "*(device " + packed + component + " *)" + address;
++	auto loaded_type = parent_type;
++	loaded_type.vecsize = load_elements;
++	loaded_type.columns = 1;
++	std::string loaded_type_str = type_to_glsl(loaded_type);
++	if (loaded_type_str != component)
++		load_string = loaded_type_str + "(" + load_string + ")";
++	if (parent_type.basetype == SPIRType::Float)
++		load_string = normalize_vertex_load(variable.format, variable.normalized, load_string);
++	else if (parent_type.basetype == SPIRType::Half && variable.normalized)
++	{
++		auto float_type = loaded_type;
++		float_type.basetype = SPIRType::Float;
++		float_type.width = 32;
++		load_string = loaded_type_str + "(" +
++		              normalize_vertex_load(variable.format, true, type_to_glsl(float_type) + "(" + load_string + ")") + ")";
++	}
++	if (load_elements != parent_type.vecsize)
++	{
++		load_string = parent_type_str + "(" + load_string;
++		for (uint32_t i = load_elements; i < parent_type.vecsize; i++)
++			load_string += (i == 3) ? ", 1" : ", 0";
++		load_string += ")";
++	}
++	statement(name, " = ", load_string, ";");
++}
++
+ void CompilerMSL::emit_mesh_wrapper()
+ {
+ 	auto &execution = get_entry_point();
+@@ -2459,115 +2585,9 @@
+ 
+ 			if (is_builtin_variable(var))
+ 				return;
+-
+-			uint32_t location = get_decoration(id, DecorationLocation);
+-
+-			LocationComponentPair key;
+-			key.location  = location;
+-			key.component = 0;
+-
+-			auto payload_it = inputs_by_location.find(key);
+-			if (payload_it == inputs_by_location.end())
+-				return;
+-
+-			auto variable = payload_it->second;
+-			std::string name = to_name(id);
+-
+-			SPIRType& parent_type = get<SPIRType>(type.parent_type);
+-			std::string parent_type_str = type_to_glsl(get<SPIRType>(type.parent_type), var.self);
+-			uint32_t load_elements = std::min<uint32_t>(variable.vecsize, parent_type.vecsize);
+-
+-			std::string address = "(vb" + std::to_string(variable.binding) + " + " + std::to_string(variable.offset) + " + spvFetchIndex(drawInfo, " + std::to_string(variable.binding) + ", vertexIndex, positionInGrid.y) * drawInfo->vertexStrides[" + std::to_string(variable.binding) + "])";
+-
+-			// Packed formats: one memory element holds all components; unpack them to float (Vulkan's
+-			// UNORM c / (2^n - 1), SNORM max(c / (2^(n-1) - 1), -1), unsigned 11/10-bit floats, shared
+-			// exponent), keep the components the shader has, then fill the rest with (0, 0, 0, 1).
+-			uint32_t packed_elements = 0;
+-			std::string unpacked;
+-			std::string word = "spvPacked" + std::to_string(id);
+-			switch (variable.format)
+-			{
+-			case MSL_SHADER_VARIABLE_FORMAT_UINT8_BGRA:
+-				packed_elements = 4;
+-				unpacked = "float4((*(device packed_uchar4 *)" + address + ").zyxw) * (1.f/255.f)";
+-				break;
+-			case MSL_SHADER_VARIABLE_FORMAT_UNORM1010102:
+-				packed_elements = 4;
+-				unpacked = "float4(extract_bits(" + word + ", 0, 10), extract_bits(" + word + ", 10, 10), extract_bits(" +
+-				           word + ", 20, 10), extract_bits(" + word + ", 30, 2)) * float4(1.f/1023.f, 1.f/1023.f, 1.f/1023.f, 1.f/3.f)";
+-				break;
+-			case MSL_SHADER_VARIABLE_FORMAT_SNORM1010102:
+-				packed_elements = 4;
+-				unpacked = "max(float4(extract_bits(int(" + word + "), 0, 10), extract_bits(int(" + word + "), 10, 10), extract_bits(int(" +
+-				           word + "), 20, 10), extract_bits(int(" + word + "), 30, 2)) * float4(1.f/511.f, 1.f/511.f, 1.f/511.f, 1.f), -1.f)";
+-				break;
+-			case MSL_SHADER_VARIABLE_FORMAT_FLOAT_RG11B10:
+-				// 5-bit exponent and 6 or 5 mantissa bits, no sign: the bits of a half shifted down.
+-				packed_elements = 3;
+-				unpacked = "float3(float(as_type<half>(ushort(extract_bits(" + word + ", 0, 11) << 4))), float(as_type<half>(ushort(extract_bits(" +
+-				           word + ", 11, 11) << 4))), float(as_type<half>(ushort(extract_bits(" + word + ", 22, 10) << 5))))";
+-				break;
+-			case MSL_SHADER_VARIABLE_FORMAT_FLOAT_RGB9E5:
+-				packed_elements = 3;
+-				unpacked = "float3(extract_bits(" + word + ", 0, 9), extract_bits(" + word + ", 9, 9), extract_bits(" + word +
+-				           ", 18, 9)) * exp2(float(int(extract_bits(" + word + ", 27, 5)) - 24))";
+-				break;
+-			default:
+-				break;
+-			}
+-			if (packed_elements)
+-			{
+-				if (variable.format != MSL_SHADER_VARIABLE_FORMAT_UINT8_BGRA)
+-					statement("uint ", word, " = *(device uint *)", address, ";");
+-				uint32_t elements = std::min<uint32_t>(packed_elements, parent_type.vecsize);
+-				static const char *const swizzles[] = { "", ".x", ".xy", ".xyz" };
+-				std::string value = elements < packed_elements ? "(" + unpacked + ")" + swizzles[elements] : unpacked;
+-				auto loaded_type = parent_type;
+-				loaded_type.vecsize = elements;
+-				loaded_type.columns = 1;
+-				value = type_to_glsl(loaded_type) + "(" + value + ")";
+-				if (elements != parent_type.vecsize)
+-				{
+-					value = parent_type_str + "(" + value;
+-					for (uint32_t i = elements; i < parent_type.vecsize; i++)
+-						value += (i == 3) ? ", 1" : ", 0";
+-					value += ")";
+-				}
+-				statement(to_name(var.self), " = ", value, ";");
+-				return;
+-			}
+-
+-			// Load the format's components from memory, convert them to the shader's component type
+-			// (integers to float for SCALED formats), normalize NORM formats, then fill the components
+-			// the format does not have with (0, 0, 0, 1).
+-			std::string type_name = get_variable_format_string(variable.format);
+-			std::string component = type_name + get_vertex_loader_component_suffix(load_elements);
+-			std::string packed = load_elements > 1 ? "packed_" : "";
+-			std::string load_string = "*(device " + packed + component + " *)" + address;
+-			auto loaded_type = parent_type;
+-			loaded_type.vecsize = load_elements;
+-			loaded_type.columns = 1;
+-			std::string loaded_type_str = type_to_glsl(loaded_type);
+-			if (loaded_type_str != component)
+-				load_string = loaded_type_str + "(" + load_string + ")";
+-			if (parent_type.basetype == SPIRType::Float)
+-				load_string = normalize_vertex_load(variable.format, variable.normalized, load_string);
+-			else if (parent_type.basetype == SPIRType::Half && variable.normalized)
+-			{
+-				auto float_type = loaded_type;
+-				float_type.basetype = SPIRType::Float;
+-				float_type.width = 32;
+-				load_string = loaded_type_str + "(" +
+-				              normalize_vertex_load(variable.format, true, type_to_glsl(float_type) + "(" + load_string + ")") + ")";
+-			}
+-			if (load_elements != parent_type.vecsize)
+-			{
+-				load_string = parent_type_str + "(" + load_string;
+-				for (uint32_t i = load_elements; i < parent_type.vecsize; i++)
+-					load_string += (i == 3) ? ", 1" : ", 0";
+-				load_string += ")";
+-			}
+-			statement(to_name(var.self), " = ", load_string, ";");
++			emit_mesh_vertex_input(get_variable_data_type(var), to_name(id),
++			                       get_decoration(id, DecorationLocation), id);
++
+ 		});
+ 
+ 		statement("auto spvVSOut = ", execution.name, "(");
+diff --git a/spirv_msl.hpp b/spirv_msl.hpp
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -1198,6 +1198,7 @@
+ 	void emit_interface_block(uint32_t ib_var_id);
+ 	bool maybe_emit_array_assignment(uint32_t id_lhs, uint32_t id_rhs);
+ 	void emit_mesh_wrapper();
++	void emit_mesh_vertex_input(const SPIRType &type, const std::string &name, uint32_t location, uint32_t id);
+ 	void emit_mesh_payload_vertex_struct();
+ 	uint32_t mesh_payload_location_slots(const SPIRType &type);
+ 	void emit_mesh_payload_store(const SPIRType &type, const std::string &expr, uint32_t location, uint32_t component);

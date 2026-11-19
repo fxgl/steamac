@@ -11,17 +11,17 @@
 #     steamos-manager runs (the desktop's "Return to Gaming Mode" runs
 #     `steamosctl switch-to-game-mode`);
 #   - /usr/lib/steamac/desktop-xdg comes first in XDG_CONFIG_DIRS: its
-#     autostart/steam.desktop starts Steam with the client the launcher selected.
+#     autostarts select the launcher Steam client and supervise plasmashell.
+#     The private bus has no systemd user manager, so the outer manager's
+#     plasma-plasmashell.service restart policy does not apply here.
 set -euo pipefail
 
 # The performance overlay preload and the gamescope-only portal directory are
 # for the gaming session; Plasma brings its own portals.
 # The gamescope WSI layer is for Xwayland clients of the outer gamescope, not
 # for Plasma's own compositor: in this private runtime directory there is no
-# gamescope-0 socket, so it cannot create a gamescope swapchain but still hooks
-# vkCreateSwapchainKHR/vkQueuePresentKHR. With zink that races Qt's wl_surface
-# teardown (attach/commit after destroy), KWin drops plasmashell's Wayland
-# connection ("invalid object") and the panel/desktop go black.
+# gamescope-0 socket. Keep the layer out of Plasma's Vulkan presentation path;
+# its presence alone does not establish the cause of a Wayland protocol error.
 unset LD_PRELOAD XDG_DESKTOP_PORTAL_DIR ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 export XDG_CONFIG_DIRS=/usr/lib/steamac/desktop-xdg:${XDG_CONFIG_DIRS:-/etc/xdg}

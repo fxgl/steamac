@@ -6,6 +6,150 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>FX Steam Launcher</title>
         <item>
+            <title>1.9.15</title>
+            <pubDate>Mon, 16 Nov 2026 19:25:26 +0400</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.15</sparkle:version>
+            <sparkle:shortVersionString>1.9.15</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.14.
+
+- **Shader compile regression fixed (MoltenVK).** 1.9.14 broke some vertex shaders that pack two values into one location, for example two `float2` texture coordinates. Metal rejected them with "duplicated user-defined name 'locnN'" and the draws were skipped. Several games were affected. They compile again.
+- **Fewer crashes (KosmicKrisp):**
+  - a render pipeline whose vertex function is missing from its shader library now fails cleanly and is logged, instead of Metal aborting the whole VM (seen in Counter-Strike 2);
+  - when a game begins a render pass with an image view it has already destroyed, the log now names the attachment and framebuffer before the crash (seen in DOOM (2016)), so the next report shows where it comes from.
+- **Better problem reports:** after a VM crash, the session log that Help → Report a Problem attaches now contains macOS's crash report (exception and crashed-thread frames), even with crash reporting turned off.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. If you run 1.9.11 or later, this version also arrives through **FX Steam Launcher → Check for Updates…**. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.15-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.14.
+
+- **Исправлена регрессия компиляции шейдеров (MoltenVK).** В 1.9.14 перестали компилироваться некоторые вершинные шейдеры, которые упаковывают два значения в одну location, например две текстурные координаты `float2`. Metal отклонял их с ошибкой «duplicated user-defined name 'locnN'», и отрисовка пропускалась. Это затронуло несколько игр. Теперь такие шейдеры снова компилируются.
+- **Меньше сбоев (KosmicKrisp):**
+  - конвейер рендеринга, вершинной функции которого нет в библиотеке шейдеров, теперь корректно завершается ошибкой с записью в журнал, а не прерывает всю ВМ через Metal (встречалось в Counter-Strike 2);
+  - если игра начинает проход рендеринга с уже уничтоженным представлением изображения, журнал теперь называет вложение и фреймбуфер до падения (встречалось в DOOM (2016)), чтобы следующий отчёт показал, откуда это берётся.
+- **Более полные отчёты о проблемах:** после падения ВМ журнал сеанса, который прикладывает «Справка → Сообщить о проблеме», содержит отчёт macOS о сбое (исключение и кадры упавшего потока), даже если отчёты о сбоях выключены.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Если у вас 1.9.11 или новее, эта версия приходит и через **FX Steam Launcher → Проверить обновления…**. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.15-gpl-sources.tar`.
+
+---
+
+1.9.14 以来的新内容。
+
+- **修复着色器编译回归（MoltenVK）。** 1.9.14 中，部分把两个值打包进同一个 location 的顶点着色器（例如两个 `float2` 纹理坐标）无法编译：Metal 报告“duplicated user-defined name 'locnN'”并跳过绘制。多款游戏受到影响，现在已恢复正常。
+- **更少崩溃（KosmicKrisp）：**
+  - 顶点函数不在着色器库中的渲染管线，现在会正常创建失败并记录日志，而不是由 Metal 中止整个虚拟机（见于《反恐精英 2》）；
+  - 游戏用已销毁的图像视图开始渲染通道时，日志会在崩溃前记录附件与帧缓冲（见于《毁灭战士（2016）》），以便下一份报告查明来源。
+- **更完整的问题报告：** 虚拟机崩溃后，“帮助 → 报告问题”附带的会话日志现在包含 macOS 的崩溃报告（异常与崩溃线程的调用帧），即使关闭了崩溃报告也是如此。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。若你在用 1.9.11 或更新版本，也可通过 **FX Steam Launcher → 检查更新…** 获得此版本。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.15-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX-Steam-Launcher-1.9.15.dmg" length="95953886" type="application/octet-stream" sparkle:edSignature="wYLMqQy1h/iq1ypEoNM5R54PlXV5U/4AfzcS4jF0/pE5QZR1NC9D5hm0NEh7VPYnIGWfaUc3IACnihm2e+XaAQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.14.delta" sparkle:deltaFrom="1.9.14" length="389226" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="jCNviy/oSHS9JZdnjOnH5T1F0egBBk3CwM8UMsWJBz6k249jRd0W1BNAAb2pCLgMxKeGrFxfF/LARFQNU9F7Dw=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.13.delta" sparkle:deltaFrom="1.9.13" length="1401682" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="FtiWKAIubg9BkbXWSYcOyD7b2p6jmVUc4WqSotpEbGs/wsfxyG0OjfBxttT5fSSD62uTrpxklZvVuXPntCwCDw=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.15/FX.Steam.Launcher1.9.15-1.9.12.delta" sparkle:deltaFrom="1.9.12" length="2464946" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WGMkXgkGnweHKg41AUnKfK8ohKXYDJs5qxNBRtoenn7Yvi+CL0+5BQQzSVF0n+UVCAO06qsDccQcBksb3K88Aw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.9.14</title>
+            <pubDate>Sun, 15 Nov 2026 16:42:55 +0400</pubDate>
+            <link>https://fxgl.github.io/steamac/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1.9.14</sparkle:version>
+            <sparkle:shortVersionString>1.9.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[New since 1.9.13.
+
+- **Shared folder as a Steam library.** Settings → Advanced → Shared folder → **Use as a Steam library** (on by default). Before Steam starts, SteamOS adds `<mount point>/SteamLibrary` to Steam's libraries, once per shared folder, so removing it in Steam is respected. The folder's volume must support symlinks for Proton prefixes: APFS and HFS+ work, exFAT doesn't. Closes #76.
+- **Steam Controller over a USB cable** is now passed through to SteamOS as itself, as over Bluetooth, instead of appearing as an Xbox 360 pad (#94; contributed by nkarnauh, #95). Like Bluetooth, it needs macOS Input Monitoring.
+- **Steam Controller on the Puck in Desktop Mode** stays a Steam Controller instead of switching to an Xbox pad every few seconds while idle. A controller you switch off disappears from SteamOS right away (contributed by nkarnauh, #89).
+- **Other USB/Bluetooth game controllers** (for example DJI FPV remotes and RC transmitters) that macOS lists as game controllers but never makes available are now passed through to SteamOS (#68).
+- **Fewer crashes:**
+  - KosmicKrisp: Dota 2's crash when copying a buffer; graphics pipelines without a vertex shader no longer take the VM down; views that request too many layers of a single-layer image no longer lose the graphics context.
+  - MoltenVK: oversized texel-buffer views no longer abort the VM.
+  - Red Dead Redemption 2: statistics queries and texture copies.
+  - Shaders that failed to compile: SSAO with `vec3` shared-memory arrays, `rgb9e5` helpers, geometry-shader clip distances, mismatched vector widths between stages, float atomics on shared memory and arrays of half-precision vertex inputs.
+- **Metal Performance HUD** is loaded only if it is on when the VM starts (on some Macs it crashed the VM even while hidden). With KosmicKrisp, the launcher warns before you turn it on.
+- **Desktop Mode:** if Plasma's shell exits after a Wayland error, it restarts instead of leaving an empty desktop.
+- **Reclaim Disk Space** dialogs no longer block the launcher while they are open (that produced false freeze reports).
+- **Startup:** running the launcher inside a macOS virtual machine, or with hardware virtualization unavailable, is explained instead of failing obscurely. A broken SteamOS update response is reported with its details.
+- **Better problem reports:**
+  - startup logs of the current and recently played games, and the start of very long Proton logs;
+  - the full failed Metal shader (bounded and scrubbed);
+  - LAN Remote Play state after sleep, and the blocks that changed when disk integrity checks fail;
+  - shader-model prerequisites, and Metal instrumentation with rapid memory growth;
+  - KosmicKrisp command-storage snapshots and why a virglrenderer reply stream was unusable.
+
+**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. If you run 1.9.11 or later, this version also arrives through **FX Steam Launcher → Check for Updates…**. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.14-gpl-sources.tar`.
+
+---
+
+Новое с 1.9.13.
+
+- **Общая папка как библиотека Steam.** Настройки → Дополнительно → Общая папка → **Использовать как библиотеку Steam** (включено по умолчанию). Перед запуском Steam SteamOS добавляет `<точка монтирования>/SteamLibrary` в библиотеки Steam, один раз для каждой общей папки, так что если удалить библиотеку в Steam, она не вернётся. Том с папкой должен поддерживать символические ссылки для префиксов Proton: APFS и HFS+ подходят, exFAT — нет. Закрывает #76.
+- **Steam Controller по USB-кабелю** теперь передаётся в SteamOS как есть, так же как по Bluetooth, а не как контроллер Xbox 360 (#94; автор — nkarnauh, #95). Как и для Bluetooth, нужен «Мониторинг ввода» macOS.
+- **Steam Controller через Puck в режиме рабочего стола** остаётся Steam Controller и больше не переключается на контроллер Xbox каждые несколько секунд простоя. Выключенный контроллер сразу исчезает из SteamOS (автор — nkarnauh, #89).
+- **Другие USB- и Bluetooth-контроллеры** (например, пульты DJI FPV и RC-передатчики), которые macOS считает игровыми контроллерами, но не делает доступными, теперь передаются в SteamOS (#68).
+- **Меньше сбоев:**
+  - KosmicKrisp: сбой Dota 2 при копировании буфера; графические конвейеры без вершинного шейдера больше не роняют ВМ; представления, запрашивающие слишком много слоёв однослойного изображения, больше не приводят к потере графического контекста.
+  - MoltenVK: слишком большие представления texel-буферов больше не прерывают ВМ.
+  - Red Dead Redemption 2: запросы статистики и копирование текстур.
+  - Шейдеры, которые не компилировались: SSAO с массивами `vec3` в общей памяти, вспомогательные функции `rgb9e5`, расстояния отсечения в геометрических шейдерах, несовпадающая ширина векторов между стадиями, атомарные операции с float в общей памяти и массивы вершинных входов половинной точности.
+- **Metal Performance HUD** загружается, только если он включён при запуске ВМ (на некоторых Mac он ронял ВМ, даже будучи скрытым). С KosmicKrisp лаунчер предупреждает перед его включением.
+- **Режим рабочего стола:** если оболочка Plasma завершается после ошибки Wayland, она перезапускается, а не оставляет пустой рабочий стол.
+- **Диалоги «Освободить место на диске»** больше не блокируют лаунчер, пока открыты (из-за этого приходили ложные отчёты о зависаниях).
+- **Запуск:** при запуске лаунчера внутри виртуальной машины macOS или без аппаратной виртуализации показывается понятное объяснение, а не загадочная ошибка. Некорректный ответ сервера обновлений SteamOS сообщается с подробностями.
+- **Более полные отчёты о проблемах:**
+  - журналы запуска текущей и недавно запускавшихся игр и начало очень длинных журналов Proton;
+  - полный текст не скомпилировавшегося шейдера Metal (с ограничением размера и очисткой);
+  - состояние LAN Remote Play после сна и блоки, изменившиеся при сбое проверки целостности диска;
+  - требования shader model, инструментирование Metal и быстрый рост памяти;
+  - снимки хранилища команд KosmicKrisp и причина, по которой поток ответов virglrenderer был непригоден.
+
+**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Если у вас 1.9.11 или новее, эта версия приходит и через **FX Steam Launcher → Проверить обновления…**. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.14-gpl-sources.tar`.
+
+---
+
+1.9.13 以来的新内容。
+
+- **将共享文件夹用作 Steam 库。** 设置 → 高级 → 共享文件夹 → **用作 Steam 库**（默认开启）。Steam 启动前，SteamOS 会把 `<挂载点>/SteamLibrary` 添加到 Steam 库，每个共享文件夹只添加一次，因此在 Steam 中移除后不会再被加回。该文件夹所在的卷需要支持符号链接（Proton 前缀需要）：APFS 和 HFS+ 可以，exFAT 不行。关闭 #76。
+- **通过 USB 线连接的 Steam Controller** 现在会以其本身的身份透传给 SteamOS（与蓝牙相同），不再显示为 Xbox 360 手柄（#94；由 nkarnauh 贡献，#95）。与蓝牙一样，需要 macOS“输入监控”权限。
+- **桌面模式下通过 Puck 连接的 Steam Controller** 会保持为 Steam Controller，不再在空闲几秒后切换为 Xbox 手柄；关闭的控制器会立即从 SteamOS 中消失（由 nkarnauh 贡献，#89）。
+- **其他 USB/蓝牙游戏控制器**（例如 DJI FPV 遥控器和航模遥控器）：macOS 将其识别为游戏控制器却从未提供给应用，现在会透传给 SteamOS（#68）。
+- **更少崩溃：**
+  - KosmicKrisp：修复《Dota 2》复制缓冲区时的崩溃；没有顶点着色器的图形管线不再导致虚拟机崩溃；为单层图像请求过多层的视图不再导致图形上下文丢失。
+  - MoltenVK：过大的纹素缓冲区视图不再中止虚拟机。
+  - 《荒野大镖客：救赎 2》：统计查询与纹理复制。
+  - 曾编译失败的着色器：带 `vec3` 共享内存数组的 SSAO、`rgb9e5` 辅助函数、几何着色器的裁剪距离、阶段间向量宽度不一致、共享内存上的浮点原子操作，以及半精度顶点输入数组。
+- **Metal 性能 HUD** 只在虚拟机启动时已开启的情况下加载（在部分 Mac 上，即使隐藏它也会导致虚拟机崩溃）。使用 KosmicKrisp 时，启动器会在开启前给出警告。
+- **桌面模式：** Plasma 外壳在 Wayland 错误后退出时会自动重启，不再留下空白桌面。
+- **“回收磁盘空间”对话框**打开时不再阻塞启动器（此前会产生误报的卡死报告）。
+- **启动：** 在 macOS 虚拟机中运行启动器或硬件虚拟化不可用时，会给出清楚的说明，而不是难以理解的失败。SteamOS 更新服务器返回异常响应时会报告具体细节。
+- **更完整的问题报告：**
+  - 当前及最近运行游戏的启动日志，以及超长 Proton 日志的开头部分；
+  - 编译失败的完整 Metal 着色器（有大小限制并已脱敏）；
+  - 睡眠后的局域网远程畅玩状态，以及磁盘完整性检查失败时发生变化的数据块；
+  - 着色器模型前提条件，以及 Metal 插桩与内存快速增长；
+  - KosmicKrisp 命令存储快照，以及 virglrenderer 回复流不可用的原因。
+
+**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。若你在用 1.9.11 或更新版本，也可通过 **FX Steam Launcher → 检查更新…** 获得此版本。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.14-gpl-sources.tar`。
+
+]]></description>
+            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.14/FX-Steam-Launcher-1.9.14.dmg" length="95948722" type="application/octet-stream" sparkle:edSignature="bbiSFJN+udMP9Go30F83LazBY20D9jCEoewExQ7d4yvMmRoQJqTqSmiwZmyW0UBNYIEbYXmifwKecj0Pn0ACCA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.14/FX.Steam.Launcher1.9.14-1.9.13.delta" sparkle:deltaFrom="1.9.13" length="1396670" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="1YbfkTxomXlEk1b4ab07KXDVvrvDgVmHg3nTzeAMCtKNe9aIiTYBoSO6XiPeYQMh4yLEwag3vAaMcyV5UWBbDg=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.14/FX.Steam.Launcher1.9.14-1.9.12.delta" sparkle:deltaFrom="1.9.12" length="2456954" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="/UNaJgrHN/9F5doXcde6LORuXGQFL4L+9l1juhHZPyROPoMyPGCqnWdAV3ZYRL8Lgz2EKs9IjUXaxVHZqikqDQ=="/>
+                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.14/FX.Steam.Launcher1.9.14-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="3088838" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="kyoZFUWH9YiXX0Hrzq/BaYQjsaB+HKhJlKqJBiLGd+ke9zmgJvZbd4qidks+zWoSd97dXH3S5CSVAgy2P3f1Ag=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.9.13</title>
             <pubDate>Fri, 06 Nov 2026 20:28:47 +0300</pubDate>
             <link>https://fxgl.github.io/steamac/</link>
@@ -67,98 +211,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
                 <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.13/FX.Steam.Launcher1.9.13-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="2700050" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="St6HY1XNGEuZRLb9SWn0u/5FThoS66NfcNW38QN6cnzgAmCGK2TuvyHbyyGve7cvFGaVmBsT3E+SVzIL5tkCCw=="/>
             </sparkle:deltas>
         </item>
-        <item>
-            <title>1.9.12</title>
-            <pubDate>Wed, 04 Nov 2026 23:44:41 +0300</pubDate>
-            <link>https://fxgl.github.io/steamac/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1.9.12</sparkle:version>
-            <sparkle:shortVersionString>1.9.12</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[New since 1.9.11.
-
-- **Stream SteamOS to Moonlight.** FX Steam Launcher now has a built-in GameStream host: turn on **Settings → Streaming → Enable Moonlight streaming**, pick this Mac in [Moonlight](https://moonlight-stream.org/) on a phone, tablet, TV or another computer on your local network, and enter the PIN on the Mac. The stream carries the SteamOS display (DXMT games included) and SteamOS sound, encoded in hardware (H.264 / HEVC, Opus); keyboard, mouse, touch and controllers work on the other device, with rumble. No Screen Recording permission or audio driver is needed. Off by default; paired devices can be revoked in the same tab. Use it on a trusted local network only. Proposed in #63.
-- **First update delivered in the app.** If you run 1.9.11, this version arrives through **FX Steam Launcher → Check for Updates…** (or the automatic check) — no DMG needed.
-
-**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
-
----
-
-Новое с 1.9.11.
-
-- **Трансляция SteamOS в Moonlight.** В FX Steam Launcher появился встроенный хост GameStream: включите **Настройки → Трансляция → Включить трансляцию Moonlight**, выберите этот Mac в [Moonlight](https://moonlight-stream.org/) на телефоне, планшете, телевизоре или другом компьютере в вашей локальной сети и введите PIN-код на Mac. В трансляции — экран SteamOS (включая игры на DXMT) и звук SteamOS с аппаратным кодированием (H.264 / HEVC, Opus); клавиатура, мышь, касания и контроллеры работают на другом устройстве, с вибрацией. Не нужны ни разрешение на запись экрана, ни аудиодрайвер. По умолчанию выключено; доступ сопряжённых устройств можно отозвать в той же вкладке. Используйте только в доверенной локальной сети. Предложено в #63.
-- **Первое обновление прямо в приложении.** Если у вас 1.9.11, эта версия приходит через **FX Steam Launcher → Проверить обновления…** (или автоматическую проверку) — DMG не нужен.
-
-**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.12-gpl-sources.tar`.
-
----
-
-1.9.11 以来的新内容。
-
-- **将 SteamOS 串流到 Moonlight。** FX Steam Launcher 内置了 GameStream 主机：打开 **设置 → 串流 → 启用 Moonlight 串流**，在本地网络中的手机、平板、电视或另一台电脑上用 [Moonlight](https://moonlight-stream.org/) 选择这台 Mac，并在 Mac 上输入 PIN。串流内容为 SteamOS 画面（含 DXMT 游戏）与 SteamOS 声音，硬件编码（H.264 / HEVC、Opus）；键盘、鼠标、触控与手柄可在另一台设备上使用，支持震动。无需屏幕录制权限或音频驱动。默认关闭；可在同一标签页撤销已配对设备。仅在可信的本地网络中使用。提议见 #63。
-- **首次应用内更新。** 如果你在用 1.9.11，可通过 **FX Steam Launcher → 检查更新…**（或自动检查）获得此版本——无需 DMG。
-
-**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.12-gpl-sources.tar`。
-
-]]></description>
-            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX-Steam-Launcher-1.9.12.dmg" length="95607600" type="application/octet-stream" sparkle:edSignature="JidsYPzXHqusdgNXIPuIVako9td7293SXU2pE/M4U+k0gQoXtz7GEe2gqMWa78oim0xgi6iafZ1/y4mzeVw3Dg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.12/FX.Steam.Launcher1.9.12-1.9.11.delta" sparkle:deltaFrom="1.9.11" length="1833646" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="976432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="7TU7Az4GElQ1NvYXktjztVyzzckl9l1rg17tRhuLF2a62R7zGhyZxhxS60MUCueuYZxRHNmPptzTxEtJPniEDg=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>1.9.11</title>
-            <pubDate>Wed, 04 Nov 2026 22:59:11 +0300</pubDate>
-            <link>https://fxgl.github.io/steamac/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/fxgl/steamac/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1.9.11</sparkle:version>
-            <sparkle:shortVersionString>1.9.11</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[New since 1.9.10.
-
-- **Updates install in the app.** From this version on, FX Steam Launcher updates itself. When a new version is out, **Install Update** downloads it in the background while SteamOS keeps running; then **Install and Relaunch** shuts SteamOS down normally, installs the update and opens the launcher again, or **Install on Quit** installs it the next time you quit. Every update is signed and verified before it is installed, and usually only the changed files are downloaded. Built on Sparkle; proposed by @pythoninthegrass (#77). This version itself still needs the DMG once.
-- **Fewer Metal pipeline errors on MoltenVK.** Blending with a second fragment output that the shader doesn't write is accepted again instead of failing in Metal.
-- **M1:** shaders that sample textures with per-sample perspective projection no longer fail to compile (MoltenVK).
-- **Shader translation fix** for interface blocks whose locations have gaps (MoltenVK).
-- **Damaged installations explained.** If the app's SteamOS download tool is missing or blocked (for example by security software), creating a disk now says so and how to fix it.
-- **Better diagnostics** in crash reports for shader compiler failures.
-
-**Requirements:** Apple silicon Mac, macOS 15+ (KosmicKrisp and DirectX 12 feature level 12_0 need macOS 26+). Signed with a Developer ID (FX GAMES FZ LLC) and notarized by Apple. The GPL and LGPL (DXMT) sources for this build are in `FX-Steam-Launcher-1.9.11-gpl-sources.tar`.
-
----
-
-Новое с 1.9.10.
-
-- **Обновления устанавливаются в приложении.** Начиная с этой версии FX Steam Launcher обновляется сам. Когда выходит новая версия, **Установить** загружает её в фоне, пока SteamOS работает; затем **Установить и перезапустить** штатно выключает SteamOS, устанавливает обновление и снова открывает лаунчер, а **Установить при выходе** установит его, когда вы в следующий раз завершите лаунчер. Каждое обновление подписано и проверяется перед установкой; обычно загружаются только изменённые файлы. Работает на Sparkle; предложил @pythoninthegrass (#77). Саму эту версию ещё нужно один раз установить из DMG.
-- **Меньше ошибок конвейеров Metal на MoltenVK.** Смешивание со вторым выходом фрагментного шейдера, который шейдер не записывает, снова принимается, а не завершается ошибкой Metal.
-- **M1:** шейдеры, которые читают текстуры с перспективной проекцией по сэмплам, больше не падают при компиляции (MoltenVK).
-- **Исправление трансляции шейдеров** для интерфейсных блоков с пропусками в location (MoltenVK).
-- **Понятнее при повреждённой установке.** Если инструмент загрузки SteamOS в приложении отсутствует или заблокирован (например, защитной программой), при создании диска лаунчер скажет об этом и объяснит, что делать.
-- **Больше диагностики** в отчётах о сбоях для ошибок компилятора шейдеров.
-
-**Требования:** Mac на Apple Silicon, macOS 15+ (для KosmicKrisp и DirectX 12 уровня 12_0 нужна macOS 26+). Подписано Developer ID (FX GAMES FZ LLC) и нотаризовано Apple. Исходники GPL- и LGPL-компонентов (DXMT) этой сборки — в `FX-Steam-Launcher-1.9.11-gpl-sources.tar`.
-
----
-
-1.9.10 以来的新内容。
-
-- **应用内安装更新。** 从此版本起，FX Steam Launcher 会自行更新。有新版本时，**安装更新**会在后台下载，SteamOS 照常运行；随后 **安装并重新启动** 会正常关闭 SteamOS、安装更新并重新打开启动器，**退出时安装** 则在你下次退出时安装。每个更新都经过签名并在安装前校验，通常只下载变化的文件。基于 Sparkle；由 @pythoninthegrass 提议（#77）。本版本本身仍需从 DMG 安装一次。
-- **MoltenVK 上更少的 Metal 管线错误。** 使用着色器未写入的第二个片段输出进行混合时，重新被接受，不再在 Metal 中失败。
-- **M1：** 按采样进行透视投影纹理采样的着色器不再编译失败（MoltenVK）。
-- **着色器转换修复：** location 有间隔的接口块（MoltenVK）。
-- **安装损坏时给出说明。** 如果应用内的 SteamOS 下载工具缺失或被阻止（例如被安全软件阻止），创建磁盘时会说明原因及解决方法。
-- **更多诊断信息：** 崩溃报告中的着色器编译失败。
-
-**系统要求：** Apple 芯片 Mac，macOS 15+（KosmicKrisp 与 DirectX 12 功能级别 12_0 需要 macOS 26+）。使用 Developer ID（FX GAMES FZ LLC）签名并经 Apple 公证。本构建的 GPL 与 LGPL（DXMT）源码见 `FX-Steam-Launcher-1.9.11-gpl-sources.tar`。
-
-]]></description>
-            <enclosure url="https://github.com/fxgl/steamac/releases/download/v1.9.11/FX-Steam-Launcher-1.9.11.dmg" length="95302497" type="application/octet-stream" sparkle:edSignature="U+/jgCfGQQll4aJBMMF37bgHEk/L7QoZOGjTS4TKGntGo/D/PoM1xiYmuEwuqvPCB3ILn85QW1w2jRrEkOxzCQ=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: gm/SmFJUREZ/wsIGuq2J7hugZ1XHOvNFo1q665LDPc9E9oO6NLy1a8paVDI8E4w588NguCz+NjCbWhbqBwQ5DA==
-length: 22324
+edSignature: VdDCl2KRIijvZIqnd09GEgTMJrpTJBmjtFSyy1r5M5OnzhBHsvp+a+IKK6BpAK6IWMCpfzC/OZEP5GUJWnFMCg==
+length: 31878
 -->

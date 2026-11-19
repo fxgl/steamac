@@ -176,4 +176,8 @@ sh "$here/sentry-mesh-payload.sh" "$spvc" "$work/mesh-payload"
 
 # A2: geometry mesh outputs retain native clipping and fragment-visible scalar copies.
 sh "$here/sentry-a2-clip-distance.sh" "$spvc" "$work/clip-distance"
+
+# AS/AV: Workgroup float atomics and independently fetched composite vertex locations.
+sh "$here/sentry-as-shared-float.sh" "$spvc" "$work/shared-float"
+sh "$here/sentry-av-array-input.sh" "$src" "$build" "$work/array-input"
 printf '%s\n' 'PASS: reconstructed Sentry MSL shaders'

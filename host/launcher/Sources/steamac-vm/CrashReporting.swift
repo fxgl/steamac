@@ -364,6 +364,7 @@ enum CrashReporting {
             "metal_cache": MetalCompilerCache.outcome,
         ]
         context.merge(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD)) { _, new in new }
+        context["metal_instrumentation"] = MetalInstrumentation.current().tag
         vmContext(context)
         let kernel = options.kernel
         guard !kernel.isEmpty else { return }
@@ -381,7 +382,7 @@ enum CrashReporting {
         }
         guard role == .vm, let dir = Supervisor.runDir else { return }
         let keys = ["boot", "display_mode", "kernel", "steamos_build", "layer", "network", "sound", "mouse", "appid", "metal_cache",
-                    "metal_hud", "metal_hud_injected", "metal_hud_requested", "metal_hud_driver"]
+                    "metal_hud", "metal_hud_injected", "metal_hud_requested", "metal_hud_driver", "metal_instrumentation"]
         let snapshot = locked { tags.filter { keys.contains($0.key) } }
         if let data = try? JSONSerialization.data(withJSONObject: snapshot) {
             try? data.write(to: URL(fileURLWithPath: dir + "/sentry-tags.json"), options: .atomic)
@@ -393,6 +394,12 @@ enum CrashReporting {
     static func metalHUDChanged() {
         guard configured, role == .vm else { return }
         vmContext(MetalHUD.diagnostics(requested: LauncherSettings.shared.metalHUD))
+    }
+
+    /// The serial VM memory timer observes dyld changes even when the HUD setting did not change.
+    static func metalInstrumentationChanged(_ summary: String) {
+        guard configured, role == .vm else { return }
+        vmContext(["metal_instrumentation": summary])
     }
 
     /// VM process: the game that has the guest's focus (`appid` tag of both processes' events
@@ -520,15 +527,18 @@ enum CrashReporting {
             let pressure = memoryWatch.summary(including: host.pressure)
             let reason = exit.detail == nil ? "unknown" : exit.killedForMemory ? "jetsam" : "not-jetsam"
             let detail = exit.detail.map { " (exit detail 0x\(String($0, radix: 16)))" } ?? ""
-            let lines = [
+            var lines = [
                 killedSummary,
-                "killed by the kernel for memory (jetsam): \(reason == "jetsam" ? "yes" : reason == "unknown" ? "unknown" : "no")\(detail)",
-                "VM memory \(locked { tags["vm_mem_mib"] } ?? "?") MiB; VM process peak footprint "
-                    + (exit.peakFootprint.map(gib) ?? "?"),
-                "host memory after exit: " + host.summary,
+                "kernel memory-kill flag (NOTE_EXIT_MEMORY): \(reason == "jetsam" ? "set" : reason == "unknown" ? "unavailable" : "not set")\(detail)",
+                exit.footprintSummary(vmMemoryMiB: locked { tags["vm_mem_mib"] }),
+                "host memory after exit (may already be reclaimed): " + host.summary,
                 "memory pressure since the VM started: " + pressure.text,
             ]
-            exitTags["kill_reason"] = reason
+            if !exit.killedForMemory {
+                lines.append("SIGKILL source is unknown; an unset memory-kill flag does not rule out memory-related termination.")
+            }
+            exitTags["kill_reason"] = exit.killedForMemory ? "jetsam" : "unknown"
+            exitTags["memory_kill_flag"] = reason == "jetsam" ? "set" : reason == "unknown" ? "unavailable" : "not-set"
             exitTags["memory_pressure"] = host.pressure
             exitTags["memory_pressure_max"] = pressure.maxLevel
             if let pct = host.availablePercent { exitTags["host_mem_available_pct"] = String(pct) }
@@ -551,7 +561,8 @@ enum CrashReporting {
             // heap corruption trap (STEAMAC-31/13: SIGTRAP in libsystem_malloc under
             // mtl_new_compute_pipeline_state, no message).
             var capture = ""
-            if signal != 0, let crash = SystemCrashReport.find(pid: exit.pid, timeout: 8, diagnostics: &capture) {
+            let crash = signal != 0 ? SystemCrashReport.find(pid: exit.pid, timeout: 8, diagnostics: &capture) : nil
+            if let crash {
                 if let site = crash.site {
                     lines[0] = exitSummary(status: exit.status) + " in " + site + lastError
                     key += " " + site
@@ -563,6 +574,9 @@ enum CrashReporting {
             if signal != 0 {
                 extra["macos_crash_report_capture"] = capture
                 log("crash report capture: \(capture)")
+                // Report a Problem attaches this log: with crash reporting off it is the only way the
+                // crash site reaches us (STEAMAC-BC: a SIGSEGV report logged frames=7 but carried none).
+                for line in crash?.summary.components(separatedBy: "\n") ?? [] { log("crash report: \(line)") }
             }
             report(.vmExited, key: key, message: lines.joined(separator: "\n"), tags: exitTags, extra: extra)
         }
@@ -833,6 +847,16 @@ enum CrashReporting {
     /// crash site and libmalloc's message (STEAMAC-31); an app bundle is no disk image (STEAMAC-15).
     static func exitSelfCheck() -> [String] {
         var failures: [String] = []
+        failures += MemoryWatch.selfCheck()
+        let memoryExit = VMExit(status: 128 + SIGKILL, detail: 0, peakFootprint: 6910 << 20)
+        let memoryText = memoryExit.footprintSummary(vmMemoryMiB: "4096", physicalMemory: 8 << 30)
+        if memoryExit.killedForMemory || !memoryText.contains("peak/guest-RAM=1.69x")
+            || !memoryText.contains("peak/host-RAM=0.84x") || !memoryText.contains("not a process limit") {
+            failures.append("kill: peak footprint must include memory beyond configured guest RAM without asserting jetsam")
+        }
+        if !VMExit(status: 128 + SIGKILL).footprintSummary(vmMemoryMiB: nil).contains("peak footprint ?") {
+            failures.append("kill: missing memory evidence must remain unknown")
+        }
         let dir = NSTemporaryDirectory() + "steamac-exit-check-\(getpid())"
         try? FileManager.default.createDirectory(atPath: dir + "/Apps.app/Contents", withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: dir) }
@@ -1708,6 +1732,20 @@ struct VMExit {
     /// The kernel's memorystatus (jetsam) killed it.
     var killedForMemory: Bool { (detail ?? 0) & UInt32(NOTE_EXIT_MEMORY) != 0 }
 
+    func footprintSummary(vmMemoryMiB: String?, physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> String {
+        var text = "VM memory \(vmMemoryMiB ?? "?") MiB; VM process peak footprint "
+            + (peakFootprint.map(CrashReporting.gib) ?? "?")
+        if let peakFootprint {
+            if let vmMemoryMiB, let mib = Double(vmMemoryMiB), mib > 0 {
+                text += String(format: "; peak/guest-RAM=%.2fx", Double(peakFootprint) / (mib * 1_048_576))
+            }
+            if physicalMemory > 0 {
+                text += String(format: "; peak/host-RAM=%.2fx", Double(peakFootprint) / Double(physicalMemory))
+            }
+        }
+        return text + "; guest RAM is not a process limit (GPU/renderer allocations are additional)"
+    }
+
     /// phys_footprint and its lifetime peak of a running or zombie process, bytes.
     static func footprint(pid: pid_t) -> (current: UInt64, peak: UInt64)? {
         var ri = rusage_info_v4()
@@ -1833,6 +1871,17 @@ extension CrashReporting {
         /// kern.memorystatus_level: memory available to apps, percent.
         var availablePercent: Int?
         var summary: String
+        var swapUsed: UInt64?
+        var swapTotal: UInt64?
+
+        static func pressureRank(_ level: String) -> Int {
+            switch level {
+            case "normal": return 1
+            case "warning": return 2
+            case "critical": return 3
+            default: return 0
+            }
+        }
 
         static func pressureLevel() -> String {
             switch sysctlInt("kern.memorystatus_vm_pressure_level") {
@@ -1862,12 +1911,14 @@ extension CrashReporting {
             }
             var swap = xsw_usage()
             var size = MemoryLayout<xsw_usage>.size
-            if sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0 {
+            let hasSwap = sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0
+            if hasSwap {
                 parts.append("swap used \(gib(swap.xsu_used)) of \(gib(swap.xsu_total))")
             }
             parts.append("available \(available.map { "\($0) %" } ?? "?")")
             parts.append("pressure \(pressure)")
-            return HostMemory(pressure: pressure, availablePercent: available, summary: parts.joined(separator: ", "))
+            return HostMemory(pressure: pressure, availablePercent: available, summary: parts.joined(separator: ", "),
+                              swapUsed: hasSwap ? swap.xsu_used : nil, swapTotal: hasSwap ? swap.xsu_total : nil)
         }
 
         private static func sysctlInt(_ name: String) -> Int? {
@@ -1889,6 +1940,7 @@ private final class MemoryWatch: @unchecked Sendable {
     private var events: [(at: Date, level: String, footprint: UInt64?)] = []
     private var samples: [(at: Date, text: String)] = []
     private var nextSample = 0
+    private var sampledPeak: (at: Date, level: String, footprint: UInt64)?
 
     func start() {
         guard source == nil else { return }
@@ -1915,6 +1967,7 @@ private final class MemoryWatch: @unchecked Sendable {
             samples.removeAll(keepingCapacity: true)
             samples.reserveCapacity(12)
             nextSample = 0
+            sampledPeak = nil
         }
     }
 
@@ -1942,6 +1995,10 @@ private final class MemoryWatch: @unchecked Sendable {
             if samples.count < 12 { samples.append((at, text)) }
             else { samples[nextSample] = (at, text) }
             nextSample = (nextSample + 1) % 12
+            if CrashReporting.HostMemory.pressureRank(host.pressure)
+                > CrashReporting.HostMemory.pressureRank(sampledPeak?.level ?? "unknown") {
+                sampledPeak = (at, host.pressure, footprint.current)
+            }
         }
     }
 
@@ -1958,19 +2015,37 @@ private final class MemoryWatch: @unchecked Sendable {
         }
     }
 
+    static func selfCheck() -> [String] {
+        let watch = MemoryWatch()
+        // STEAMAC-S 30edebe2: dispatch events only say warning, but pre-exit
+        // sysctl samples caught critical; post-exit warning must not erase it.
+        watch.events = [(Date(), "warning", nil)]
+        watch.sampledPeak = (Date(), "critical", 31 << 30)
+        let summary = watch.summary(including: "normal")
+        if summary.maxLevel != "critical" || !summary.text.contains("sampled critical")
+            || !summary.text.contains("VM 31.0 GiB") {
+            return ["kill: sampled critical pressure lost when no dispatch event arrived"]
+        }
+        return []
+    }
+
     /// "normal at start; warning 5m12s ago (VM 14.2 GiB); critical 40s ago (VM 15.1 GiB)" and the
     /// highest level seen.
     func summary(including currentLevel: String) -> (text: String, maxLevel: String) {
-        let rank = ["normal": 1, "warning": 2, "critical": 3]
+        let rank = CrashReporting.HostMemory.pressureRank
         return lock.withLock {
             let now = Date()
             var max = currentLevel
             var parts: [String] = []
             for (i, e) in events.enumerated() {
-                if rank[e.level, default: 0] > rank[max, default: 0] { max = e.level }
+                if rank(e.level) > rank(max) { max = e.level }
                 let age = Int(now.timeIntervalSince(e.at))
                 let when = i == 0 ? "at start (\(age / 60)m\(age % 60)s ago)" : "\(age / 60)m\(age % 60)s ago"
                 parts.append("\(e.level) \(when)" + (e.footprint.map { " (VM \(CrashReporting.gib($0)))" } ?? ""))
+            }
+            if let peak = sampledPeak, rank(peak.level) > rank(max) {
+                max = peak.level
+                parts.append("sampled \(peak.level) \(Int(now.timeIntervalSince(peak.at))) s ago (VM \(CrashReporting.gib(peak.footprint)))")
             }
             return (parts.isEmpty ? "not watched" : parts.joined(separator: "; "), max)
         }

@@ -407,6 +407,65 @@
 #              unbound sparse buffers, keep the existing path. Repro: test/copy-buffer-null.py <dylib>
 #              (six NULL-source/destination/both cases crash before; after, 1024 calls per case log
 #              once, then a valid copy succeeds; dense and unbound-sparse controls pass before/after).
+#   0092       steamac: vkCreateGraphicsPipelines rejects a complete graphics pipeline without a vertex (or
+#              mesh) shader before compiling, logging its stages, libraries and flags. STEAMAC-AH
+#              (1.9.13, M4 Pro) faulted kk_cmd_bind_shaders+128 (`ldr x8, [x26, #0xe8]`, x26 = the NULL
+#              vertex kk_shader) and took the VM process down; KosmicKrisp exposes neither pipeline
+#              libraries nor shader objects, so the pipeline came without a vertex stage. Venus keeps
+#              a placeholder and drops its draws. Repro: REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh
+#              <dylib> (a fragment-only pipeline faulted the process before; vertex + fragment control).
+#   0094       steamac: single-layer non-array 2D views with an explicit overflowing layer count
+#              retain their one real slice before Mesa/Metal narrowing (STEAMAC-G: layers 0+65536/1,
+#              RGBA8 1920x288 and 1952x288, flags 0x8, usage 0x480097). Empty ranges, arrays and
+#              volumes remain rejected as in 0065. No format/backing substitution. Venus creates
+#              views asynchronously, so rejecting the otherwise usable slice killed the context.
+#              Repro: image_views.c, exact shapes and usage-pNext control, dynamic-render clear and
+#              every RGBA8 readback byte checked; all thirteen original cases still pass.
+#   0095       steamac: rejected image views identify their guest application/engine, full image and
+#              view shape, swizzles and bounded pNext chain (usage override and sliced-view fields).
+#              STEAMAC-G's RGBA8 -> R8 producer is not yet proven: the usage mask and 65536 arithmetic
+#              point to Zink, not REMAINING or a uint16 Venus wire conversion; nearby explorer.exe
+#              teardown does not identify the failing context. Keep 0066's format rejection rather
+#              than return a view with unproven pixels or reintroduce Metal's assertion.
+#              Repro: image_views.c, incompatible 1920/1952x288 and usage-pNext controls.
+#   0096       steamac: diagnose command-allocator storage growth before Metal encoder creation,
+#              encoder end and command-buffer end (STEAMAC-AK/AP/AN/AX). Doubling process-wide
+#              high waters (64 MiB allocator heaps / 1024 KK encoders) include allocator identities
+#              and bytes, per-Metal-buffer encoder counts, whole-recording counts, upload/large
+#              BO bytes, pool cache counts, residency allocation count and last-committed bytes,
+#              and Metal resource bytes; MESA_KK_DEBUG=cbs logs every recording. Allocator storage
+#              is not fully included in MTLDevice.currentAllocatedSize. No reset/lifetime change:
+#              shared allocators can still back executable siblings. The reported IOGPU +512
+#              branch aborts after a pooled-resource allocation returns NULL, not the separate
+#              out-of-range resource-class assertion. Neither a KK leak nor a fixed slot limit
+#              is proven. On M1 Max, 1024 render/fill pairs use ~362 MB of allocator heaps but
+#              ~3.8 MB of Metal resources; repeated completed recordings plateau (~730 MB with
+#              two executable siblings). Repro: REPRO_CASE=command-allocator REPRO_DRIVER=kosmickrisp
+#              host/moltenvk/repro/run.sh <dylib>. Diagnostics fail before / pass after; no exact
+#              game-crash reproduction. libMetalMetricsInterpose can load through FramePacing
+#              even with MTL_HUD_ENABLED=0: this is not proof Apple's HUD was enabled.
+#   0098       steamac: rejected image views log the real image/view format features and
+#              differences, external-memory types, texel-block dimensions/sizes and the
+#              BLOCK_TEXEL_VIEW_COMPATIBLE flag (STEAMAC-G/A). On M1 Max R8/RGBA8 expose
+#              identical features and exact usage 0x480097 queries succeed; Zink has no
+#              R8 -> RGBA8 fallback. BC3 -> RGBA8 is incompatible even with the block-view
+#              flag (16 vs 4 bytes). No pixel substitution or change to view rejection.
+#              Repro: REPRO_CASE=sentry-g-views, 26 view cases including three real R8
+#              clear/readbacks at 1664/1920/1952x288, valid BC3 sRGB/16-byte block views,
+#              and diagnostic assertions that fail before / pass after 0098.
+#   0099       steamac: a render pipeline whose vertex function does not resolve in its library
+#              fails like any other compile failure, logged with the name, the library's
+#              functions, stage, entry points and MSL hashes, instead of Metal's process abort
+#              "vertexFunction must not be nil" (STEAMAC-BN/BP: M2, CS2; Metal aborts even with
+#              an NSError pointer). The program that named a missing function is not known yet.
+#              Repro: REPRO_CASE=sentry-bn; missing / fragment-stage / absent vertex functions
+#              abort the 1.9.14 driver and return NULL after; a valid pair draws 16 green pixels.
+#   0100       steamac: the device keeps its live image views; vkCmdBeginRenderPass2 names an
+#              attachment whose view was destroyed before Mesa's common code dereferences it
+#              (STEAMAC-BJ/BK: transition_attachment+60 read image_view->image = NULL of a freed,
+#              libmalloc-cleared view; DOOM 2016). Diagnostic only, recording is unchanged.
+#              Repro: REPRO_CASE=sentry-bj; a destroyed framebuffer view faults at the reported
+#              frames and offsets on 1.9.14 and is named first after; a live view logs nothing.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -634,6 +693,13 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0089 = steamac: opt-in MESA_KK_DEBUG=syncs traces queue synchronization and CPU waits past 1 s (STEAMAC-94)"
 	echo "  0090 = steamac: materialize deep MSL selection predicates past depth 128 (Metal's 256 bracket limit, STEAMAC-G)"
 	echo "  0091 = steamac: skip vkCmdCopyBuffer[2] with NULL buffer handles, bounded warning (STEAMAC-9S/9T)"
+	echo "  0092 = steamac: reject graphics pipelines without a vertex shader, logged (STEAMAC-AH)"
+	echo "  0094 = steamac: overflowing non-array views of single-layer 2D images retain the real slice (STEAMAC-G)"
+	echo "  0095 = steamac: rejected image views identify their guest producer, full shape and pNext arguments"
+	echo "  0096 = steamac: bounded command-allocator/encoder/upload growth diagnostics before Metal calls (STEAMAC-AK/AP/AN/AX)"
+	echo "  0098 = steamac: rejected image views log real format features, external memory and block compatibility (STEAMAC-G)"
+	echo "  0099 = steamac: render pipelines whose vertex function does not resolve fail, logged, instead of aborting (STEAMAC-BN/BP)"
+	echo "  0100 = steamac: render pass begin names attachments whose image view was destroyed (STEAMAC-BJ/BK)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

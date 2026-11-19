@@ -1,9 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "" : {
-
-    },
+    "" : {},
     "\"Still working\" card over the picture after 2 s without GPU work from SteamOS (loading, shader compiles)." : {
       "localizations" : {
         "ru" : {
@@ -407,9 +405,6 @@
           }
         }
       }
-    },
-    "%@: home is not an ext4 filesystem" : {
-
     },
     "%@: not a SteamOS disk with home as its last partition" : {
       "localizations" : {
@@ -1184,6 +1179,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。自动模式还会将 macOS 不支持的通用 HID 操纵杆和手柄按其本身直通给支持 HID 的空闲玩家。它们会让位给 GameController 控制器；不匹配多轴设备。关闭“虚拟控制器”可停用此功能；请在 SteamOS 中设置布局和校准。"
+          }
+        }
+      }
+    },
+    "Can't download SteamOS information from Valve's servers. The response was empty, incomplete, or invalid. Check your internet connection, sign in to the network if required, or try without a VPN, proxy, or network filter, then try again. Technical details are in the launcher log." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить сведения о SteamOS с серверов Valve: получен пустой, неполный или некорректный ответ. Проверьте подключение к интернету, при необходимости войдите в сеть через страницу авторизации или отключите VPN, прокси либо сетевой фильтр и повторите попытку. Технические подробности — в журнале лаунчера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从 Valve 服务器下载 SteamOS 信息：响应为空、不完整或无效。请检查网络连接，按需登录网络认证页面，或关闭 VPN、代理或网络过滤器后重试。技术详情见启动器日志。"
           }
         }
       }
@@ -2779,6 +2790,22 @@
         }
       }
     },
+    "FX Steam Launcher cannot start SteamOS inside a macOS virtual machine. Nested virtualization is not supported. Run the launcher directly on your Mac, not inside a virtual machine." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher не может запустить SteamOS внутри виртуальной машины macOS: вложенная виртуализация не поддерживается. Запустите лаунчер непосредственно на Mac, а не в виртуальной машине."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FX Steam Launcher 无法在 macOS 虚拟机内启动 SteamOS：不支持嵌套虚拟化。请直接在 Mac 上运行启动器，而不是在虚拟机中运行。"
+          }
+        }
+      }
+    },
     "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n" : {
       "localizations" : {
         "ru" : {
@@ -3160,9 +3187,6 @@
         }
       }
     },
-    "Games currently have %@ GiB of capacity. Enter a smaller home size in GiB (at least 8). Shrink refuses when the data already on /home would not fit. This rewrites the disk image; keep a backup if the games matter." : {
-
-    },
     "Games currently have %@ GiB. Enter a larger home capacity in GiB (up to 4096). This never shrinks or deletes your disk. APFS / Mac OS Extended use space only as SteamOS writes; exFAT takes the full added size immediately and needs that much free space." : {
       "localizations" : {
         "ru" : {
@@ -3387,8 +3411,22 @@
         }
       }
     },
-    "H" : {
-
+    "H" : {},
+    "Hardware virtualization is unavailable on this system. FX Steam Launcher needs the macOS Hypervisor framework to start SteamOS. Run the launcher directly on a supported Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этой системе недоступна аппаратная виртуализация. Для запуска SteamOS FX Steam Launcher требуется фреймворк macOS Hypervisor. Запустите лаунчер непосредственно на поддерживаемом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此系统无法使用硬件虚拟化。FX Steam Launcher 需要 macOS Hypervisor 框架才能启动 SteamOS。请直接在受支持的 Mac 上运行启动器。"
+          }
+        }
+      }
     },
     "Help" : {
       "comment" : "Application help menu",
@@ -3423,9 +3461,6 @@
           }
         }
       }
-    },
-    "Home capacity is now %lld GiB." : {
-
     },
     "Home partition (games, sparse)" : {
       "localizations" : {
@@ -6400,21 +6435,6 @@
         }
       }
     },
-    "Shrink Disk" : {
-
-    },
-    "Shrink Disk…" : {
-
-    },
-    "Shrink SteamOS Disk" : {
-
-    },
-    "Shrink and Restart" : {
-
-    },
-    "Shrink boot queued" : {
-
-    },
     "Shut Down SteamOS" : {
       "localizations" : {
         "ru" : {
@@ -6612,9 +6632,6 @@
           }
         }
       }
-    },
-    "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start." : {
-
     },
     "Starting Steam" : {
       "localizations" : {
@@ -7023,9 +7040,6 @@
         }
       }
     },
-    "SteamOS disk could not be shrunk" : {
-
-    },
     "SteamOS disk enlarged" : {
       "localizations" : {
         "ru" : {
@@ -7041,9 +7055,6 @@
           }
         }
       }
-    },
-    "SteamOS disk shrunk" : {
-
     },
     "SteamOS gets a gamepad while a controller is connected." : {
       "localizations" : {
@@ -7222,9 +7233,6 @@
         }
       }
     },
-    "SteamOS must be stopped. A one-shot boot shrinks the filesystem when needed, then the image is truncated." : {
-
-    },
     "SteamOS must be stopped. The partition and filesystem grow on its next boot." : {
       "localizations" : {
         "ru" : {
@@ -7240,9 +7248,6 @@
           }
         }
       }
-    },
-    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Shrink Disk… lowers home capacity when used space fits (one-shot boot to shrink ext4, then GPT/truncate). After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {
-
     },
     "SteamOS set up" : {
       "localizations" : {
@@ -7340,9 +7345,6 @@
           }
         }
       }
-    },
-    "SteamOS will shut down, run a one-shot boot to shrink the filesystem if needed, then truncate the image and restart." : {
-
     },
     "Stick deadzone" : {
       "localizations" : {
@@ -7992,9 +7994,6 @@
           }
         }
       }
-    },
-    "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again." : {
-
     },
     "The statistics service is not reachable. Sessions waiting to be sent: %lld." : {
       "localizations" : {
@@ -8685,9 +8684,7 @@
         }
       }
     },
-    "W" : {
-
-    },
+    "W" : {},
     "Waiting for SteamOS to draw…" : {
       "localizations" : {
         "ru" : {
@@ -9250,12 +9247,6 @@
         }
       }
     },
-    "home filesystem is still larger than %lld GiB; start the shrink boot first" : {
-
-    },
-    "home filesystem still exceeds %lld GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot" : {
-
-    },
     "home size must be 8..4096 GiB" : {
       "localizations" : {
         "ru" : {
@@ -9271,9 +9262,6 @@
           }
         }
       }
-    },
-    "home uses about %@ GiB; free space inside SteamOS or pick a larger size" : {
-
     },
     "last played %@" : {
       "localizations" : {
@@ -9694,9 +9682,6 @@
         }
       }
     },
-    "start SteamOS once so a run directory exists, then shrink again" : {
-
-    },
     "the SteamOS disk %@ is in use by another FX Steam Launcher (or steamac-vm). Quit it first: two VMs writing one disk corrupt its file systems." : {
       "localizations" : {
         "ru" : {
@@ -9729,9 +9714,6 @@
         }
       }
     },
-    "the disk selected for shrink is no longer the next boot's writable disk" : {
-
-    },
     "the new home size must be larger than its current %@ GiB (disks cannot be shrunk)" : {
       "localizations" : {
         "ru" : {
@@ -9747,9 +9729,6 @@
           }
         }
       }
-    },
-    "the new home size must be smaller than its current %@ GiB (use Grow Disk to enlarge)" : {
-
     },
     "the selected SteamOS disk has changed; choose its size again" : {
       "localizations" : {
@@ -9852,7 +9831,28 @@
           }
         }
       }
-    }
+    },
+    "SteamOS disk could not be shrunk" : {},
+    "SteamOS disk shrunk" : {},
+    "SteamOS must be stopped. A one-shot boot shrinks the filesystem when needed, then the image is truncated." : {},
+    "Games currently have %@ GiB of capacity. Enter a smaller home size in GiB (at least 8). Shrink refuses when the data already on /home would not fit. This rewrites the disk image; keep a backup if the games matter." : {},
+    "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again." : {},
+    "%@: home is not an ext4 filesystem" : {},
+    "SteamOS raw GPT disk, used in place (never copied). If Steam reports not enough space, Grow Disk… adds room for games without recreating it. Shrink Disk… lowers home capacity when used space fits (one-shot boot to shrink ext4, then GPT/truncate). After uninstalling games, Reclaim Disk Space… can reduce the image's allocated size only on APFS (capacity stays the same). Clones and snapshots may retain space on the Mac. Free space on the Mac does not automatically increase SteamOS's capacity." : {},
+    "SteamOS will shut down, run a one-shot boot to shrink the filesystem if needed, then truncate the image and restart." : {},
+    "Shrink SteamOS Disk" : {},
+    "the new home size must be smaller than its current %@ GiB (use Grow Disk to enlarge)" : {},
+    "Shrink boot queued" : {},
+    "home filesystem is still larger than %lld GiB; start the shrink boot first" : {},
+    "home uses about %@ GiB; free space inside SteamOS or pick a larger size" : {},
+    "the disk selected for shrink is no longer the next boot's writable disk" : {},
+    "Start SteamOS. It will shrink the filesystem in a one-shot boot, power off, then the launcher truncates the image before the next start." : {},
+    "Home capacity is now %lld GiB." : {},
+    "home filesystem still exceeds %lld GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot" : {},
+    "start SteamOS once so a run directory exists, then shrink again" : {},
+    "Shrink and Restart" : {},
+    "Shrink Disk" : {},
+    "Shrink Disk…" : {}
   },
   "version" : "1.0"
 }

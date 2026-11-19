@@ -16,13 +16,15 @@ import tempfile
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--source", type=Path, default=root / "host/launcher/Sources/steamac-vm/HIDPassthrough.swift")
+parser.add_argument("--gamepad-source", type=Path, default=root / "host/launcher/Sources/steamac-vm/Gamepad.swift",
+                    help="Gamepad.swift revision for transport/routing regressions")
 args = parser.parse_args()
 fixture = Path(__file__).with_suffix(".swift")
 production = args.source.read_text()
 # These pure production enums live beside unrelated launcher/VM code. Extract
 # complete top-level declarations, including GenericHIDRouting's self-check
 # dependency, without copying their policy into the fixture.
-gamepad = (root / "host/launcher/Sources/steamac-vm/Gamepad.swift").read_text()
+gamepad = args.gamepad_source.read_text()
 routing = []
 if "GenericHIDRouting" in production:
     for name in ("SteamControllerRouting", "GenericHIDRouting"):
@@ -30,6 +32,17 @@ if "GenericHIDRouting" in production:
         if declaration is None:
             parser.error(f"cannot find production enum {name} in Gamepad.swift")
         routing.append(declaration.group())
+def declaration(text, kind, name):
+    found = re.search(rf"^(?:final )?{kind} {name}(?:[ :][^\n]*)? \{{\n.*?^\}}", text, re.MULTILINE | re.DOTALL)
+    if found is None:
+        parser.error(f"cannot find production {kind} {name}")
+    return found.group()
+
+transport = [
+    declaration(gamepad, "class", "PadPort"),
+    declaration((root / "host/launcher/Sources/steamac-vm/Progress.swift").read_text(), "struct", "LineSplitter"),
+    declaration((root / "host/launcher/Sources/steamac-vm/Options.swift").read_text(), "struct", "OptionError"),
+]
 flags = []
 if "IOHIDManagerOptions.independentDevices" in production:
     flags += ["-D", "HAS_INDEPENDENT_DEVICES"]
@@ -41,13 +54,19 @@ if "func gameControllersChanged()" in production:
     flags += ["-D", "HAS_GAMECONTROLLER_OWNERSHIP"]
 if "var needsInputMonitoring" in production:
     flags += ["-D", "HAS_INPUT_MONITORING_WARNING"]
+if "reportID: UInt8" in transport[0]:
+    flags += ["-D", "HAS_PER_ID_COALESCE"]
+if "private var reader: DispatchSourceRead?" in transport[0]:
+    flags += ["-D", "HAS_PADPORT_CANCELLATION"]
+if "static func usbStandIn(" in gamepad:
+    flags += ["-D", "HAS_USB_STANDIN"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:
     directory = Path(temporary)
     source = directory / "main.swift"
     # Same-file extension reaches the private callback handlers without adding
     # test-only entry points to production. Local symbols replace IOKit's calls;
     # the production source itself is compiled unchanged.
-    source.write_text("\n".join([production, *routing, fixture.read_text()]))
+    source.write_text("\n".join([production, *routing, *transport, fixture.read_text()]))
     executable = directory / "hid-passthrough-test"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5", *flags, str(source), "-o", str(executable)], check=True)
     raise SystemExit(subprocess.run([str(executable)], timeout=30).returncode)

@@ -1,0 +1,78 @@
+From 99106a2a534a759a36b6533166db4bd5056efbc1 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 11 Nov 2026 20:55:22 +0300
+Subject: [PATCH 57/57] Retain Metal command-buffer failure evidence at release
+ log levels
+
+STEAMAC-AG/G: encoder execution status, signposts and shader validation logs were informational and hidden by the launcher errors-only setting. Print failure-only GPU evidence independently of that level and explain opt-in encoder/shader capture. No speculative GPU hang or OOM workaround. Formatter regression uses synthetic timeout/page-fault/OOM metadata.
+---
+ MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm | 46 +++++++++++++-----------
+ 1 file changed, 25 insertions(+), 21 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+index 42e5646..72df146 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+@@ -217,6 +217,30 @@
+ 	return "unknown";
+ }
+ 
++// Device-loss evidence must survive the launcher's normal errors-only log level.
++// Encoder status collection remains opt-in (MVK_CONFIG_DEBUG), with no normal
++// submission overhead added by this diagnostic.
++static void mvkLogMetalCommandBufferDiagnostics(id<MTLCommandBuffer> cb) {
++	fprintf(stderr, "[mvk-gpu] Command buffer \"%s\": domain=%s code=%li GPU start=%.9f end=%.9f.\n",
++			cb.label ? cb.label.UTF8String : "", cb.error.domain.UTF8String, (long)cb.error.code,
++			cb.GPUStartTime, cb.GPUEndTime);
++	NSArray<id<MTLCommandBufferEncoderInfo>>* encoders = cb.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
++	if (encoders.count) {
++		for (id<MTLCommandBufferEncoderInfo> enc in encoders) {
++			fprintf(stderr, "[mvk-gpu] Encoder \"%s\": %s.\n", enc.label ? enc.label.UTF8String : "",
++					mvkStringFromMTLCommandEncoderErrorState(enc.errorState));
++			for (NSString* signpost in enc.debugSignposts) {
++				fprintf(stderr, "[mvk-gpu] Signpost: %s\n", signpost.UTF8String);
++			}
++		}
++	} else {
++		fprintf(stderr, "[mvk-gpu] No encoder execution status; repeat with MVK_CONFIG_DEBUG=1. For shader replay also set MVK_CONFIG_SHADER_DUMP_DIR to a writable host directory.\n");
++	}
++	for (id<MTLFunctionLog> log in cb.logs) {
++		fprintf(stderr, "[mvk-gpu] Shader log: %s\n", log.description.UTF8String);
++	}
++}
++
+ void MVKQueue::handleMTLCommandBufferError(id<MTLCommandBuffer> mtlCmdBuff) {
+ 	if (mtlCmdBuff.status != MTLCommandBufferStatusError) { return; }
+ 
+@@ -257,27 +281,7 @@
+ 				 (mtlCmdBuff.label ? mtlCmdBuff.label.UTF8String : ""),
+ 				 mtlCmdBuff.error.code, mtlCmdBuff.error.localizedDescription.UTF8String);
+ 
+-	if (NSArray<id<MTLCommandBufferEncoderInfo>>* mtlEncInfo = mtlCmdBuff.error.userInfo[MTLCommandBufferEncoderInfoErrorKey]) {
+-		MVKLogInfo("Encoders for %p \"%s\":", mtlCmdBuff, mtlCmdBuff.label ? mtlCmdBuff.label.UTF8String : "");
+-		for (id<MTLCommandBufferEncoderInfo> enc in mtlEncInfo) {
+-			MVKLogInfo(" - %s: %s", enc.label.UTF8String, mvkStringFromMTLCommandEncoderErrorState(enc.errorState));
+-			if (enc.debugSignposts.count > 0) {
+-				MVKLogInfo("   Debug signposts:");
+-				for (NSString* signpost in enc.debugSignposts) {
+-					MVKLogInfo("    - %s", signpost.UTF8String);
+-				}
+-			}
+-		}
+-	}
+-
+-	bool isFirstMsg = true;
+-	for (id<MTLFunctionLog> log in mtlCmdBuff.logs) {
+-		if (isFirstMsg) {
+-			MVKLogInfo("Shader log messages:");
+-			isFirstMsg = false;
+-		}
+-		MVKLogInfo("%s", log.description.UTF8String);
+-	}
++	mvkLogMetalCommandBufferDiagnostics(mtlCmdBuff);
+ }
+ 
+ #pragma mark Construction
+-- 
+2.54.0 (Apple Git-157)
+

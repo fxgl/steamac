@@ -1,0 +1,16 @@
+[Desktop Entry]
+# Only the private nested session uses this XDG_CONFIG_DIRS override. Its
+# plasmashell is not managed by plasma-plasmashell.service on the outer bus.
+Exec=/usr/lib/steamac/desktop-shell
+X-DBUS-StartupType=Unique
+Name=Plasma Desktop Workspace
+Type=Application
+StartupNotify=false
+X-DBUS-ServiceName=org.kde.plasmashell
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=0
+Icon=plasmashell
+NoDisplay=true
+X-systemd-skip=true
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate,zkde_screencast_unstable_v1,org_kde_plasma_activation_feedback
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

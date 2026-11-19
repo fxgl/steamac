@@ -60,12 +60,13 @@ final class TestHIDDevice: NSObject {
     var inputBuffer: UnsafeMutablePointer<UInt8>?
     var inputCapacity = 0
 
-    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil) {
+    init(id: UInt64, bluetooth: Bool = false, valve: Bool = false, puckSlot: Int? = nil, product: Int? = nil) {
         self.id = id
         service = nextService
         nextService += 1
+        let valveProduct = product ?? (puckSlot == nil ? 0x1303 : 0x1304)
         properties = [kIOHIDVendorIDKey: valve ? 0x28de : 0x054c,
-                      kIOHIDProductIDKey: valve ? (puckSlot == nil ? 0x1303 : 0x1304) : 0x0ce6,
+                      kIOHIDProductIDKey: valve ? valveProduct : 0x0ce6,
                       kIOHIDTransportKey: bluetooth ? kIOHIDTransportBluetoothLowEnergyValue : kIOHIDTransportUSBValue,
                       kIOHIDReportDescriptorKey: Data([0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
                                                        0x85, 0x01, 0x75, 0x08, 0x95, 0x3f, 0x81, 0x02, 0xc0]),
@@ -293,6 +294,16 @@ extension HIDPassthrough {
         check(ble.getRequests.last?.2 == 128, "BLE Steam Controller feature requests keep headroom")
         _ = get(hid, valve, .input, 1)
         check(ble.getRequests.last?.2 == 64, "BLE input requests are not enlarged")
+
+        let usbWired = TestHIDDevice(id: 23, valve: true, product: 0x1302)
+        hid.manager!.emitMatch(usbWired)
+        let wired = hid.devices.last!
+        check(HIDPassthrough.isSteamController(wired) && wired.puckSlot == nil
+              && wired.identity.product == HIDPassthrough.wiredSteamController
+              && wired.identity.bus == HIDPassthrough.busUSB,
+              "USB-wired Steam Controller (28de:1302) is matched and passed through as itself")
+        _ = get(hid, wired, .feature, 1)
+        check(usbWired.getRequests.last?.2 == 64, "USB-wired Steam Controller feature requests stay at descriptor size")
 
         let puck = TestHIDDevice(id: 21, valve: true, puckSlot: 2)
         hid.manager!.emitMatch(puck)
@@ -687,8 +698,148 @@ extension HIDPassthrough {
               "second denial after grant retains warning without promising another automatic reopen")
         warningHID.matchSteamControllers = false
         #endif
+        #if HAS_USB_STANDIN
+        check(HIDPassthrough.isUSBSteamController(wired) && !HIDPassthrough.isUSBSteamController(valve)
+              && !HIDPassthrough.isUSBSteamController(slot),
+              "stand-in ownership requires physical USB 1302, never BLE or Puck's guest identity")
+        check(SteamControllerRouting.selfCheck().isEmpty, "scoped stand-in suppression and stable player handoff")
+        #endif
+        #if HAS_HID_DIAGNOSTICS
+        diagnosticInventory = [usbWired]
+        let usbInventory = hid.diagnosticLines().joined(separator: "\n")
+        check(usbInventory.contains("28de:1302") && usbInventory.contains("passed through")
+              && usbWired.supportQueries == 0, "USB 1302 diagnostics use the known Valve path, not generic GC ownership")
+        diagnosticInventory = []
+        #endif
+        #if HAS_INPUT_MONITORING_WARNING
+        let deniedUSBHID = HIDPassthrough()
+        deniedUSBHID.matchSteamControllers = true
+        precondition(deniedUSBHID.start())
+        let deniedUSB = TestHIDDevice(id: 60, valve: true, product: 0x1302)
+        deniedUSB.openResult = kIOReturnNotPermitted
+        deniedUSBHID.manager!.emitMatch(deniedUSB)
+        check(deniedUSBHID.devices.isEmpty && deniedUSBHID.needsInputMonitoring
+              && deniedUSBHID.waitingForPermission, "USB 1302 denial publishes the Input Monitoring warning")
+        deniedUSBHID.matchSteamControllers = false
+        check(!deniedUSBHID.needsInputMonitoring, "disabling Valve matching clears the USB permission warning")
+        let disabledUSB = TestHIDDevice(id: 61, valve: true, product: 0x1302)
+        deniedUSBHID.added(disabledUSB, result: kIOReturnSuccess)
+        check(disabledUSB.openCalls == 0 && deniedUSBHID.devices.isEmpty,
+              "USB 1302 stays excluded when Valve passthrough is disabled")
+        #endif
         print("HID passthrough: \(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1
     }
 }
-exit(HIDPassthrough.regressionTests())
+extension PadPort {
+    static func transportRegressionTests() -> Int32 {
+        var checks = 0, failures = 0
+        func check(_ ok: Bool, _ name: String) {
+            checks += 1
+            print("\(ok ? "PASS" : "FAIL") PadPort: \(name)")
+            if !ok { failures += 1 }
+        }
+        func latest(_ port: PadPort, _ report: String, _ id: UInt8) {
+            #if HAS_PER_ID_COALESCE
+            check(port.sendLatest("hid-input " + report, reportID: id), "accept report \(report)")
+            #else
+            check(port.sendLatest("hid-input " + report), "accept report \(report)")
+            #endif
+        }
+        func drain(_ port: PadPort) -> String {
+            _ = fcntl(port.guestInputFd, F_SETFL, fcntl(port.guestInputFd, F_GETFL) | O_NONBLOCK)
+            var got = Data(), buf = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = Darwin.read(port.guestInputFd, &buf, buf.count)
+                if n > 0 { got.append(contentsOf: buf[..<n]) }
+                else if n < 0 && errno == EINTR { continue }
+                else { break }
+            }
+            return String(decoding: got, as: UTF8.self)
+        }
+        func fill(_ port: PadPort) {
+            let bytes = [UInt8](repeating: UInt8(ascii: "x"), count: 4096)
+            while bytes.withUnsafeBytes({ Darwin.write(port.writeFd, $0.baseAddress, $0.count) }) > 0 {}
+        }
+        do {
+            let port = try PadPort()
+            fill(port)
+            port.pending = Array("parked-control\n".utf8)
+            latest(port, "4201", 0x42)
+            port.send("remove")
+            port.send("hid-create NEW")
+            _ = drain(port)
+            port.flush()
+            let lines = drain(port).split(separator: "\n").map(String.init)
+            check(lines == ["parked-control", "hid-input 4201", "remove", "hid-create NEW"],
+                  "old input precedes remove/create, never reaches the new device")
+
+            port.pending = Array("parked-control\n".utf8)
+            latest(port, "0101", 1)
+            latest(port, "0100", 1) // Lizard key-up must survive later state reports.
+            latest(port, "4201", 0x42)
+            latest(port, "4600", 0x46) // Wireless Disconnect.
+            latest(port, "4202", 0x42)
+            port.flush()
+            let reports = drain(port)
+            check(reports.contains("hid-input 0100\n") && !reports.contains("hid-input 0101\n"),
+                  "lizard key-up survives state reports")
+            check(reports.contains("hid-input 4600\n"), "Disconnect survives state reports")
+            check(reports.contains("hid-input 4202\n") && !reports.contains("hid-input 4201\n"),
+                  "same-ID state coalesces to the latest report")
+            port.pending = Array("parked-control\n".utf8)
+            latest(port, "4203", 0x42)
+            for line in ["hid-get-reply 1 0 aa", "hid-set-reply 2 0", "ev 1:2:0", "remove", "hid-create NEXT"] {
+                port.send(line)
+            }
+            check(drain(port).split(separator: "\n").map(String.init) == [
+                "parked-control", "hid-input 4203", "hid-get-reply 1 0 aa", "hid-set-reply 2 0",
+                "ev 1:2:0", "remove", "hid-create NEXT"
+            ], "commands are ordered barriers and are never coalesced")
+
+            #if HAS_PADPORT_CANCELLATION
+            for suspended in [false, true] {
+                var closing: PadPort? = try PadPort()
+                let fd = closing!.writeFd
+                fill(closing!)
+                closing!.send("remove")
+                if suspended {
+                    _ = drain(closing!)
+                    closing!.flush()
+                }
+                closing = nil
+                check(fcntl(fd, F_GETFD) >= 0, "write descriptor owned by cancellation (suspended=\(suspended))")
+                let deadline = Date(timeIntervalSinceNow: 2)
+                while fcntl(fd, F_GETFD) >= 0 && Date() < deadline {
+                    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.001))
+                }
+                check(fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                      "cancel closes write descriptor (suspended=\(suspended))")
+            }
+            var reading: PadPort? = try PadPort()
+            let readerFD = reading!.readFd
+            var received: [String] = []
+            reading!.start { received.append($0) }
+            let bytes = Array("hello\ncaps hid\n".utf8)
+            _ = bytes.withUnsafeBytes { Darwin.write(reading!.guestOutputFd, $0.baseAddress, $0.count) }
+            let deadline = Date(timeIntervalSinceNow: 2)
+            while received.count < 2 && Date() < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.001))
+            }
+            check(received == ["hello", "caps hid"], "reader delivers complete lines on the main queue")
+            reading = nil
+            while fcntl(readerFD, F_GETFD) >= 0 && Date() < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.001))
+            }
+            check(fcntl(readerFD, F_GETFD) < 0 && errno == EBADF, "cancel closes reader descriptor")
+            #endif
+        } catch {
+            check(false, "setup: \(error)")
+        }
+        print("PadPort: \(checks) checks, \(failures) failures")
+        return failures == 0 ? 0 : 1
+    }
+}
+let hidResult = HIDPassthrough.regressionTests()
+let transportResult = PadPort.transportRegressionTests()
+exit(max(hidResult, transportResult))

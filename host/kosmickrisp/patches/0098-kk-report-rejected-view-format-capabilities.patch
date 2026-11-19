@@ -1,0 +1,66 @@
+From: steamac <steamac@fxgam.es>
+Date: Sun, 15 Nov 2026 15:00:00 +0000
+Subject: [PATCH] kk: report format capabilities and texel classes on rejected views
+
+STEAMAC-G/A has seven RGBA8 -> R8 view rejections and one BC3_UNORM ->
+RGBA8_SRGB rejection. On an M1 Max, both R8 and RGBA8 report identical
+linear/optimal features (0x40018001dd83), buffer features (0x180000058),
+and successful exact usage 0x480097 / mutable-format queries. R8 clears
+and every readback byte pass at 1664/1920/1952x288 with those usages.
+Neither the pinned guest Zink format selector nor its resource creation
+has an R8 -> RGBA8 fallback. The producer remains unproven, and substituting
+a different format would not preserve the requested pixels.
+
+BC3 has a 16-byte compressed block, RGBA8 a 4-byte texel: even adding
+BLOCK_TEXEL_VIEW_COMPATIBLE does not make those formats compatible. The
+flag survives vk_image_init and the tested 0x88 request reaches the
+rejection unchanged; legal BC3 sRGB and 16-byte RGBA32_UINT block views
+still create. The reported flags 0x8 do not establish a dropped flag.
+
+Extend 0095 only on rejected views: report actual image/view format
+features and their differences, external-memory types, block dimensions
+and sizes, and the block-texel-compatible bit. No extra work on successful
+views, new allocation, substitute backing, or changed rejection semantics.
+This is diagnostic, not a resolution of the guest context failure.
+
+Regression: REPRO_CASE=sentry-g-views REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/run.sh <dylib>. The diagnostic assertions fail before
+this patch and pass after under Metal API validation; all 26 view cases,
+three R8 clear/readbacks, and four exact-format property queries pass.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
+index 175ddeb..3f18c03 100644
+--- a/src/kosmickrisp/vulkan/kk_image_view.c
++++ b/src/kosmickrisp/vulkan/kk_image_view.c
+@@ -70,6 +70,29 @@ kk_log_image_view_request(struct kk_device *dev, const struct kk_image *image,
+              info->components.g, info->components.b, info->components.a,
+              range->aspectMask, range->baseMipLevel, range->levelCount,
+              range->baseArrayLayer, range->layerCount);
++   const VkFormat format = info->format == VK_FORMAT_UNDEFINED
++                              ? image->vk.format : info->format;
++   struct kk_physical_device *pdev = kk_device_physical(dev);
++   VkFormatFeatureFlags2 image_features = kk_get_image_format_features(
++      pdev, image->vk.format, image->vk.tiling, 0);
++   VkFormatFeatureFlags2 view_features = kk_get_image_format_features(
++      pdev, format, image->vk.tiling, 0);
++   mesa_loge("kk: image view format features image=0x%llx view=0x%llx "
++             "image-only=0x%llx view-only=0x%llx external=0x%x",
++             (unsigned long long)image_features,
++             (unsigned long long)view_features,
++             (unsigned long long)(image_features & ~view_features),
++             (unsigned long long)(view_features & ~image_features),
++             image->vk.external_handle_types);
++   mesa_loge("kk: image view texel blocks image=%ux%u/%uB view=%ux%u/%uB "
++             "block-texel-compatible=%u",
++             vk_format_get_blockwidth(image->vk.format),
++             vk_format_get_blockheight(image->vk.format),
++             vk_format_get_blocksize(image->vk.format),
++             vk_format_get_blockwidth(format), vk_format_get_blockheight(format),
++             vk_format_get_blocksize(format),
++             !!(image->vk.create_flags &
++                VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT));
+    const VkBaseInStructure *ext = info->pNext;
+    for (unsigned i = 0; ext && i < 8; i++, ext = ext->pNext) {
+       if (ext->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO) {

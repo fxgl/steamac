@@ -1,0 +1,193 @@
+From: steamac <steamac@fxgam.es>
+Date: Mon, 16 Nov 2026 15:00:00 +0000
+Subject: [PATCH] kk: name destroyed image views at render pass begin
+
+STEAMAC-BJ/BK (1.9.14, Apple M5 Pro, DOOM (2016)): SIGSEGV at 0x48 in
+transition_attachment+60 <- begin_subpass+2544 <-
+vk_common_CmdBeginRenderPass2+2480 on the vkr ring thread. The faulting
+instruction is `ldr w8, [x8, #0x48]` with x8 = image_view->image: the
+attachment's view pointer was set, its image field NULL. libmalloc clears
+freed blocks, so the framebuffer named an image view that had been
+destroyed before the render pass began. A framebuffer whose view is
+destroyed and then begun in a render pass faults at exactly these three
+frames and offsets on the 1.9.14 driver. Who destroyed the view (the
+game, or the guest's Venus driver) is not known.
+
+Keep the set of live image views per device and check the attachments of
+vkCmdBeginRenderPass2 against it before Mesa's common code dereferences
+them. A view that is not alive is logged with its attachment index,
+format, samples, source (framebuffer or imageless begin) and the
+framebuffer. Recording is unchanged: this is diagnostic, not a fix of
+the invalid use.
+
+Regression: REPRO_CASE=sentry-bj REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/run.sh <dylib>. A live view clears 16 pixels green
+without a log line; a destroyed view is named before the fault. The
+1.9.14 driver faults without naming it.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
+index c3541fc..e3b8879 100644
+--- a/src/kosmickrisp/vulkan/kk_device.c
++++ b/src/kosmickrisp/vulkan/kk_device.c
+@@ -31,6 +31,7 @@
+ #include "vk_pipeline_cache.h"
+ 
+ #include "util/os_time.h"
++#include "util/set.h"
+ 
+ #include <stdio.h>
+ #include <time.h>
+@@ -391,6 +392,12 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+    dev->vk.command_buffer_ops = &kk_cmd_buffer_ops;
+    dev->vk.command_dispatch_table = &dev->vk.dispatch_table;
+    dev->vk.get_timestamp = kk_get_timestamp;
++   simple_mtx_init(&dev->live_image_views_lock, mtx_plain);
++   dev->live_image_views = _mesa_pointer_set_create(NULL);
++   if (dev->live_image_views == NULL) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_device;
++   }
+    /* Compiled MSL libraries and Metal pipeline states are shared between equal
+     * pipelines and the pool compiles into them: both are set up before any
+     * pipeline is created. */
+@@ -485,6 +492,8 @@ fail_init:
+    kk_compile_pool_finish(dev);
+    kk_metal_caches_finish(dev);
+ fail_device:
++   _mesa_set_destroy(dev->live_image_views, NULL);
++   simple_mtx_destroy(&dev->live_image_views_lock);
+    vk_device_finish(&dev->vk);
+ fail_alloc:
+    vk_free(&dev->vk.alloc, dev);
+@@ -540,6 +549,10 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+ 
+    kk_release_compiler(dev);
+ 
++   /* After meta, the last creator of image views */
++   _mesa_set_destroy(dev->live_image_views, NULL);
++   simple_mtx_destroy(&dev->live_image_views_lock);
++
+    vk_device_finish(&dev->vk);
+ 
+    vk_free(&dev->vk.alloc, dev);
+diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
+index 0eba6fc..64f2813 100644
+--- a/src/kosmickrisp/vulkan/kk_device.h
++++ b/src/kosmickrisp/vulkan/kk_device.h
+@@ -126,6 +126,10 @@ struct kk_device {
+    /* Track all heaps the user allocated so we can set them all as resident when
+     * recording as required by Metal. */
+    struct kk_residency_set residency_set;
++   /* Image views created and not destroyed yet: a render pass naming another
++    * is logged before Mesa's common code dereferences it (STEAMAC-BJ/BK) */
++   simple_mtx_t live_image_views_lock;
++   struct set *live_image_views;
+ 
+    struct kk_precompiled_cache precompiled_cache;
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
+index 3f18c03..0e7bb5a 100644
+--- a/src/kosmickrisp/vulkan/kk_image_view.c
++++ b/src/kosmickrisp/vulkan/kk_image_view.c
+@@ -7,6 +7,7 @@
+ 
+ #include "kk_image_view.h"
+ 
++#include "kk_cmd_buffer.h"
+ #include "kk_device.h"
+ #include "kk_entrypoints.h"
+ #include "kk_format.h"
+@@ -16,7 +17,13 @@
+ #include "kosmickrisp/bridge/mtl_bridge.h"
+ #include "kosmickrisp/bridge/mtl_format.h"
+ 
++#include "util/log.h"
++#include "util/set.h"
++
++#include "vk_common_entrypoints.h"
+ #include "vk_format.h"
++#include "vk_framebuffer.h"
++#include "vk_render_pass.h"
+ 
+ static enum pipe_swizzle
+ vk_swizzle_to_pipe(VkComponentSwizzle swizzle)
+@@ -458,6 +465,15 @@ kk_CreateImageView(VkDevice _device, const VkImageViewCreateInfo *pCreateInfo,
+       return result;
+    }
+ 
++   simple_mtx_lock(&dev->live_image_views_lock);
++   const bool tracked = _mesa_set_add(dev->live_image_views, view) != NULL;
++   simple_mtx_unlock(&dev->live_image_views_lock);
++   if (!tracked) {
++      kk_image_view_finish(dev, view);
++      vk_free2(&dev->vk.alloc, pAllocator, view);
++      return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
++   }
++
+    *pView = kk_image_view_to_handle(view);
+ 
+    return VK_SUCCESS;
+@@ -473,10 +489,61 @@ kk_DestroyImageView(VkDevice _device, VkImageView imageView,
+    if (!view)
+       return;
+ 
++   simple_mtx_lock(&dev->live_image_views_lock);
++   _mesa_set_remove_key(dev->live_image_views, view);
++   simple_mtx_unlock(&dev->live_image_views_lock);
++
+    kk_image_view_finish(dev, view);
+    vk_free2(&dev->vk.alloc, pAllocator, view);
+ }
+ 
++/* STEAMAC-BJ/BK: transition_attachment faulted reading image_view->image of a
++ * framebuffer attachment as NULL. The view pointer itself was set, and
++ * libmalloc clears freed blocks: the image view had been destroyed before the
++ * render pass began. Name such attachments before Mesa's common code
++ * dereferences them, so the next report shows which framebuffer, attachment
++ * and format it was. Recording continues unchanged. */
++VKAPI_ATTR void VKAPI_CALL
++kk_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
++                       const VkRenderPassBeginInfo *pRenderPassBeginInfo,
++                       const VkSubpassBeginInfo *pSubpassBeginInfo)
++{
++   VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   VK_FROM_HANDLE(vk_render_pass, pass, pRenderPassBeginInfo->renderPass);
++   VK_FROM_HANDLE(vk_framebuffer, framebuffer,
++                  pRenderPassBeginInfo->framebuffer);
++   struct kk_device *dev = kk_cmd_buffer_device(cmd);
++
++   /* The same choice of views as vk_common_CmdBeginRenderPass2 */
++   const VkRenderPassAttachmentBeginInfo *attach_begin =
++      vk_find_struct_const(pRenderPassBeginInfo,
++                           RENDER_PASS_ATTACHMENT_BEGIN_INFO);
++   const bool imageless = attach_begin && attach_begin->attachmentCount != 0;
++   const VkImageView *views =
++      imageless ? attach_begin->pAttachments : framebuffer->attachments;
++
++   simple_mtx_lock(&dev->live_image_views_lock);
++   for (uint32_t a = 0; a < pass->attachment_count; a++) {
++      const void *view = kk_image_view_from_handle(views[a]);
++      if (view != NULL && _mesa_set_search(dev->live_image_views, view))
++         continue;
++      const struct vk_render_pass_attachment *att = &pass->attachments[a];
++      mesa_loge("kk: vkCmdBeginRenderPass: attachment %u/%u (%s, format %u, "
++                "samples %u) image view %p is %s; framebuffer %p %ux%ux%u",
++                a, pass->attachment_count,
++                imageless ? "imageless begin" : "framebuffer", att->format,
++                att->samples, view,
++                view == NULL ? "VK_NULL_HANDLE"
++                             : "not alive (destroyed before the render pass)",
++                framebuffer, framebuffer->width, framebuffer->height,
++                framebuffer->layers);
++   }
++   simple_mtx_unlock(&dev->live_image_views_lock);
++
++   vk_common_CmdBeginRenderPass2(commandBuffer, pRenderPassBeginInfo,
++                                 pSubpassBeginInfo);
++}
++
+ void
+ kk_image_view_set_label(struct kk_image_view *iview, const char *label)
+ {

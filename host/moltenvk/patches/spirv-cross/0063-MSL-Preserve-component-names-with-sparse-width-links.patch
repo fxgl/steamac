@@ -1,0 +1,37 @@
+From: Steamac maintainers <steamac@fxgam.es>
+Subject: [PATCH] MSL: preserve component names with sparse raster width links
+
+STEAMAC-87/BB regress after MoltenVK 0053 / SPIRV-Cross 0058 (8959e4b).
+The ordinary raster path supplies only width mismatches in outputs_by_location
+and inputs_by_location. The old component-name workaround treats a nonempty
+map as a complete active interface, so an unrelated Component=2 or 3 loses its
+suffix. Both members become user(locnN), which Metal rejects as a duplicated
+user-defined name / invalid vertex return type. Captured 1.9.14 shaders contain
+user(locn2/* HACK _2*/) and the same failure is reproduced at pipeline creation.
+
+With the opt-in width linker, preserve the SPIR-V component suffix on both
+vertex outputs and fragment inputs independently of the sparse adapter maps.
+Keep exact width lookup and all legacy component-name handling unchanged.
+There is no new cache metadata: MoltenVK 0053 already keys the adapter maps
+exactly, and the build's patch-series hash changes pipelineCacheUUID.
+
+sentry-87-components.sh exercises float2+float2 (plain and interface-block) and
+float3+float next to equal/wider/narrower linked varyings. Shipped 1.9.14 fails
+12 of 24 draws with duplicate names; equal-width controls render correctly.
+Each run serializes/reloads the pipeline cache and reverses the pipeline order.
+
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -16918,7 +16918,9 @@ string CompilerMSL::member_location_attribute_qualifier(const SPIRType &type, uint
+ 			bool active_input  = type.storage == StorageClassInput  && ( inputs_by_location.empty() ||  inputs_by_location.find({locn, comp}) != end( inputs_by_location));
+ 			bool active_output = type.storage == StorageClassOutput && (outputs_by_location.empty() || outputs_by_location.find({locn, comp}) != end(outputs_by_location));
+ 
+-			if (active_input || active_output)
++			// Width-link maps are sparse adapters, not complete active-interface lists.
++			// Keep the same component name on both sides even without a width adapter.
++			if (msl_options.pad_stage_interface_components || active_input || active_output)
+ 			{
+ 				quals += "_";
+ 				quals += convert_to_string(comp);

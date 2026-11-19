@@ -1,0 +1,346 @@
+From c3d1f7fcd7f468a4e82d9791da61d59c77aac3fa Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Wed, 11 Nov 2026 20:55:22 +0300
+Subject: [PATCH 55/57] Keep RDR2 query pools alive without advertising
+ statistics
+
+STEAMAC-AG/G: invalid disabled-feature statistics pools return zero lanes with real availability. Split native timestamps into 4096-sample Metal buffers; preserve CPU fallback under process budget pressure. sentry_ag checks host and Venus-style GPU reads, resets, unavailable queries, and cross-buffer direct/compute resolves.
+---
+ MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h |   2 +-
+ .../MoltenVK/Commands/MVKCommandBuffer.mm     |  16 ++-
+ MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.h   |  21 ++-
+ MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.mm  | 126 +++++++++++++-----
+ 4 files changed, 120 insertions(+), 45 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
+index 9b0c25b..64df53c 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
+@@ -485,6 +485,7 @@ public:
+ 
+     /** Reset a range of queries. */
+     void resetQueries(MVKQueryPool* pQueryPool, uint32_t firstQuery, uint32_t queryCount);
++    void addActivatedQueries(MVKQueryPool* pQueryPool, uint32_t query, uint32_t queryCount);
+ 
+ #pragma mark Dynamic encoding state accessed directly
+ 
+@@ -546,7 +547,6 @@ public:
+ 	~MVKCommandEncoder() override;
+ 
+ protected:
+-    void addActivatedQueries(MVKQueryPool* pQueryPool, uint32_t query, uint32_t queryCount);
+     void finishQueries();
+ 	void setSubpass(MVKCommand* passCmd, VkSubpassContents subpassContents, uint32_t subpassIndex, MVKCommandUse cmdUse);
+ 	void clearRenderArea(MVKCommandUse cmdUse);
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index e84c044..5429fb0 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -1227,19 +1227,21 @@ static bool shouldStartNewEncoder(MVKCommandUse prev, MVKCommandUse next) {
+ // encoder is currently in use, creating a temporary BLIT encoder if no encoder is currently active.
+ // We only encode the GPU sample if the platform allows encoding at the associated pipeline point.
+ void MVKCommandEncoder::encodeGPUCounterSample(MVKGPUCounterQueryPool* mvkQryPool, uint32_t sampleIndex, MVKCounterSamplingFlags samplingPoints){
++	id<MTLCounterSampleBuffer> buffer = mvkQryPool->getMTLCounterBuffer(sampleIndex);
++	sampleIndex = mvkQryPool->getMTLCounterIndex(sampleIndex);
+ 	if (_mtlRenderEncoder) {
+ 		if (mvkIsAnyFlagEnabled(samplingPoints, MVK_COUNTER_SAMPLING_AT_DRAW)) {
+-			[_mtlRenderEncoder sampleCountersInBuffer: mvkQryPool->getMTLCounterBuffer() atSampleIndex: sampleIndex withBarrier: YES];
++			[_mtlRenderEncoder sampleCountersInBuffer: buffer atSampleIndex: sampleIndex withBarrier: YES];
+ 		}
+ 	} else if (_mtlComputeEncoder) {
+ 		if (mvkIsAnyFlagEnabled(samplingPoints, MVK_COUNTER_SAMPLING_AT_DISPATCH)) {
+-			[_mtlComputeEncoder sampleCountersInBuffer: mvkQryPool->getMTLCounterBuffer() atSampleIndex: sampleIndex withBarrier: YES];
++			[_mtlComputeEncoder sampleCountersInBuffer: buffer atSampleIndex: sampleIndex withBarrier: YES];
+ 		}
+ 	} else if (mvkIsAnyFlagEnabled(samplingPoints, MVK_COUNTER_SAMPLING_AT_BLIT)) {
+-		[getMTLBlitEncoder(kMVKCommandUseRecordGPUCounterSample) sampleCountersInBuffer: mvkQryPool->getMTLCounterBuffer() atSampleIndex: sampleIndex withBarrier: YES];
++		[getMTLBlitEncoder(kMVKCommandUseRecordGPUCounterSample) sampleCountersInBuffer: buffer atSampleIndex: sampleIndex withBarrier: YES];
+ 	} else if (mvkIsAnyFlagEnabled(samplingPoints, MVK_COUNTER_SAMPLING_AT_DISPATCH)) {
+ 		// Workaround for broken 10.15 AMD driver which crashes if you try to record to an empty blit encoder
+-		[getMTLComputeEncoder(kMVKCommandUseRecordGPUCounterSample) sampleCountersInBuffer: mvkQryPool->getMTLCounterBuffer() atSampleIndex: sampleIndex withBarrier: YES];
++		[getMTLComputeEncoder(kMVKCommandUseRecordGPUCounterSample) sampleCountersInBuffer: buffer atSampleIndex: sampleIndex withBarrier: YES];
+ 	}
+ }
+ 
+@@ -1320,9 +1322,9 @@ static bool shouldStartNewEncoder(MVKCommandUse prev, MVKCommandUse next) {
+ 			// We actually only need to use startOfEncoderSampleIndex, but apparently,
+ 			// and contradicting docs, Metal hits an unexpected validation error if
+ 			// endOfEncoderSampleIndex is left at MTLCounterDontSample.
+-			sbAttDesc.startOfEncoderSampleIndex = tsQry.query;
+-			sbAttDesc.endOfEncoderSampleIndex = tsQry.query;
+-			sbAttDesc.sampleBuffer = tsQry.queryPool->getMTLCounterBuffer();
++			sbAttDesc.startOfEncoderSampleIndex = tsQry.queryPool->getMTLCounterIndex(tsQry.query);
++			sbAttDesc.endOfEncoderSampleIndex = tsQry.queryPool->getMTLCounterIndex(tsQry.query);
++			sbAttDesc.sampleBuffer = tsQry.queryPool->getMTLCounterBuffer(tsQry.query);
+ 		}
+ 
+ 		auto* mtlEnc = [_mtlCmdBuffer blitCommandEncoderWithDescriptor: bpDesc];
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.h b/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.h
+index 59ab3c3..bf949b3 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.h
+@@ -220,13 +220,14 @@ class MVKGPUCounterQueryPool : public MVKQueryPool {
+ public:
+ 
+ 	/** Returns whether a MTLCounterBuffer is being used by this query pool. */
+-	bool hasMTLCounterBuffer() { return _mtlCounterBuffer != nil; }
++	bool hasMTLCounterBuffer() { return !_mtlCounterBuffers.empty(); }
+ 
+ 	/**
+ 	 * Returns the MTLCounterBuffer being used by this query pool,
+ 	 * or returns nil if GPU counters are not supported.
+ 	 * */
+-	id<MTLCounterSampleBuffer> getMTLCounterBuffer() { return _mtlCounterBuffer; }
++	id<MTLCounterSampleBuffer> getMTLCounterBuffer(uint32_t query) { return _mtlCounterBuffers[query / kCounterBufferQueryCount]; }
++	static uint32_t getMTLCounterIndex(uint32_t query) { return query % kCounterBufferQueryCount; }
+ 
+ 	MVKGPUCounterQueryPool(MVKDevice* device, const VkQueryPoolCreateInfo* pCreateInfo);
+ 
+@@ -237,7 +238,9 @@ protected:
+ 									id<MTLCounterSet> mtlCounterSet,
+ 									const char* queryTypeName);
+ 
+-	id<MTLCounterSampleBuffer> _mtlCounterBuffer;
++	// Metal feature-set tables limit Apple counter sample buffers to 32768 bytes.
++	static constexpr uint32_t kCounterBufferQueryCount = 4096;
++	MVKSmallVector<id<MTLCounterSampleBuffer>, 1> _mtlCounterBuffers;
+ };
+ 
+ 
+@@ -262,6 +265,8 @@ protected:
+ 	id<MTLComputeCommandEncoder> encodeComputeCopyResults(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, uint32_t index) override;
+ 	void encodeDirectCopyResults(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount,
+ 								 MVKBuffer* destBuffer, VkDeviceSize destOffset, VkDeviceSize stride) override;
++	void encodeCounterResolve(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount,
++							  id<MTLBuffer> destBuffer, NSUInteger destOffset);
+ 
+ 	MVKSmallVector<uint64_t> _timestamps;
+ };
+@@ -270,14 +275,20 @@ protected:
+ #pragma mark -
+ #pragma mark MVKPipelineStatisticsQueryPool
+ 
+-/** A Vulkan query pool for a query pool type that tracks pipeline statistics. */
+-class MVKPipelineStatisticsQueryPool : public MVKGPUCounterQueryPool {
++/** Compatibility for applications that create statistics pools without enabling the feature.
++ * Metal cannot supply these counters; the feature remains unadvertised. */
++class MVKPipelineStatisticsQueryPool : public MVKQueryPool {
+ 
+ public:
++	void endQuery(uint32_t query, MVKCommandEncoder* cmdEncoder) override;
+     MVKPipelineStatisticsQueryPool(MVKDevice* device, const VkQueryPoolCreateInfo* pCreateInfo);
+ 
+ protected:
+ 	void propagateDebugName() override {}
++	NSData* getQuerySourceData(uint32_t firstQuery, uint32_t queryCount) override;
++	id<MTLBuffer> getResultBuffer(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, NSUInteger& offset) override;
++	id<MTLComputeCommandEncoder> encodeComputeCopyResults(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, uint32_t index) override;
++	MVKSmallVector<uint64_t> _zeroResults;
+ };
+ 
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.mm
+index aaea2a9..ea63958 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueryPool.mm
+@@ -367,7 +367,7 @@
+ #pragma mark MVKGPUCounterQueryPool
+ 
+ MVKGPUCounterQueryPool::MVKGPUCounterQueryPool(MVKDevice* device, const VkQueryPoolCreateInfo* pCreateInfo) :
+-	MVKQueryPool(device, pCreateInfo, 1), _mtlCounterBuffer(nil) {}
++	MVKQueryPool(device, pCreateInfo, 1) {}
+ 
+ // To establish the Metal counter sample buffer, this must be called from the construtors
+ // of subclasses, because the type of MTLCounterSet is determined by the subclass.
+@@ -375,25 +375,36 @@
+ 														id<MTLCounterSet> mtlCounterSet,
+ 														const char* queryTypeName) {
+ 	if ( !mtlCounterSet ) { return; }
++	// At most 32 sample buffers can exist in a Metal process. A single larger
++	// pool cannot use native storage even when no other device has allocated any.
++	if (pCreateInfo->queryCount > 32 * kCounterBufferQueryCount) { return; }
+ 
+ 	@autoreleasepool {
+ 		MTLCounterSampleBufferDescriptor* tsDesc = [[[MTLCounterSampleBufferDescriptor alloc] init] autorelease];
+ 		tsDesc.counterSet = mtlCounterSet;
+ 		tsDesc.storageMode = MTLStorageModeShared;
+-		tsDesc.sampleCount = pCreateInfo->queryCount;
+-
+-		NSError* err = nil;
+-		_mtlCounterBuffer = [getMTLDevice() newCounterSampleBufferWithDescriptor: tsDesc error: &err];
+-		if (err) {
+-			reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-						"Could not create MTLCounterSampleBuffer of size %llu, for %d queries, in query pool of type %s. Reverting to emulated behavior. (Error code %li): %s",
+-						(VkDeviceSize)pCreateInfo->queryCount * kMVKQuerySlotSizeInBytes, pCreateInfo->queryCount, queryTypeName, (long)err.code, err.localizedDescription.UTF8String);
++		for (uint32_t first = 0; first < pCreateInfo->queryCount;) {
++			uint32_t count = min(kCounterBufferQueryCount, pCreateInfo->queryCount - first);
++			tsDesc.sampleCount = count;
++			NSError* err = nil;
++			id<MTLCounterSampleBuffer> buffer = [getMTLDevice() newCounterSampleBufferWithDescriptor: tsDesc error: &err];
++			if (!buffer) {
++				// The process also has a finite sample-buffer budget. Keep the existing
++				// CPU timestamp fallback, but do not call a successful Vulkan pool OOM.
++				reportWarning(VK_SUCCESS, "Using emulated %s queries after Metal counter allocation failed at query %u: %s",
++							  queryTypeName, first, err.localizedDescription.UTF8String);
++				for (auto& allocated : _mtlCounterBuffers) { [allocated release]; }
++				_mtlCounterBuffers.clear();
++				break;
++			}
++			_mtlCounterBuffers.push_back(buffer);
++			first += count;
+ 		}
+ 	}
+ };
+ 
+ MVKGPUCounterQueryPool::~MVKGPUCounterQueryPool() {
+-	[_mtlCounterBuffer release];
++	for (auto& buffer : _mtlCounterBuffers) { [buffer release]; }
+ }
+ 
+ 
+@@ -407,7 +418,7 @@
+ 
+ // If not using MTLCounterSampleBuffer, update timestamp values, then mark queries as available
+ void MVKTimestampQueryPool::finishQueries(MVKArrayRef<const uint32_t> queries) {
+-	if ( !_mtlCounterBuffer ) {
++	if (!hasMTLCounterBuffer()) {
+ 		uint64_t ts = mvkGetElapsedNanoseconds();
+ 		for (uint32_t qry : queries) { _timestamps[qry] = ts; }
+ 	}
+@@ -415,8 +426,20 @@
+ }
+ 
+ NSData* MVKTimestampQueryPool::getQuerySourceData(uint32_t firstQuery, uint32_t queryCount) {
+-	if (_mtlCounterBuffer) {
+-		return [_mtlCounterBuffer resolveCounterRange: NSMakeRange(firstQuery, queryCount)];
++	if (hasMTLCounterBuffer()) {
++		uint32_t index = getMTLCounterIndex(firstQuery);
++		if (queryCount <= kCounterBufferQueryCount - index) {
++			return [getMTLCounterBuffer(firstQuery) resolveCounterRange: NSMakeRange(index, queryCount)];
++		}
++		NSMutableData* results = [NSMutableData dataWithCapacity: queryCount * kMVKQuerySlotSizeInBytes];
++		while (queryCount) {
++			index = getMTLCounterIndex(firstQuery);
++			uint32_t count = min(queryCount, kCounterBufferQueryCount - index);
++			[results appendData: [getMTLCounterBuffer(firstQuery) resolveCounterRange: NSMakeRange(index, count)]];
++			firstQuery += count;
++			queryCount -= count;
++		}
++		return results;
+ 	} else {
+ 		return [NSData dataWithBytesNoCopy: (void*)&_timestamps[firstQuery]
+ 									length: queryCount * kMVKQuerySlotSizeInBytes
+@@ -430,17 +453,30 @@
+ 													MVKBuffer* destBuffer,
+ 													VkDeviceSize destOffset,
+ 													VkDeviceSize stride) {
+-	if (_mtlCounterBuffer) {
+-		id<MTLBlitCommandEncoder> mtlBlitCmdEnc = cmdEncoder->getMTLBlitEncoder(kMVKCommandUseCopyQueryPoolResults);
+-		[mtlBlitCmdEnc resolveCounters: _mtlCounterBuffer
+-							   inRange: NSMakeRange(firstQuery,  queryCount)
+-					 destinationBuffer: destBuffer->getMTLBuffer()
+-					 destinationOffset: destBuffer->getMTLBufferOffset() + destOffset];
++	if (hasMTLCounterBuffer()) {
++		encodeCounterResolve(cmdEncoder, firstQuery, queryCount, destBuffer->getMTLBuffer(),
++							 destBuffer->getMTLBufferOffset() + destOffset);
+ 	} else {
+ 		MVKQueryPool::encodeDirectCopyResults(cmdEncoder, firstQuery, queryCount, destBuffer, destOffset, stride);
+ 	}
+ }
+ 
++void MVKTimestampQueryPool::encodeCounterResolve(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount,
++												id<MTLBuffer> destBuffer, NSUInteger destOffset) {
++	id<MTLBlitCommandEncoder> enc = cmdEncoder->getMTLBlitEncoder(kMVKCommandUseCopyQueryPoolResults);
++	while (queryCount) {
++		uint32_t index = getMTLCounterIndex(firstQuery);
++		uint32_t count = min(queryCount, kCounterBufferQueryCount - index);
++		[enc resolveCounters: getMTLCounterBuffer(firstQuery)
++					 inRange: NSMakeRange(index, count)
++		   destinationBuffer: destBuffer
++		   destinationOffset: destOffset];
++		firstQuery += count;
++		queryCount -= count;
++		destOffset += count * kMVKQuerySlotSizeInBytes;
++	}
++}
++
+ id<MTLBuffer> MVKTimestampQueryPool::getResultBuffer(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, NSUInteger& offset) {
+ 	const MVKMTLBufferAllocation* tempBuff = cmdEncoder->getTempMTLBuffer(queryCount * _queryElementCount * sizeof(uint64_t));
+ 	void* pBuffData = tempBuff->getContents();
+@@ -451,15 +487,10 @@
+ }
+ 
+ id<MTLComputeCommandEncoder> MVKTimestampQueryPool::encodeComputeCopyResults(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, uint32_t index) {
+-	if (_mtlCounterBuffer) {
+-		// We first need to resolve from the MTLCounterSampleBuffer into a temp buffer using a
+-		// MTLBlitCommandEncoder, before creating the compute encoder and set that temp buffer into it.
++	if (hasMTLCounterBuffer()) {
++		// Resolve all affected sample buffers before switching to the compute encoder.
+ 		const MVKMTLBufferAllocation* tempBuff = cmdEncoder->getTempMTLBuffer(queryCount * _queryElementCount * sizeof(uint64_t));
+-		id<MTLBlitCommandEncoder> mtlBlitCmdEnc = cmdEncoder->getMTLBlitEncoder(kMVKCommandUseCopyQueryPoolResults);
+-		[mtlBlitCmdEnc resolveCounters: _mtlCounterBuffer
+-							   inRange: NSMakeRange(firstQuery,  queryCount)
+-					 destinationBuffer: tempBuff->_mtlBuffer
+-					 destinationOffset: tempBuff->_offset];
++		encodeCounterResolve(cmdEncoder, firstQuery, queryCount, tempBuff->_mtlBuffer, tempBuff->_offset);
+ 
+ 		id<MTLComputeCommandEncoder> mtlCmdEnc = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseCopyQueryPoolResults);
+ 		cmdEncoder->getMtlCompute().bindBuffer(mtlCmdEnc, tempBuff->_mtlBuffer, tempBuff->_offset, index);
+@@ -481,7 +512,7 @@
+ 		initMTLCounterSampleBuffer(pCreateInfo, _device->getTimestampMTLCounterSet(), "VK_QUERY_TYPE_TIMESTAMP");
+ 
+ 		// If we don't use a MTLCounterSampleBuffer, allocate memory to hold the timestamps.
+-		if ( !_mtlCounterBuffer ) { _timestamps.resize(pCreateInfo->queryCount, 0); }
++		if (!hasMTLCounterBuffer()) { _timestamps.resize(pCreateInfo->queryCount, 0); }
+ }
+ 
+ 
+@@ -489,10 +520,41 @@
+ #pragma mark MVKPipelineStatisticsQueryPool
+ 
+ MVKPipelineStatisticsQueryPool::MVKPipelineStatisticsQueryPool(MVKDevice* device,
+-															   const VkQueryPoolCreateInfo* pCreateInfo) : MVKGPUCounterQueryPool(device, pCreateInfo) {
+-	if ( !getEnabledFeatures().pipelineStatisticsQuery ) {
+-		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateQueryPool: VK_QUERY_TYPE_PIPELINE_STATISTICS is not supported."));
+-	}
++															 const VkQueryPoolCreateInfo* pCreateInfo) :
++	MVKQueryPool(device, pCreateInfo, __builtin_popcount(pCreateInfo->pipelineStatistics)),
++	_zeroResults(size_t(pCreateInfo->queryCount) * _queryElementCount, 0) {
++	// VUID-00791 forbids this call without pipelineStatisticsQuery, which remains
++	// false. RDR2 makes it anyway. Venus creates pools asynchronously, so refusing
++	// it kills the context at its first use. Return deterministic zeros, not an
++	// advertised feature or uninitialized results, for this invalid application use.
++	reportWarning(VK_SUCCESS, "Pipeline statistics are unsupported; returning zero counters for a pool created without pipelineStatisticsQuery.");
++}
++
++void MVKPipelineStatisticsQueryPool::endQuery(uint32_t query, MVKCommandEncoder* cmdEncoder) {
++	uint32_t count = cmdEncoder->isInRenderPass() ? cmdEncoder->getSubpass()->getViewCountInMetalPass(cmdEncoder->getMultiviewPassIndex()) : 1;
++	cmdEncoder->addActivatedQueries(this, query, max(count, 1u));
++	MVKQueryPool::endQuery(query, cmdEncoder);
++}
++
++NSData* MVKPipelineStatisticsQueryPool::getQuerySourceData(uint32_t firstQuery, uint32_t queryCount) {
++	return [NSData dataWithBytesNoCopy: _zeroResults.data() + size_t(firstQuery) * _queryElementCount
++							   length: size_t(queryCount) * _queryElementCount * sizeof(uint64_t)
++						 freeWhenDone: false];
++}
++
++id<MTLBuffer> MVKPipelineStatisticsQueryPool::getResultBuffer(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, NSUInteger& offset) {
++	const auto* allocation = cmdEncoder->copyToTempMTLBufferAllocation(_zeroResults.data() + size_t(firstQuery) * _queryElementCount,
++																	 size_t(queryCount) * _queryElementCount * sizeof(uint64_t));
++	offset = allocation->_offset;
++	return allocation->_mtlBuffer;
++}
++
++id<MTLComputeCommandEncoder> MVKPipelineStatisticsQueryPool::encodeComputeCopyResults(MVKCommandEncoder* cmdEncoder,
++																					uint32_t firstQuery, uint32_t queryCount, uint32_t index) {
++	auto enc = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseCopyQueryPoolResults);
++	cmdEncoder->setComputeBytes(enc, _zeroResults.data() + size_t(firstQuery) * _queryElementCount,
++							   size_t(queryCount) * _queryElementCount * sizeof(uint64_t), index);
++	return enc;
+ }
+ 
+ 
+-- 
+2.54.0 (Apple Git-157)
+

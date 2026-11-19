@@ -248,6 +248,12 @@ fn gather(dir: &Path, steam: &Path, home: &Path, game: Option<u32>) -> Result<()
     // and verify the existing gamescope-WSI exclusion in the actual processes.
     std::fs::write(dir.join("desktop-diagnostics.txt"), desktop_diagnostics::snapshot(Path::new("/proc")))
         .map_err(|e| format!("desktop diagnostics: {e}"))?;
+    // STEAMAC-AJ/9P: object IDs are connection-local, not upstream bug IDs.
+    // Keep package versions and the shell/compositor journal separately from
+    // Discover's high-volume QML output, including non-signal QtWayland exits.
+    out("desktop-packages.txt", &["pacman", "-Q", "plasma-workspace", "plasma-desktop", "kwin", "qt6-wayland"], 16 << 10);
+    out("desktop-journal.txt", &["journalctl", "-b", "--no-pager", "-o", "short-monotonic", "-n", "500",
+        "_COMM=plasmashell", "+", "_COMM=kwin_wayland", "+", "_COMM=desktop-shell"], 512 << 10);
     for (name, path) in [
         ("os-release.txt", "/etc/os-release"),
         ("layer-release.txt", "/usr/lib/steamac/layer-release"),

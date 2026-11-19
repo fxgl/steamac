@@ -186,12 +186,12 @@ final class StallMonitor {
 
     /// Show / refresh / hide the indicator for the current state (no GPU work since `lastActivity`).
     private func evaluate(_ now: CFTimeInterval) {
-        let dead = notResponding()
+        let dead = notResponding(at: now)
         // Durations shown and logged are the GPU's whole idle time.
         guard countersAvailable, gateOpen, gameFocused || dead,
               now - max(lastActivity, gateOpenedAt) >= StallMonitor.idleThreshold else {
             if shownSince != nil {
-                let response = (heartbeatAge ?? 0) > Self.heartbeatTimeout
+                let response = (heartbeatAge(at: now) ?? 0) > Self.heartbeatTimeout
                     ? "host observation restarted" : "guest responding again"
                 hide(reason: !enabled ? "setting off" : suppressed ? "overlay"
                      : notRespondingReported && !dead ? response : "game focus lost", now: now)
@@ -210,8 +210,8 @@ final class StallMonitor {
         }
         if !notRespondingReported && dead {
             notRespondingReported = true
-            log("stall: guest not responding (no heartbeat for \(Int(heartbeatAge ?? 0)) s, gpu idle \(Int(now - lastActivity)) s)")
-            onNotResponding?(Diagnostic(idle: now - lastActivity, heartbeatAge: heartbeatAge ?? 0,
+            log("stall: guest not responding (no heartbeat for \(Int(heartbeatAge(at: now) ?? 0)) s, gpu idle \(Int(now - lastActivity)) s)")
+            onNotResponding?(Diagnostic(idle: now - lastActivity, heartbeatAge: heartbeatAge(at: now) ?? 0,
                                        history: diagnosticHistory(now: now),
                                        memoryHistory: VMMemoryDiagnostics.shared.history(),
                                        threadSnapshot: StallThreadDiagnostics.snapshot()))
@@ -242,22 +242,32 @@ final class StallMonitor {
 
     // MARK: wording
 
-    private var heartbeatAge: CFTimeInterval? { lastAlive > 0 ? CACurrentMediaTime() - lastAlive : nil }
+    private func heartbeatAge(at now: CFTimeInterval) -> CFTimeInterval? {
+        lastAlive > 0 ? max(0, now - lastAlive) : nil
+    }
 
-    private func notResponding() -> Bool {
-        let now = CACurrentMediaTime()
-        return (heartbeatAge ?? 0) > Self.heartbeatTimeout
-            && now - heartbeatObservationStarted > Self.heartbeatTimeout
-            && lastPoll > 0 && now - lastPoll <= Self.heartbeatTimeout
+    // One poll uses one timestamp, including after diagnostic persistence or UI work.
+    // Advancing only the heartbeat clock mid-poll turns host paging into a guest hang
+    // (STEAMAC-8 b546e448: last history hb=1.14, report hb=6).
+    static func heartbeatTimedOut(at now: CFTimeInterval, lastAlive: CFTimeInterval,
+                                  observationStarted: CFTimeInterval, lastPoll: CFTimeInterval) -> Bool {
+        lastAlive > 0 && now - lastAlive > heartbeatTimeout
+            && now - observationStarted > heartbeatTimeout
+            && lastPoll > 0 && now - lastPoll <= heartbeatTimeout
+    }
+
+    private func notResponding(at now: CFTimeInterval) -> Bool {
+        Self.heartbeatTimedOut(at: now, lastAlive: lastAlive,
+                              observationStarted: heartbeatObservationStarted, lastPoll: lastPoll)
     }
 
     private func text(now: CFTimeInterval, idle: CFTimeInterval) -> (String, String) {
-        if notResponding() {
+        if notResponding(at: now) {
             return (String(localized: "SteamOS is not responding…"), String(localized: "waiting (\(Int(idle)) s)"))
         }
         let title = String(localized: "Still working — loading or compiling shaders…")
         let cores = String(format: "%.1f", currentCPU())
-        let detail = heartbeatAge.map { $0 <= Self.heartbeatTimeout } == true
+        let detail = heartbeatAge(at: now).map { $0 <= Self.heartbeatTimeout } == true
             ? String(localized: "VM CPU \(cores) cores · guest alive")
             : String(localized: "VM CPU \(cores) cores")
         return (title, detail)
@@ -266,10 +276,10 @@ final class StallMonitor {
     /// For the log: "guest alive, CPU 2.9 cores".
     private func status(_ now: CFTimeInterval, cpu: Double? = nil) -> String {
         let guest: String
-        if let age = heartbeatAge {
+        if let age = heartbeatAge(at: now) {
             if age <= Self.heartbeatTimeout {
                 guest = "guest alive, load \(String(format: "%.2f", guestLoad))"
-            } else if notResponding() {
+            } else if notResponding(at: now) {
                 guest = "guest not responding for \(Int(age)) s"
             } else {
                 guest = "heartbeat delayed \(Int(age)) s, observing after host scheduling gap"
@@ -324,7 +334,7 @@ final class StallMonitor {
         } else {
             windowState = "detached"
         }
-        let reading = Reading(at: now, counters: counters, heartbeatAge: heartbeatAge,
+        let reading = Reading(at: now, counters: counters, heartbeatAge: heartbeatAge(at: now),
                               uptimeMs: guestUptimeMs, load: guestLoad, cpu: Self.cpuSeconds(),
                               pollGap: gap, game: gameFocused, gate: gateOpen,
                               hostActive: NSApp.isActive, hostKey: window?.isKeyWindow ?? false,

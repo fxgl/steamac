@@ -30,6 +30,10 @@
 #    cleared depth/stencil values.
 # 4. linear_pitch.c: LINEAR image with VkImageDrmFormatModifierExplicitCreateInfoEXT rowPitch
 #    (virglrenderer dma-buf imports): layouts, memory size and pixel data use that pitch.
+#    sentry_ag.c (STEAMAC-AG/G, MoltenVK): RDR2's invalid statistics pools keep
+#    the feature disabled but return deterministic zero counters with availability;
+#    8192 timestamps sample and resolve across Metal's 4096-entry buffer limit.
+#    Mapped/imported and host-copy 1D/2D images check CPU pitches and every byte.
 # 5. xfb.c: transform feedback captured by geometry shaders (DXVK stream-output style without
 #    position and with rasterizer discard, strips with varying vertex counts, lines, 2 buffers,
 #    buffer offsets/sizes, counter buffers), buffer contents checked; transform feedback queries
@@ -194,13 +198,16 @@
 #    stage_widths.c (MoltenVK, historical STEAMAC-2M/88): ordinary raster vector
 #    widths retain written lanes, zero absent ones, and preserve logical shader
 #    values across plain/component/array/block interfaces and cache round trips.
+#    sentry-87-components.sh (MoltenVK, STEAMAC-87/BB): split location components
+#    retain distinct vertex/fragment user names beside a width-linked varying,
+#    including interface blocks, float3+float, and serialized-cache reversal.
 # 25-27 print the capability they need and skip when the driver does not advertise it, so an honest
 # driver stays green; when it is advertised, the values must be right. REPRO_FORCE=1 skips the
 # capability check and makes the pipeline fail to compile, reproducing the game's failure on the host.
-# image_views.c (KosmicKrisp only; STEAMAC-62/64/3): empty and out-of-bounds
-# image-view slice ranges (explicit, REMAINING_ARRAY_LAYERS, 3D slices, narrowed
-# counts) and incompatible RGBA8 -> R8 views fail cleanly before Metal; valid
-# remaining-layer and 3D-slice controls still create.
+# image_views.c (KosmicKrisp only; STEAMAC-62/64/3/G): single-layer non-array
+# 2D slice overflow is recovered and checked by clear/readback. Other invalid
+# ranges (empty, REMAINING_ARRAY_LAYERS, 3D slices, narrowed counts) and formats
+# still fail before Metal; valid remaining-layer and 3D-slice controls create.
 # nir_cache.c (KosmicKrisp only; STEAMAC-6M/6K): corrupted precompiled NIR,
 # checksum corruption, missing checksum and legacy entries must be cache misses
 # before nir_deserialize; an unmodified control and every rebuilt pipeline dispatch
@@ -212,6 +219,15 @@
 # encoder_shapes.c (KosmicKrisp only; STEAMAC-74/73): with MESA_KK_DEBUG=shapes (Apple9+ logs without it) each
 # render encoder shape is logged once per thread: 100 shapes over 30 frames must log exactly the lines of one frame
 # (0073's direct-mapped cache logged 2275 render shape lines), and 300 shapes stop at 256 with one note.
+# sentry-ah-no-vertex.c (KosmicKrisp only; STEAMAC-AH): a graphics pipeline without a vertex shader (fragment
+# shader only) must fail creation instead of faulting the process (the bind dereferenced the missing vertex
+# shader); a vertex + fragment control draws every pixel green.
+# sentry-bj-destroyed-view.c (KosmicKrisp only, REPRO_CASE=sentry-bj; STEAMAC-BJ/BK): a render pass with a live
+# view clears to green without a log line; one whose framebuffer view was destroyed must be named ("not alive")
+# before Mesa's common vkCmdBeginRenderPass dereferences it (the fault itself remains: invalid application use).
+# sentry-bn-entrypoint.m (KosmicKrisp only, REPRO_CASE=sentry-bn; STEAMAC-BN/BP): the driver's
+# mtl_new_render_pipeline with a missing, fragment-stage or absent vertex function must return NULL instead of
+# Metal's `vertexFunction must not be nil` abort; a valid pair draws 16 green pixels.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -274,6 +290,18 @@ build() {
 	xcrun clang -std=c11 -Wall -Werror -O1 "$@" -I"$inc" "$here/$prog.c" $link -o "$work/$prog"
 }
 
+run_sentry_ag() {
+	build sentry_ag
+	ag_log=$work/sentry-ag.log
+	"$work/sentry_ag" > "$ag_log" 2>&1 || { cat "$ag_log"; return 1; }
+	cat "$ag_log"
+	if grep -E 'Invalid sample buffer length|Could not create MTLCounterSampleBuffer|AGX: Texture read/write assertion' "$ag_log"; then
+		echo "sentry-ag: unexpected Metal counter/pitch failure" >&2
+		return 1
+	fi
+	python3 "$here/sentry_ag_gpu.py" "${REPRO_MOLTENVK_SOURCE:-$root/work/build/host-moltenvk/src}" "$work/sentry-ag-gpu"
+}
+
 if [ "${REPRO_CASE:-}" = shared_image ]; then
 	build shared_image
 	"$work/shared_image"
@@ -287,6 +315,61 @@ fi
 if [ "${REPRO_CASE:-}" = sentry-g-brackets ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-g-brackets requires KosmicKrisp" >&2; exit 2; }
 	exec "$here/sentry-g-brackets.sh" "$kk"
+fi
+if [ "${REPRO_CASE:-}" = command-allocator ]; then
+	[ "$driver" = kosmickrisp ] || { echo "command-allocator requires KosmicKrisp" >&2; exit 2; }
+	exec "$here/command-allocator.sh" "$kk"
+fi
+if [ "${REPRO_CASE:-}" = sentry-g-views ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-g-views requires KosmicKrisp" >&2; exit 2; }
+	build image_views
+	exec python3 "$here/image-view-diagnostics.py" "$work/image_views"
+fi
+if [ "${REPRO_CASE:-}" = sentry-ah ]; then
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-ah-no-vertex -I"$work"
+	"$work/sentry-ah-no-vertex"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-bj ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-bj requires KosmicKrisp" >&2; exit 2; }
+	build sentry-bj-destroyed-view
+	"$work/sentry-bj-destroyed-view" live > "$work/sentry-bj-live.log" 2>&1 || { cat "$work/sentry-bj-live.log"; exit 1; }
+	cat "$work/sentry-bj-live.log"
+	if grep -q 'not alive' "$work/sentry-bj-live.log"; then
+		echo "sentry-bj: a live view was reported" >&2
+		exit 1
+	fi
+	# Faults after the log line, like the report: the case checks the line, not the exit status.
+	"$work/sentry-bj-destroyed-view" destroyed > "$work/sentry-bj.log" 2>&1 || true
+	cat "$work/sentry-bj.log"
+	grep -q 'attachment 0/1 (framebuffer, format 37, samples 1) image view 0x[0-9a-f]* is not alive' "$work/sentry-bj.log" || {
+		echo "sentry-bj: the destroyed attachment view was not named" >&2
+		exit 1
+	}
+	echo "OK destroyed: the attachment's destroyed view is named before the render pass begins"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-bn ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-bn requires KosmicKrisp" >&2; exit 2; }
+	xcrun clang -Wall -Werror -fno-objc-arc -framework Metal -framework Foundation \
+		"$here/sentry-bn-entrypoint.m" -o "$work/sentry-bn-entrypoint"
+	offset=$(nm "$kk" | awk '$3 == "_mtl_new_render_pipeline" { print $1 }')
+	[ -n "$offset" ] || { echo "sentry-bn: no _mtl_new_render_pipeline in $kk" >&2; exit 1; }
+	for mode in valid missing wrong-stage nil; do
+		"$work/sentry-bn-entrypoint" "$kk" "$offset" "$mode"
+	done
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-ag ]; then
+	[ "$driver" = moltenvk ] || { echo "sentry-ag requires MoltenVK" >&2; exit 2; }
+	run_sentry_ag
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-87-components ]; then
+	[ "$driver" = moltenvk ] || { echo "sentry-87-components requires MoltenVK" >&2; exit 2; }
+	exec "$here/sentry-87-components.sh" "$libdir" "$work/sentry-87-components"
 fi
 
 src=$work/gamescope
@@ -331,6 +414,9 @@ build depth_stencil
 
 build linear_pitch
 "$work/linear_pitch"
+if [ "$driver" = moltenvk ]; then
+	run_sentry_ag
+fi
 
 if [ "$driver" = moltenvk ]; then
 	build xfb
@@ -510,6 +596,7 @@ build frag_output
 if [ "$driver" = moltenvk ]; then
 	"$work/frag_output" "$gspv" dual-source
 	sh "$here/stage-widths.sh" "$libdir" "$work/stage-widths"
+	sh "$here/sentry-87-components.sh" "$libdir" "$work/sentry-87-components"
 	sh "$here/sentry-57-shared.sh" "$libdir/libMoltenVK.dylib" - "$inc" "$work/shared-memory"
 fi
 
@@ -531,7 +618,7 @@ build d3d12_caps
 
 if [ "$driver" = kosmickrisp ]; then
 	build image_views
-	"$work/image_views"
+	python3 "$here/image-view-diagnostics.py" "$work/image_views"
 	build linear_images
 	"$work/linear_images"
 
@@ -580,6 +667,12 @@ if [ "$driver" = kosmickrisp ]; then
 
 	# STEAMAC-G: Metal's 256-level parser limit, deep divergent control flow and jumps.
 	"$here/sentry-g-brackets.sh" "$kk"
+
+	# STEAMAC-AH: a graphics pipeline without a vertex shader must fail creation.
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-ah-no-vertex -I"$work"
+	"$work/sentry-ah-no-vertex"
 
 	# STEAMAC-6H/6G: unused NULL sets and missing descriptor declarations.
 	build sentry_descriptors

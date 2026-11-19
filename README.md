@@ -18,6 +18,9 @@ Metal 4) is an experimental alternative on macOS 26+ (see “Vulkan driver”).
 ## Requirements
 
 - Apple Silicon Mac, macOS 15+, ~150 GB of free space (the disk image is sparse).
+  The launcher needs Hypervisor.framework on the Mac itself: inside a macOS virtual machine (Paravirtual GPU,
+  `kern.hv_vmm_present`) or without `kern.hv_support` it explains that and exits before starting the VM
+  instead of reporting libkrun's `krun_start_enter failed: -22` (STEAMAC-15).
 - Xcode 26+ (full installation: its `actool` builds the app icon from an Icon Composer document), Homebrew, rustup.
 - KosmicKrisp (optional, alternative Vulkan driver): built only on macOS 26+; `host/kosmickrisp/build.sh`
   installs its Homebrew dependencies (`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`).
@@ -166,7 +169,10 @@ game; every occurrence is logged (`stall: gpu idle 3.1 s (guest alive, …)`). W
 gamescope session (gaming and Desktop Mode): when a session ends (Switch to Desktop, Return to Gaming
 Mode), no heartbeat is expected until the new session's agent sends one; while the VM is suspended or
 asleep the indicator is off, and after resume, guest wake, and Mac sleep, idle and heartbeat timers
-start over.
+start over. Each check measures GPU idle time and heartbeat age at one instant, so a check the Mac
+itself delayed (paging, a busy main thread) does not age only the heartbeat into “not responding”
+(STEAMAC-8). The Reclaim Disk Space confirmation, error and result dialogs are sheets or separate windows, not
+modal loops that stop the main queue (which delivers heartbeats) while SteamOS runs.
 
 | Keys in the window | |
 |---|---|
@@ -507,6 +513,13 @@ the synthesized `/proc/cmdline` over the real one; so it also mounts an untouche
 `/run/steamac/proc` (`nosuid,nodev,noexec`). Without it every Flatpak app exits with `bwrap: Can't mount
 proc on /newroot/proc: Operation not permitted`.
 
+Desktop Mode runs `plasmashell` under `/usr/lib/steamac/desktop-shell`: the nested session has no systemd
+user manager, so the stock service's restart does not apply, and a Wayland protocol error makes the shell
+exit (`_exit`) without a crash handler, leaving a black desktop with only the KWin window (STEAMAC-AJ/9P).
+After an abnormal exit the shell is restarted, at most three starts per minute; a normal logout or shell
+exit is not restarted. Problem reports include the desktop's package versions and a journal of the shell
+and compositor.
+
 ## Clipboard
 
 Settings → General → **Share clipboard with SteamOS** (on by default, applies now): text (UTF-8)
@@ -704,6 +717,10 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 - connected to the Mac over Bluetooth LE (`28de:1303`): passed through with its own IDs and the
   Bluetooth bus. GameController does not show it, so it does not need a GameController controller,
   and it cannot wake a sleeping guest (HID input is dropped while the VM is paused);
+- plugged into the Mac over USB (`28de:1302`): passed through with its own IDs and the USB bus,
+  with the same Input Monitoring requirement as Bluetooth. When one USB controller can be matched
+  unambiguously to its GameController stand-in, HID keeps that player's slot without an extra Xbox
+  360 pad; BLE passthrough does not suppress other GameController pads;
 - through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
   controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
   number, which a uhid device does not have, so the slot that carries controller state goes to
@@ -804,6 +821,28 @@ predate the lock), SteamOS repairs it instead of stopping at “Starting SteamOS
 adds `fsck.repair=yes` to the kernel command line, so systemd-fsck runs e2fsck answering yes rather than
 only the safe preen fixes. Files e2fsck cannot place again end up in `/home/lost+found`.
 
+## Uninstalling
+
+The launcher does not partition the Mac's drive: SteamOS, its games and saves live in one disk image
+file. To remove everything:
+
+1. Quit FX Steam Launcher (SteamOS shuts down with it).
+2. Delete the disk image shown in Settings → Advanced → Disk image (by default
+   `~/Library/Application Support/es.fxgam.steamac/steamos.img`, deleted in step 4). A disk on another
+   volume may also leave `steamos.provision.img` (until its first start finished) and the download cache
+   `steamos.img.cache` next to it.
+3. Move `FX Steam Launcher.app` from Applications to the Trash.
+4. Delete the launcher's data (disk, game statistics, Moonlight pairing, download and crash-report caches,
+   logs, saved problem reports) and settings in Terminal:
+
+   ```
+   rm -rf ~/Library/Application\ Support/es.fxgam.steamac ~/Library/Caches/es.fxgam.steamac \
+          ~/Library/Logs/es.fxgam.steamac ~/Library/HTTPStorages/es.fxgam.steamac
+   defaults delete es.fxgam.steamac
+   ```
+5. Optionally, in Keychain Access delete the “FX Steam Launcher: SteamOS user steamos” passwords
+   (service `es.fxgam.steamac.guest-password`, one per disk).
+
 ## Languages
 
 The launcher's interface is in English, Russian and Simplified Chinese and follows the macOS language
@@ -865,7 +904,10 @@ full volume, disconnected drive, a destination or cache folder that disappears d
 filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
 connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries,
-including a timeout while reading a chunk's HTTP response body (STEAMAC-92). If desync cannot store a
+including a timeout while reading a chunk's HTTP response body (STEAMAC-92), and so does a metadata response
+that is not JSON (empty, truncated, an HTML portal or proxy page) or an HTTP rejection, logged with its HTTP
+status, Content-Type, length and first 160 bytes (STEAMAC-AQ: `NSCocoaErrorDomain 3840` from `stable.json`;
+valid JSON with an incompatible schema still reports). If desync cannot store a
 chunk in the cache (`invalid argument` on an exFAT cache, STEAMAC-90/91), the log records the failing
 cache shard's state (mode, entry and temporary-file counts, read errors) for diagnosis.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
@@ -1023,6 +1065,27 @@ KosmicKrisp stall, `MESA_KK_DEBUG=syncs,cbs` set when starting the macOS launche
 argument) traces queue synchronization and every CPU wait longer than one second (STEAMAC-94).
 A buffer copy with a NULL source or destination buffer is skipped with one warning instead of crashing the
 VM process (Dota 2, STEAMAC-9S/9T; `host/kosmickrisp/test/copy-buffer-null.py`).
+A graphics pipeline without a vertex shader fails to create, with its stages logged, instead of crashing
+the VM process when bound (STEAMAC-AH; `REPRO_CASE=sentry-ah host/moltenvk/repro/run.sh`). A view of a
+single-layer 2D image whose layer count overflows (Zink's `0+65536`) keeps that one layer instead of
+killing the GPU context; a view in an incompatible format (RGBA8 image, R8 view) is still refused, and the
+log names the guest application and the full view arguments (STEAMAC-G). A reply stream on a resource the
+context does not have stays fatal; virglrenderer logs whether it was detached from that context (and how
+long ago), never attached, or not shared memory (`host/virglrenderer/test/reply-resource.py`, STEAMAC-G).
+Fatal-command and failed-lookup lines name the guest context (id and process name), so the context that died is
+no longer guessed from neighbouring `destroying context … (explorer.exe)` lines; rejected image views also log the
+real format features and block compatibility (STEAMAC-G: R8 views of RGBA8 Zink images, still refused). Before
+creating Metal encoders KosmicKrisp logs bounded high-water snapshots of its command allocators, encoders and
+upload memory (`REPRO_CASE=command-allocator`), and the launcher records which Apple Metal instrumentation is
+loaded (`metal_instrumentation` tag: `libMetalMetricsInterpose` also loads through macOS frame pacing with the
+HUD off) and a VM-tag breakdown when the VM footprint grows by more than 8 GiB in 30 s (STEAMAC-AK/AP/AN/AX:
+an IOGPU command-storage allocation failed after the footprint jumped from 52 to 95 GB; cause not yet known).
+A render pipeline whose vertex function does not resolve in its library fails like any other compile failure,
+logged with the name, the library's functions and the program's MSL hashes, instead of Metal's process abort
+`vertexFunction must not be nil` (STEAMAC-BN/BP; `REPRO_CASE=sentry-bn`). A render pass whose framebuffer names
+an image view destroyed before the pass began is logged with the attachment, format and framebuffer before
+Mesa's common code dereferences the freed view (STEAMAC-BJ/BK, DOOM 2016: `transition_attachment` read the
+view's image as NULL; who destroyed it is not yet known; `REPRO_CASE=sentry-bj`).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -1046,6 +1109,19 @@ the input's width; missing varyings and different numeric types remain unsupport
 A shader function named `rgb9e5` is renamed so it no longer collides with Metal's `rgb9e5` pixel type
 (STEAMAC-A9), and a geometry/mesh stage writing only `ClipDistance` also writes the `user(clip0)` copy
 the fragment shader reads (STEAMAC-A2).
+Red Dead Redemption 2's Vulkan renderer creates pipeline-statistics query pools although MoltenVK does not
+offer them; they are now created and return zeros (the feature stays off) instead of failing and killing
+the GPU context, timestamp pools larger than 4096 queries use several Metal sample buffers, and host-memory
+images copied through a CPU shadow use the real texel/block row pitch (the AGX `bytes_per_row` assertion,
+STEAMAC-AG/G; `REPRO_CASE=sentry-ag`). A command buffer that fails on the GPU logs its encoders and shaders.
+Floating-point atomics on workgroup (`shared`) memory, which Metal only offers on device memory, are emulated
+with `atomic_uint` bit casts and a compare-and-swap loop (STEAMAC-AS), and geometry/tessellation vertex
+fetch reads array- and matrix-typed vertex inputs one location at a time with each location's format
+(`half2[2]`, STEAMAC-AV; `sentry-as-shared-float.sh`, `sentry-av-array-input.sh`).
+MoltenVK keeps separate Component-qualified vertex outputs and the matching fragment inputs distinct next to
+width-linked varyings, fixing 1.9.14's duplicated `locnN` / invalid vertex return type regression
+(STEAMAC-87/BB; `REPRO_CASE=sentry-87-components`, pixel-checked for plain and block declarations, both
+width directions and serialized pipeline-cache reuse).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
@@ -1314,7 +1390,8 @@ What is sent:
   (`~/Library/Logs/DiagnosticReports/steamac-vm-*.ips`, matched by pid): the crash site in the title
   and the `crash_site` tag (reports group by it), and in extra `macos_crash_report` the exception, the
   Application Specific Information lines (libmalloc's message on a heap corruption trap) and the
-  crashed thread's first 16 frames (library and symbol names);
+  crashed thread's first 16 frames (library and symbol names); the same summary is written to the session
+  log, so Report a Problem after a crash carries the crash site with crash reporting off (STEAMAC-BC);
   Not-responding reports include `stall_history`: up to 32 one-second GPU command-counter, heartbeat age,
   guest uptime/load, process CPU-time and host polling-gap samples, even with performance statistics
   off (STEAMAC-8). Missing agent heartbeats alone do not prove that the whole guest or GPU hung.
@@ -1341,6 +1418,9 @@ What is sent:
   second shutdown request) is a requested exit, not a report: the VM process exits with status 3, which
   the supervisor recognizes without the `user-exit` marker file (with the Mac's disk full the marker
   could not be written, STEAMAC-15);
+  The kernel's memory-kill flag is reported separately from the SIGKILL's unknown source (its absence does
+  not mean Force Quit), with the peak footprint relative to VM and Mac memory and the highest sampled
+  memory pressure, not only the levels macOS announced (STEAMAC-S).
   `memory_history` adds up to two minutes of pre-exit VM footprint and host memory samples (every
   10 s); the separate report-time snapshot is labelled post-exit because VM memory is already freed.
   GPU-fatal and SIGKILL reports add the VM process's recent GPU/heartbeat history and process, Metal,

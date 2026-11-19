@@ -1,0 +1,105 @@
+; STEAMAC-AS: reconstructed Workgroup float store/load/FAdd, plus exchange and ordinary access.
+; Captured shader uses a 5 * 1280 float shared array and 512 invocations.
+OpCapability Shader
+OpCapability AtomicFloat32AddEXT
+OpExtension "SPV_EXT_shader_atomic_float_add"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %local
+OpExecutionMode %main LocalSize 512 1 1
+OpDecorate %local BuiltIn LocalInvocationId
+OpDecorate %output DescriptorSet 0
+OpDecorate %output Binding 0
+OpDecorate %Result Block
+OpMemberDecorate %Result 0 Offset 0
+OpDecorate %Outputs ArrayStride 4
+%void = OpTypeVoid
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%uvec3 = OpTypeVector %uint 3
+%bool = OpTypeBool
+%zero = OpConstant %uint 0
+%one = OpConstant %uint 1
+%two = OpConstant %uint 2
+%sem = OpConstant %uint 264
+%n = OpConstant %uint 6400
+%outn = OpConstant %uint 1032
+%i512 = OpConstant %uint 512
+%i513 = OpConstant %uint 513
+%i514 = OpConstant %uint 514
+%i515 = OpConstant %uint 515
+%i516 = OpConstant %uint 516
+%i520 = OpConstant %uint 520
+%i1280 = OpConstant %uint 1280
+%i2560 = OpConstant %uint 2560
+%i3840 = OpConstant %uint 3840
+%fzero = OpConstant %float 0
+%fhalf = OpConstant %float 0.5
+%fone = OpConstant %float 1
+%fonehalf = OpConstant %float 1.5
+%negzero = OpConstant %uint 2147483648
+%nanbits = OpConstant %uint 2143289344
+%Shared = OpTypeArray %float %n
+%Outputs = OpTypeArray %float %outn
+%Result = OpTypeStruct %Outputs
+%pShared = OpTypePointer Workgroup %Shared
+%pFloat = OpTypePointer Workgroup %float
+%pLocal = OpTypePointer Input %uvec3
+%pResult = OpTypePointer StorageBuffer %Result
+%pOutput = OpTypePointer StorageBuffer %float
+%fn = OpTypeFunction %void
+%local = OpVariable %pLocal Input
+%shared = OpVariable %pShared Workgroup
+%output = OpVariable %pResult StorageBuffer
+%main = OpFunction %void None %fn
+%entry = OpLabel
+%lid = OpLoad %uvec3 %local
+%id = OpCompositeExtract %uint %lid 0
+%iszero = OpIEqual %bool %id %zero
+%sum = OpAccessChain %pFloat %shared %zero
+%sign = OpAccessChain %pFloat %shared %i1280
+%nan = OpAccessChain %pFloat %shared %i2560
+OpSelectionMerge %initialized None
+OpBranchConditional %iszero %init %initialized
+%init = OpLabel
+%minuszero = OpBitcast %float %negzero
+%nanvalue = OpBitcast %float %nanbits
+OpAtomicStore %sum %two %zero %fzero
+OpAtomicStore %sign %two %zero %minuszero
+OpAtomicStore %nan %two %zero %nanvalue
+OpBranch %initialized
+%initialized = OpLabel
+OpControlBarrier %two %two %sem
+%old = OpAtomicFAddEXT %float %sum %two %zero %fhalf
+%out = OpAccessChain %pOutput %output %zero %id
+OpStore %out %old
+%plainindex = OpIAdd %uint %id %i3840
+%plainptr = OpAccessChain %pFloat %shared %plainindex
+%value = OpConvertUToF %float %id
+OpStore %plainptr %value
+OpControlBarrier %two %two %sem
+%plain = OpLoad %float %plainptr
+%plainoutindex = OpIAdd %uint %id %i520
+%plainout = OpAccessChain %pOutput %output %zero %plainoutindex
+OpStore %plainout %plain
+OpSelectionMerge %done None
+OpBranchConditional %iszero %finish %done
+%finish = OpLabel
+%total = OpAtomicLoad %float %sum %two %zero
+%before = OpAtomicExchange %float %sign %two %zero %fonehalf
+%after = OpAtomicLoad %float %sign %two %zero
+%nanbefore = OpAtomicFAddEXT %float %nan %two %zero %fone
+%nanafter = OpAtomicLoad %float %nan %two %zero
+%o512 = OpAccessChain %pOutput %output %zero %i512
+%o513 = OpAccessChain %pOutput %output %zero %i513
+%o514 = OpAccessChain %pOutput %output %zero %i514
+%o515 = OpAccessChain %pOutput %output %zero %i515
+%o516 = OpAccessChain %pOutput %output %zero %i516
+OpStore %o512 %total
+OpStore %o513 %before
+OpStore %o514 %after
+OpStore %o515 %nanbefore
+OpStore %o516 %nanafter
+OpBranch %done
+%done = OpLabel
+OpReturn
+OpFunctionEnd

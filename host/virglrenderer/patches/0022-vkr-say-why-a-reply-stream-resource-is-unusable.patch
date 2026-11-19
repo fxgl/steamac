@@ -1,0 +1,164 @@
+From: georgii pl <gp@fx.gl>
+Subject: [PATCH] vkr: say why a reply stream resource is unusable
+
+STEAMAC-G events 63f00891, a1b739d6, acac5f10 (KosmicKrisp) and da3b9025
+(MoltenVK), 1.9.13, lost the guest context on
+"failed to set reply stream: invalid res_id 123" (also 3967 and 362)
+followed by "vkSetReplyCommandStreamMESA resulted in CS error". Three
+were within seconds of the context's creation; one followed a
+gldriverquery context's teardown 87 s earlier. The message covered two
+different states - the resource not attached to this context, or attached
+but not shm - and gave no history, so the earlier passes (2026-11-01,
+2026-11-04) could not tell a guest naming a detached reply buffer from an
+attach that never reached this context.
+
+Keep per context the attach/detach totals and its last 16 detaches (res_id
+and time, recorded under the resource mutex on the control path only), and
+on this failure log which case it is: "was detached from context N (name)
+X ms ago", "is not attached to context N (name) and not among its last K
+detaches", or "has fd type T, not shm", with the stream's offset/size and
+the context's attached/detached/live counts. The command stays fatal.
+
+test/reply-resource.py drives the public renderer API (in-process render
+server, no VM): reply streams after a create, a detach, an explicit
+re-attach, another context's resource, a failed blob creation, and a
+detach older than the last 16 must each be rejected with the matching
+line, while valid orderings still get a real reply in the shared memory.
+Before (0021): only "invalid res_id 123". After: all six cases pass.
+---
+--- a/src/venus/vkr_context.c
++++ b/src/venus/vkr_context.c
+@@ -7,6 +7,7 @@
+ 
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <time.h>
+ #include <unistd.h>
+ 
+ #include "util/anon_file.h"
+@@ -300,11 +301,21 @@
+    assert(!_mesa_hash_table_search(ctx->resource_table, &res->res_id));
+    struct hash_entry *entry =
+       _mesa_hash_table_insert(ctx->resource_table, &res->res_id, res);
++   if (entry)
++      ctx->resources_attached++;
+    mtx_unlock(&ctx->resource_mutex);
+ 
+    return entry;
+ }
+ 
++static int64_t
++vkr_context_now_ns(void)
++{
++   struct timespec ts;
++   clock_gettime(CLOCK_MONOTONIC, &ts);
++   return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
++}
++
+ static inline void
+ vkr_context_remove_resource(struct vkr_context *ctx, uint32_t res_id)
+ {
+@@ -313,10 +324,58 @@
+    if (likely(entry)) {
+       vkr_context_free_resource(entry);
+       _mesa_hash_table_remove(ctx->resource_table, entry);
++      const uint32_t slot = ctx->resources_detached++ % ARRAY_SIZE(ctx->detached);
++      ctx->detached[slot].res_id = res_id;
++      ctx->detached[slot].time_ns = vkr_context_now_ns();
+    }
+    mtx_unlock(&ctx->resource_mutex);
+ }
+ 
++void
++vkr_context_log_reply_resource(struct vkr_context *ctx,
++                               uint32_t res_id,
++                               const struct vkr_resource *res,
++                               uint64_t offset,
++                               uint64_t size)
++{
++   if (res) {
++      vkr_log("failed to set reply stream: res_id %u of context %u (%s) has fd type %d, "
++              "not shm (offset %" PRIu64 ", size %" PRIu64 ")",
++              res_id, ctx->ctx_id, ctx->debug_name, (int)res->fd_type, offset, size);
++      return;
++   }
++
++   mtx_lock(&ctx->resource_mutex);
++   const uint32_t attached = ctx->resources_attached;
++   const uint32_t detached = ctx->resources_detached;
++   const uint32_t live = _mesa_hash_table_num_entries(ctx->resource_table);
++   int64_t detached_ns = -1;
++   for (uint32_t i = 0; i < ARRAY_SIZE(ctx->detached) && i < detached; i++) {
++      const uint32_t slot = (detached - 1 - i) % ARRAY_SIZE(ctx->detached);
++      if (ctx->detached[slot].res_id == res_id) {
++         detached_ns = ctx->detached[slot].time_ns;
++         break;
++      }
++   }
++   mtx_unlock(&ctx->resource_mutex);
++
++   if (detached_ns >= 0) {
++      vkr_log("failed to set reply stream: res_id %u was detached from context %u (%s) "
++              "%" PRId64 " ms ago (offset %" PRIu64 ", size %" PRIu64 "; %u attached, "
++              "%u detached, %u live)",
++              res_id, ctx->ctx_id, ctx->debug_name,
++              (vkr_context_now_ns() - detached_ns) / 1000000, offset, size, attached,
++              detached, live);
++   } else {
++      vkr_log("failed to set reply stream: res_id %u is not attached to context %u (%s) "
++              "and not among its last %u detaches (offset %" PRIu64 ", size %" PRIu64
++              "; %u attached, %u detached, %u live)",
++              res_id, ctx->ctx_id, ctx->debug_name,
++              MIN2(detached, (uint32_t)ARRAY_SIZE(ctx->detached)), offset, size,
++              attached, detached, live);
++   }
++}
++
+ static bool
+ vkr_context_import_resource_internal(struct vkr_context *ctx,
+                                      uint32_t res_id,
+--- a/src/venus/vkr_context.h
++++ b/src/venus/vkr_context.h
+@@ -93,6 +93,14 @@
+ 
+    mtx_t resource_mutex;
+    struct hash_table *resource_table;
++   /* steamac: totals and the last detaches (vkr_context_remove_resource), to
++    * tell a reply stream naming a detached resource from one never attached */
++   uint32_t resources_attached;
++   uint32_t resources_detached;
++   struct {
++      uint32_t res_id;
++      int64_t time_ns;
++   } detached[16];
+ 
+    bool cs_fatal_error;
+    struct vkr_cs_encoder encoder;
+@@ -156,6 +164,15 @@
+ void
+ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id);
+ 
++/* Logs why res_id is not a usable reply stream of ctx: not attached (and
++ * whether it was detached recently) or not a shm resource. */
++void
++vkr_context_log_reply_resource(struct vkr_context *ctx,
++                               uint32_t res_id,
++                               const struct vkr_resource *res,
++                               uint64_t offset,
++                               uint64_t size);
++
+ static inline struct vkr_resource *
+ vkr_context_get_resource(struct vkr_context *ctx, uint32_t res_id)
+ {
+--- a/src/venus/vkr_transport.c
++++ b/src/venus/vkr_transport.c
+@@ -19,7 +19,8 @@
+    struct vkr_context *ctx = dispatch->data;
+    struct vkr_resource *res = vkr_context_get_resource(ctx, args->pStream->resourceId);
+    if (!res || res->fd_type != VIRGL_RESOURCE_FD_SHM) {
+-      vkr_log("failed to set reply stream: invalid res_id %u", args->pStream->resourceId);
++      vkr_context_log_reply_resource(ctx, args->pStream->resourceId, res,
++                                     args->pStream->offset, args->pStream->size);
+       vkr_context_set_fatal(ctx);
+       return;
+    }

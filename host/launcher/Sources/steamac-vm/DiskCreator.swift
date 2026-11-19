@@ -396,10 +396,52 @@ final class DiskCreator {
 
     // MARK: metadata
 
+    /// Valve metadata is downloaded before the signed bundle. A portal/proxy response or an
+    /// incomplete body here is an expected download failure, not a Foundation JSON-parser bug.
+    struct MetadataResponseFailure: LocalizedError, CustomStringConvertible {
+        let diagnostic: String
+        var description: String {
+            "Can't download SteamOS information from Valve's servers. The response was empty, incomplete, or invalid. Check your internet connection, sign in to the network if required, or try without a VPN, proxy, or network filter, then try again. Technical details are in the launcher log. (\(diagnostic))"
+        }
+        var errorDescription: String? {
+            String(localized: "Can't download SteamOS information from Valve's servers. The response was empty, incomplete, or invalid. Check your internet connection, sign in to the network if required, or try without a VPN, proxy, or network filter, then try again. Technical details are in the launcher log.")
+        }
+    }
+
     func candidate(branch: String) throws -> Candidate {
         let url = URL(string: DiskCreator.metaURL + branch + ".json")!
-        let data = try fetch(url)
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw OptionError("\(url): not a JSON object") }
+        let result = try fetch(url)
+        return try DiskCreator.candidate(data: result.data, response: result.response, url: url)
+    }
+
+    private static func metadataDiagnostic(data: Data, response: URLResponse?, url: URL, reason: String) -> String {
+        let http = response as? HTTPURLResponse
+        let status = http.map { String($0.statusCode) } ?? "unavailable"
+        let type = http?.value(forHTTPHeaderField: "Content-Type") ?? "(missing)"
+        let prefix = String(reflecting: String(decoding: data.prefix(160), as: UTF8.self))
+        let detail = "\(url): \(reason); HTTP \(status); Content-Type \(String(reflecting: type)); body \(data.count) bytes; first bytes \(prefix)"
+        log("create-disk: metadata response: \(detail)")
+        return detail
+    }
+
+    static func candidate(data: Data, response: URLResponse?, url: URL) throws -> Candidate {
+        let http = response as? HTTPURLResponse
+        func diagnostic(_ reason: String) -> String {
+            metadataDiagnostic(data: data, response: response, url: url, reason: reason)
+        }
+        guard let http, http.statusCode == 200 else {
+            throw MetadataResponseFailure(diagnostic: diagnostic("unexpected HTTP response"))
+        }
+        let object: Any
+        do { object = try JSONSerialization.jsonObject(with: data) }
+        catch {
+            throw MetadataResponseFailure(diagnostic: diagnostic("invalid JSON: \(error)"))
+        }
+        // A valid JSON document with an incompatible schema is not evidence of a network
+        // interruption: retain reporting for upstream metadata/launcher compatibility defects.
+        guard let root = object as? [String: Any] else {
+            throw OptionError(diagnostic("not a JSON object"))
+        }
         var found: [Candidate] = []
         for key in ["minor", "major"] {
             guard let part = root[key] as? [String: Any], let list = part["candidates"] as? [[String: Any]] else { continue }
@@ -411,7 +453,9 @@ final class DiskCreator {
                 found.append(Candidate(buildID: id, version: image["version"] as? String ?? "", updatePath: path, chunksStorePath: store))
             }
         }
-        guard let newest = found.max(by: { $0.buildID < $1.buildID }) else { throw OptionError("\(url): no aarch64 candidate") }
+        guard let newest = found.max(by: { $0.buildID < $1.buildID }) else {
+            throw OptionError(diagnostic("no aarch64 candidate"))
+        }
         return newest
     }
 
@@ -421,13 +465,15 @@ final class DiskCreator {
         lock.lock(); task = t; lock.unlock()
     }
 
-    func fetch(_ url: URL) throws -> Data {
+    func fetch(_ url: URL) throws -> (data: Data, response: URLResponse?) {
         let sem = DispatchSemaphore(value: 0)
-        var result: Swift.Result<Data, Error> = .failure(Cancelled())
+        var result: Swift.Result<(data: Data, response: URLResponse?), Error> = .failure(Cancelled())
         let t = URLSession.shared.dataTask(with: url) { d, resp, err in
-            if let err { result = .failure(err) }
-            else if let code = (resp as? HTTPURLResponse)?.statusCode, code != 200 { result = .failure(OptionError("\(url): HTTP \(code)")) }
-            else { result = .success(d ?? Data()) }
+            if let err {
+                _ = DiskCreator.metadataDiagnostic(data: d ?? Data(), response: resp, url: url, reason: "\(err)")
+                result = .failure(err)
+            }
+            else { result = .success((d ?? Data(), resp)) }
             sem.signal()
         }
         setTask(t)

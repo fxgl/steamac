@@ -45,6 +45,68 @@ final class SettingsContext: ObservableObject {
     }
 }
 
+/// Compaction runs while SteamOS is alive. Never enter an AppKit modal loop here: progress
+/// heartbeats and StallMonitor polling both arrive on the main dispatch queue (STEAMAC-8).
+final class DiskCompactAlert: NSObject {
+    private static var standalone: [DiskCompactAlert] = []
+    private let alert: NSAlert
+    private let completion: (NSApplication.ModalResponse) -> Void
+
+    private init(_ alert: NSAlert, completion: @escaping (NSApplication.ModalResponse) -> Void) {
+        self.alert = alert
+        self.completion = completion
+    }
+
+    static func present(_ alert: NSAlert, for parent: NSWindow?,
+                        completion: @escaping (NSApplication.ModalResponse) -> Void = { _ in }) {
+        let presenter = DiskCompactAlert(alert, completion: completion)
+        if let parent, parent.isVisible {
+            alert.beginSheetModal(for: parent) { response in
+                presenter.alert.window.orderOut(nil)
+                presenter.completion(response)
+            }
+        } else {
+            // Match SuspendController's non-modal quit prompt when Settings was closed while
+            // fstrim was running. Retain the presenter until its button dismisses the window.
+            standalone.append(presenter)
+            for button in alert.buttons {
+                button.target = presenter
+                button.action = #selector(buttonClicked)
+            }
+            alert.layout()
+            (alert.window as? NSPanel)?.hidesOnDeactivate = false
+            alert.window.center()
+            alert.window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    @objc private func buttonClicked(_ sender: NSButton) {
+        guard let index = alert.buttons.firstIndex(of: sender) else { return }
+        alert.window.orderOut(nil)
+        Self.standalone.removeAll { $0 === self }
+        completion(NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + index))
+    }
+
+    static func result(_ result: Result<DiskCompact.Outcome, OptionError>) -> NSAlert {
+        let done = NSAlert()
+        done.addButton(withTitle: String(localized: "OK"))
+        switch result {
+        case .success(let o):
+            done.messageText = String(localized: "Disk space reclaimed")
+            let reclaimed = o.reclaimed
+            if reclaimed > 1 << 20 {
+                done.informativeText = String(localized: "Allocated size went from \(DiskCompact.gb(o.beforeAllocated)) to \(DiskCompact.gb(o.afterAllocated)) (about \(DiskCompact.gb(UInt64(reclaimed))) less). APFS clones and snapshots may retain this space on the Mac.")
+            } else {
+                done.informativeText = String(localized: "SteamOS trimmed free blocks. Allocated size is still about \(DiskCompact.gb(o.afterAllocated)); little or nothing changed this time. The image may already be compact.")
+            }
+        case .failure(let error):
+            done.messageText = String(localized: "Could not reclaim disk space")
+            done.informativeText = error.localizedDescription
+        }
+        return done
+    }
+}
+
 /// App menu "FX Steam Launcher → Settings…" (Cmd+,): toolbar-style tabs, one SwiftUI form each.
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     enum Tab: Int, CaseIterable {
@@ -1428,11 +1490,13 @@ private struct AdvancedTab: View {
 
     private func reclaimDiskSpace() {
         guard let compact = context.compactDisk, let path = context.diskPath, path == nextDisk else { return }
+        let parent = NSApp.keyWindow
         if let error = DiskCompact.filesystemError(path) {
             let alert = NSAlert()
             alert.messageText = String(localized: "Could not reclaim disk space")
             alert.informativeText = error.localizedDescription
-            alert.runModal()
+            alert.addButton(withTitle: String(localized: "OK"))
+            DiskCompactAlert.present(alert, for: parent)
             return
         }
         let before = DiskCompact.allocatedBytes(path).map(DiskCompact.gb) ?? "?"
@@ -1441,36 +1505,23 @@ private struct AdvancedTab: View {
         confirm.informativeText = String(localized: "Trim free blocks inside SteamOS to reduce the sparse disk image's allocated size. Games and saves are not deleted. Capacity stays the same. This works only when the image is on APFS; clones and snapshots may retain space on the Mac. Currently \(before) allocated. This can take several minutes.")
         confirm.addButton(withTitle: String(localized: "Reclaim"))
         confirm.addButton(withTitle: String(localized: "Cancel"))
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        let parent = NSApp.keyWindow
-        let waiting = NSAlert()
-        waiting.messageText = String(localized: "Reclaiming disk space…")
-        waiting.informativeText = String(localized: "SteamOS is trimming free blocks. Keep SteamOS running until this finishes.")
-        if let parent {
-            // Non-blocking: the sheet stays until the guest replies (or times out).
-            waiting.beginSheetModal(for: parent) { _ in }
-        }
-        compact.request(path: path) { result in
+        DiskCompactAlert.present(confirm, for: parent) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let waiting = NSAlert()
+            waiting.messageText = String(localized: "Reclaiming disk space…")
+            waiting.informativeText = String(localized: "SteamOS is trimming free blocks. Keep SteamOS running until this finishes.")
             if let parent {
-                let sheet = waiting.window
-                parent.endSheet(sheet)
-                sheet.orderOut(nil)
+                // Non-blocking: the sheet stays until the guest replies (or times out).
+                waiting.beginSheetModal(for: parent) { _ in }
             }
-            let done = NSAlert()
-            switch result {
-            case .success(let o):
-                done.messageText = String(localized: "Disk space reclaimed")
-                let reclaimed = o.reclaimed
-                if reclaimed > 1 << 20 {
-                    done.informativeText = String(localized: "Allocated size went from \(DiskCompact.gb(o.beforeAllocated)) to \(DiskCompact.gb(o.afterAllocated)) (about \(DiskCompact.gb(UInt64(reclaimed))) less). APFS clones and snapshots may retain this space on the Mac.")
-                } else {
-                    done.informativeText = String(localized: "SteamOS trimmed free blocks. Allocated size is still about \(DiskCompact.gb(o.afterAllocated)); little or nothing changed this time. The image may already be compact.")
+            compact.request(path: path) { result in
+                if let parent {
+                    let sheet = waiting.window
+                    parent.endSheet(sheet)
+                    sheet.orderOut(nil)
                 }
-            case .failure(let error):
-                done.messageText = String(localized: "Could not reclaim disk space")
-                done.informativeText = error.localizedDescription
+                DiskCompactAlert.present(DiskCompactAlert.result(result), for: parent)
             }
-            done.runModal()
         }
     }
 

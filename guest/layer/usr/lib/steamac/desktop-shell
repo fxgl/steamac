@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+"""Supervise only the nested Desktop Mode shell (not KWin or the whole session).
+
+The private D-Bus session cannot use the outer systemd user manager. QtWayland
+protocol errors use _exit(-1), bypassing plasmashell's KCrash AutoRestart.
+Mirror the stock service's three starts per minute, without restarting a normal
+logout, shell replacement or session termination. This recovers the shell; it
+does not repair or hide the underlying Wayland protocol error (STEAMAC-AJ/9P).
+"""
+import collections
+import signal
+import subprocess
+import sys
+import time
+
+
+def supervise(command):
+    stopping = False
+    child = None
+
+    def stop(signum, _frame):
+        nonlocal stopping
+        stopping = True
+        if child is not None and child.poll() is None:
+            try:
+                child.send_signal(signum)
+            except ProcessLookupError:
+                pass
+
+    signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    previous = {s: signal.signal(s, stop) for s in signals}
+    starts = collections.deque()
+    try:
+        while not stopping:
+            now = time.monotonic()
+            while starts and now - starts[0] >= 60:
+                starts.popleft()
+            if len(starts) >= 3:
+                print("desktop-shell: restart limit reached (3 starts in 60 s); keeping the failure in the journal", file=sys.stderr)
+                return 1
+            starts.append(now)
+            child = subprocess.Popen(command)
+            # A termination arriving during Popen must also reach the new child.
+            if stopping:
+                try:
+                    child.terminate()
+                except ProcessLookupError:
+                    pass
+            status = child.wait()
+            child = None
+            if stopping or status == 0 or status in tuple(-s for s in signals):
+                return 0
+            print(f"desktop-shell: plasmashell exited status={status}; restarting in 1 s", file=sys.stderr)
+            time.sleep(1)
+        return 0
+    except OSError as error:
+        print(f"desktop-shell: cannot start plasmashell (errno={error.errno})", file=sys.stderr)
+        return 1
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+if __name__ == "__main__":
+    sys.exit(supervise(["/usr/bin/plasmashell", "--no-respawn"]))

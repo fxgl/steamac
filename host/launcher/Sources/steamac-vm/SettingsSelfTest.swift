@@ -126,7 +126,7 @@ enum SettingsSelfTest {
         var failures = CrashReporting.scrubSelfCheck() + CrashReporting.scannerSelfCheck() + CrashReporting.exitSelfCheck()
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
-            + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
+            + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck() + PadPort.coalesceSelfCheck()
             + Ext4Probe.selfCheck() + DiskShrinker.selfCheck()
             + sharedLibrarySelfCheck()
         let savedVirtualPad = settings.virtualPad
@@ -271,6 +271,57 @@ enum SettingsSelfTest {
                 }
             }
             step()
+        }
+
+        func compactAlerts(then done: @escaping () -> Void) {
+            sw.show(tab: .advanced)
+            let reclaimed = DiskCompact.Outcome(path: "selftest.img", beforeAllocated: 8 << 30,
+                                                afterAllocated: 4 << 30, detail: "trimmed")
+            let unchanged = DiskCompact.Outcome(path: "selftest.img", beforeAllocated: 4 << 30,
+                                                afterAllocated: 4 << 30, detail: "already compact")
+            var cases: [(String, Result<DiskCompact.Outcome, OptionError>, Bool, Int)] = [
+                ("reclaimed sheet", .success(reclaimed), true, 0),
+                ("unchanged sheet", .success(unchanged), true, 0),
+                ("failure sheet", .failure(OptionError("selftest trim failure")), true, 0),
+                ("reclaimed standalone", .success(reclaimed), false, 0),
+                ("failure standalone", .failure(OptionError("selftest trim failure")), false, 0),
+                ("cancel sheet", .success(reclaimed), true, 1),
+                ("cancel standalone", .success(reclaimed), false, 1),
+            ]
+            func nextAlert() {
+                guard !cases.isEmpty else { return done() }
+                let (name, result, sheet, button) = cases.removeFirst()
+                let alert = DiskCompactAlert.result(result)
+                if button == 1 { alert.addButton(withTitle: String(localized: "Cancel")) }
+                let expected = NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + button)
+                var responses: [NSApplication.ModalResponse] = []
+                // A regression to runModal must fail rather than leave this self-test hanging.
+                let watchdog = Timer(timeInterval: 1.5, repeats: false) { _ in
+                    failures.append("compaction \(name): presentation blocked the main queue")
+                    NSApp.modalWindow?.orderOut(nil)
+                    NSApp.abortModal()
+                }
+                RunLoop.main.add(watchdog, forMode: .common)
+                RunLoop.main.add(watchdog, forMode: .modalPanel)
+                DiskCompactAlert.present(alert, for: sheet ? sw.window : nil) { responses.append($0) }
+                watchdog.invalidate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    let visible = alert.window.isVisible && NSApp.modalWindow == nil
+                        && (!sheet || sw.window.attachedSheet === alert.window)
+                    if !visible || !responses.isEmpty || alert.informativeText.isEmpty {
+                        failures.append("compaction \(name): alert missing, modal or completed before dismissal")
+                    }
+                    log("selftest-settings: compaction \(name): main-queue callback ran while alert remained open: \(visible ? "ok" : "FAIL")")
+                    alert.buttons[button].performClick(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if responses != [expected] || alert.window.isVisible {
+                            failures.append("compaction \(name): dismissal responses=\(responses.map(\.rawValue)) visible=\(alert.window.isVisible)")
+                        }
+                        nextAlert()
+                    }
+                }
+            }
+            nextAlert()
         }
 
         /// Display tab: open the real window-size popup, check its items (every size preset, Fit to screen,
@@ -452,7 +503,7 @@ enum SettingsSelfTest {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             capture("what-is-sent", SettingsWindowController.snapshot(w))
                             w.orderOut(nil)
-                            displayPresets { advancedCustom { backgroundMute(then: finish) } }
+                            compactAlerts { displayPresets { advancedCustom { backgroundMute(then: finish) } } }
                         }
                     }
                 }

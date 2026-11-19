@@ -1,24 +1,36 @@
-/* STEAMAC-59/7K/7Q/9X/9Y: legacy Metal presentation alongside repeated KK
- * Metal 4 render/compute encoder switches. Test injected HUD visible or hidden,
- * and MTL_HUD_ENABLED=0 as a control. Opt-in window, not a headless suite test. */
+/* STEAMAC-59/7K/7Q/9X/9Y/AK/AP: legacy Metal presentation alongside repeated
+ * KK Metal 4 encoder switches. Test injected HUD visible or hidden, and
+ * MTL_HUD_ENABLED=0. libMetalMetricsInterpose may still load without libMTLHud:
+ * it is also used by macOS FramePacing. Opt-in window, not a headless test. */
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <mach-o/dyld.h>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include "metal_hud_work.c"
 
 static atomic_bool stop_work;
 static atomic_bool hud_ever_loaded;
+static atomic_bool metrics_ever_loaded;
 
 static void image_added(const struct mach_header *header, intptr_t slide)
 {
 	(void)slide;
 	Dl_info info;
-	if (dladdr(header, &info) && info.dli_fname && strstr(info.dli_fname, "/libMTLHud.dylib"))
+	if (!dladdr(header, &info) || !info.dli_fname) return;
+	if (strstr(info.dli_fname, "/libMTLHud.dylib"))
 		atomic_store(&hud_ever_loaded, true);
+	if (strstr(info.dli_fname, "/libMetalMetricsInterpose.dylib")) {
+		atomic_store(&metrics_ever_loaded, true);
+		fprintf(stderr, "metal_hud: metrics interposer loaded (independent of HUD visibility)\n");
+		if (getenv("METAL_HUD_TRACE_METRICS")) {
+			void *stack[64];
+			backtrace_symbols_fd(stack, backtrace(stack, 64), 2);
+		}
+	}
 }
 
 static void *run_kk(void *shader_path)
@@ -101,8 +113,8 @@ int main(int argc, char **argv)
 		if (loaded != hud || ever_loaded != hud) {
 			fprintf(stderr, "FAIL: HUD library state disagrees with injection during KK encoding\n"); abort();
 		}
-		fprintf(stderr, "OK metal_hud: 600 presented frames, injected=%d library-loaded=%d library-ever-loaded=%d mode=%s\n",
-			hud, loaded, ever_loaded, mode);
+		fprintf(stderr, "OK metal_hud: 600 presented frames, injected=%d library-loaded=%d library-ever-loaded=%d metrics-ever-loaded=%d mode=%s\n",
+			hud, loaded, ever_loaded, atomic_load(&metrics_ever_loaded), mode);
 	}
 	return 0;
 }

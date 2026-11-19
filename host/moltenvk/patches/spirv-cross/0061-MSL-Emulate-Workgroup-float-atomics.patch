@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000061 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@fxgam.es>
+Date: Sun, 15 Nov 2026 12:00:00 +0000
+Subject: [PATCH] MSL: emulate Workgroup float atomics with uint bits (STEAMAC-AS)
+
+All three release events reject threadgroup atomic_float stores. Their
+retained compiler breadcrumbs also show atomic_fetch_add_explicit and
+atomic_load_explicit on the same shared float array: store-only lowering
+would leave the compute pipeline broken. Sentry's attachment endpoint
+returns no failed-shader attachments for any of the three events.
+
+Keep logical float storage and ordinary loads/stores unchanged. Reinterpret
+Workgroup float atomic load/store/exchange as atomic_uint with bitcasts.
+Implement OpAtomicFAddEXT with a weak uint CAS loop, returning the previous
+float value. Integer comparison also terminates for NaN; signed-zero bits
+are preserved by loads, stores and exchange. Device atomic_float is not
+changed. Memory ordering remains the backend's relaxed-order convention.
+
+sentry-as-shared-float.sh reproduces the exact Metal overload error before
+this patch, compiles in MSL 2.4/3/4 afterwards, and runs 8 x 512 contended
+adds on Metal, checking every original value, NaN termination, signed zero,
+exchange and ordinary shared accesses. A device float atomic control stays
+native. The fixture reconstructs the captured 6400-float/512-thread shape;
+original SPIR-V was not retained.
+---
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -13578,6 +13578,33 @@
+ 	else if (opcode == OpAtomicSMax || opcode == OpAtomicSMin)
+ 		expected_type = to_signed_basetype(type.width);
+ 
++	// Metal has device atomic_float, but no threadgroup float atomics. Keep the
++	// logical float storage (including ordinary accesses), and atomically operate
++	// on its bits. FAdd needs a uint CAS loop, not an integer fetch_add.
++	bool emulate_workgroup_float = type.basetype == SPIRType::Float && type.width == 32 &&
++	                               ptr_type.storage == StorageClassWorkgroup;
++	if (emulate_workgroup_float && opcode == OpAtomicFAddEXT)
++	{
++		string pointer = join("spvAtomicPointer", result_id);
++		string expected = join("spvAtomicExpected", result_id);
++		string operand = join("spvAtomicValue", result_id);
++		emit_uninitialized_temporary_expression(result_type, result_id);
++		statement("threadgroup atomic_uint* ", pointer, " = (threadgroup atomic_uint*)",
++		          to_enclosed_pointer_expression(obj), ";");
++		statement("float ", operand, " = ", to_expression(op1), ";");
++		statement("uint ", expected, " = atomic_load_explicit(", pointer, ", memory_order_relaxed);");
++		statement("do");
++		begin_scope();
++		statement(to_expression(result_id), " = as_type<float>(", expected, ");");
++		end_scope_decl(join("while (!atomic_compare_exchange_weak_explicit(", pointer, ", &", expected,
++		                    ", as_type<uint>(", to_expression(result_id), " + ", operand,
++		                    "), memory_order_relaxed, memory_order_relaxed))"));
++		flush_all_atomic_capable_variables();
++		return;
++	}
++	if (emulate_workgroup_float)
++		expected_type = SPIRType::UInt;
++
+ 	bool use_native_image_atomic;
+ 	if (msl_options.supports_msl_version(3, 1))
+ 		use_native_image_atomic = check_atomic_image(obj);
+@@ -13891,7 +13918,7 @@
+ 			exp += ")";
+ 		}
+ 
+-		if (expected_type != type.basetype)
++		if (expected_type != type.basetype && strcmp(op, "atomic_store") != 0)
+ 			exp = bitcast_expression(type, expected_type, exp);
+ 
+ 		if (strcmp(op, "atomic_store") != 0)

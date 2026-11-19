@@ -39,6 +39,16 @@
 # Shader_Model_60 dialog is not proof of a missing SM 6.0 Vulkan feature.
 # Reprobes: test/shader_model.c compares host vs Venus; test/denorm.m measures
 # the Metal4 compiler's actual denorm behavior with KosmicKrisp's math flags.
+# Patch 0022 says why a vkSetReplyCommandStreamMESA resource is unusable (STEAMAC-G "invalid
+# res_id"): detached from that context N ms ago (its last 16 detaches are kept), never attached
+# to it, or not shm, with its attach/detach/live counts; still fatal. test/reply-resource.py
+# drives the renderer API (no VM) through each case and the valid orderings.
+# Patch 0023 appends the context ID and debug name to Venus fatal-command and failed
+# object-lookup logs (STEAMAC-G/A): a neighbouring explorer.exe teardown could belong to
+# another context, so the anonymous CS error did not identify the failing guest process.
+# No protocol or fatal behaviour changes. test/context-diagnostics.py drives the renderer
+# API without a VM: two named contexts reuse one missing object ID and a third has an
+# invalid reply resource; every line names the right context.
 #
 # Installation never rewrites a file in place (a running VM may have the dylib mapped): meson
 # installs into a staging DESTDIR and every file is moved into work/out/host (new inode).
@@ -167,3 +177,7 @@ if [ -f "$kk_lib" ]; then
 	echo ">> venus_check: KosmicKrisp"
 	VKR_VULKAN_DRIVER=@rpath/libvulkan_kosmickrisp.dylib "$check"
 fi
+echo ">> reply-resource (0022)"
+python3 "$here/test/reply-resource.py" "$build/src/libvirglrenderer.1.dylib"
+echo ">> context-diagnostics (0023)"
+python3 "$here/test/context-diagnostics.py" "$build/src/libvirglrenderer.1.dylib"
