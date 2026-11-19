@@ -85,6 +85,29 @@ settings stays. Launcher 1.4 shipped both settings off (`"DisableShaderCache" "1
 `"EnableShaderBackgroundProcessing" "0"`); on the first Steam start after updating, the script turns
 both back on once, but only if both are still exactly those values.
 
+Gaming Mode defaults the Steam UI to the virtual display's native resolution, including Retina,
+instead of Steam's separate 1920 × 1080 UI cap. Before Steam starts,
+`/usr/lib/steamac/steam-native-resolution` supplies a missing
+`InstallConfigStore/Gamescope/EnableSteamNativeExternalResolution` value in `config.vdf`,
+once per Steam installation (marker `config/steamac-native-resolution`). Existing values and
+later choices in Steam are preserved, even if Steam removes the key. An existing 1080p cap
+requires a new gamescope session (restart the VM); restarting Steam alone is not enough.
+The global game resolution setting controls games separately; choosing 5120 × 2880 there does
+not raise the Steam UI resolution. A game left on `Default` follows the UI, so to avoid raising
+games' default GPU cost each account's missing/`Default` global game resolution is first set to
+the former UI cap (1920 × 1080, or 1920 × 1200 for 16:10; smaller displays keep their preferred
+mode), and the native UI is enabled only once at least one account has been handled: Steam creates
+an account's config while it runs and keeps it in memory, so it can only be edited between Steam
+runs. On a fresh install the native UI therefore starts with the Steam start after the first
+sign-in (and a new gamescope session after that). The cap follows the display: on every Steam
+start, while an account still holds exactly the value the launcher wrote
+(`userdata/<account>/config/steamac-native-resolution` remembers it), it is recomputed for the
+current display. Explicit global choices, including `Native`, per-game overrides, and any value
+changed later (also removing the key) are preserved and never followed or reapplied. A config that
+cannot be read or written is skipped and logged; the other accounts are still handled. An account
+signing in for the first time in a session that already runs the native UI gets its cap at the
+next Steam start. The launcher's existing 4094-pixel maximum display side still applies.
+
 Steam's idle screensaver (Settings → Display → Screensaver in Game Mode) is off in the VM. After a
 few minutes without input Steam puts its `Screensaver_uid<n>` window in front of a running game,
 gamescope moves focus to it and the next clicks land in Steam until Escape. The launcher's mouse,
