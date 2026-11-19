@@ -7,11 +7,11 @@ import GameController
 /// GameController. The guest gets their own descriptors and reports, including output reports.
 ///
 /// GameController keeps the device too (it still picks the controller and wakes a sleeping
-/// guest): both read the same input reports. Devices are opened shared, except a USB-wired
-/// Steam Controller while it is passed through and the VM runs: it is then opened with
-/// SeizeDevice (`updateSeize`), because a shared open made feature report 1 STALL and Steam's
-/// retries cut Desktop Mode input every 1-2 s. A paused VM, a released device, or an exclusive
-/// open that IOKit refuses go back to the shared open.
+/// guest): both read the same input reports. Devices are opened shared, except a USB Steam
+/// Controller (the cable, or a Puck slot) while it is passed through and the VM runs: it is
+/// then opened with SeizeDevice (`updateSeize`), because a shared open made feature report 1
+/// STALL and Steam's retries cut Desktop Mode input every 1-2 s. A paused VM, a released
+/// device, or an exclusive open that IOKit refuses go back to the shared open.
 /// Reports keep the HID convention on both sides: a numbered report starts with its ID.
 /// Callbacks run on the main run loop; Get/SetReport block, so they run on a serial queue and
 /// complete on the main queue.
@@ -758,11 +758,11 @@ final class HIDPassthrough {
         }
     }
 
-    /// The USB-wired Steam Controller (`28de:1302`): GameController publishes it, so a shared
-    /// open competes with it. BLE is not published by GameController and a Puck slot is
-    /// another Puck controller's business; both stay shared.
+    /// USB Steam Controllers: the cable (`28de:1302`) and the Puck's controller slots. The
+    /// GameController publishes both, so they are the ones a shared open competes with. A
+    /// BLE controller is not published by GameController and stays shared.
     static func seizable(_ d: Device) -> Bool {
-        isUSBSteamController(d)
+        !d.generic && d.identity.bus == busUSB && isSteamController(d)
     }
 
     /// Exclusive only while the device is passed through and the VM runs. Reopening drops the
