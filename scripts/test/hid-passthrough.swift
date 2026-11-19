@@ -42,6 +42,10 @@ final class TestHIDDevice: NSObject {
     var openResult = kIOReturnSuccess
     var openCalls = 0
     var closeCalls = 0
+    /// Every IOHIDDeviceOpen's options, in order; `seizeResult` is what an exclusive open returns.
+    var openOptionLog: [IOOptionBits] = []
+    var seizeResult = kIOReturnSuccess
+    var lastOpenOptions: IOOptionBits { openOptionLog.last ?? 0 }
     var usagePage: UInt32 = 1
     var usages: Set<UInt32> = [5]
     var gameControllerSupported = false
@@ -156,8 +160,12 @@ func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { permissionRequests +
 func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeDenied }
 func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
     device.openCalls += 1
+    device.openOptionLog.append(options)
     guard device.live else { return kIOReturnNoDevice }
     guard device.openResult == kIOReturnSuccess else { return device.openResult }
+    if options == IOOptionBits(kIOHIDOptionsTypeSeizeDevice), device.seizeResult != kIOReturnSuccess {
+        return device.seizeResult
+    }
     device.isOpen = true
     return kIOReturnSuccess
 }
@@ -165,6 +173,10 @@ func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn
 func IOHIDDeviceClose(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
     device.closeCalls += 1
     device.isOpen = false
+    // Worst case for the production code: IOKit drops the run loop schedule and the input
+    // callback with the open, so a reopened device only reports once they are registered again.
+    device.scheduled = false
+    device.inputCallback = nil
     return kIOReturnSuccess
 }
 func IOHIDDeviceScheduleWithRunLoop(_ device: IOHIDDevice, _ runLoop: CFRunLoop?, _ mode: CFString?) { device.scheduled = true }
@@ -710,6 +722,72 @@ extension HIDPassthrough {
         check(usbInventory.contains("28de:1302") && usbInventory.contains("passed through")
               && usbWired.supportQueries == 0, "USB 1302 diagnostics use the known Valve path, not generic GC ownership")
         diagnosticInventory = []
+        #endif
+        #if HAS_SEIZE
+        // Exclusive only while a USB Steam Controller (cable or Puck slot) is passed through and the VM runs.
+        let seize = IOOptionBits(kIOHIDOptionsTypeSeizeDevice), shared = IOOptionBits(kIOHIDOptionsTypeNone)
+        func settle() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
+        let seizeHID = HIDPassthrough()
+        seizeHID.matchSteamControllers = true
+        precondition(seizeHID.start())
+        let seizeOwner = NSObject(), otherOwner = NSObject()
+        var seizedInputs = 0
+        let seizeUSB = TestHIDDevice(id: 70, valve: true, product: 0x1302)
+        let seizeBLE = TestHIDDevice(id: 71, bluetooth: true, valve: true, product: 0x1303)
+        let seizePuck = TestHIDDevice(id: 72, valve: true, puckSlot: 2)
+        let seizeDualSense = TestHIDDevice(id: 73)
+        for device in [seizeUSB, seizeBLE, seizePuck, seizeDualSense] { seizeHID.manager!.emitMatch(device) }
+        let seizeDevices = seizeHID.devices
+        check(seizeDevices.count == 4 && [seizeUSB, seizeBLE, seizePuck, seizeDualSense].allSatisfy { $0.openOptionLog == [shared] },
+              "devices are opened shared until they are passed through")
+        seizeHID.activate(seizeDevices[0], owner: seizeOwner) { _ in seizedInputs += 1 }
+        seizeHID.activate(seizeDevices[1], owner: seizeOwner) { _ in seizedInputs += 1 }
+        seizeHID.activate(seizeDevices[2], owner: seizeOwner) { _ in seizedInputs += 1 }
+        seizeHID.activate(seizeDevices[3], owner: seizeOwner) { _ in seizedInputs += 1 }
+        check(seizeUSB.openOptionLog == [shared], "activation reopens only after the current turn")
+        settle()
+        check(seizeUSB.lastOpenOptions == seize && seizePuck.lastOpenOptions == seize,
+              "passed-through USB Steam Controllers and Puck slots are opened with SeizeDevice")
+        check(seizeBLE.openOptionLog == [shared] && seizeDualSense.openOptionLog == [shared],
+              "BLE Steam Controllers and DualSenses stay shared")
+        seizeUSB.emit([0x42, 1])
+        check(seizedInputs == 1, "input still reaches the guest after the exclusive reopen")
+        seizeHID.vmPaused = true
+        check(seizeUSB.lastOpenOptions == shared && seizePuck.lastOpenOptions == shared,
+              "a paused VM releases the exclusive open at once")
+        seizePuck.emit([0x42, 1])
+        check(seizedInputs == 2, "reports keep arriving after the shared reopen")
+        seizeHID.vmPaused = false
+        check(seizeUSB.lastOpenOptions == seize && seizePuck.lastOpenOptions == seize, "a running VM seizes again")
+        let reopens = seizeUSB.openCalls
+        seizeHID.deactivate(seizeDevices[0], owner: otherOwner)
+        settle()
+        check(seizeUSB.openCalls == reopens && seizeUSB.lastOpenOptions == seize,
+              "deactivation by a slot that no longer owns the device changes nothing")
+        seizeHID.deactivate(seizeDevices[0], owner: seizeOwner)
+        seizeHID.activate(seizeDevices[0], owner: otherOwner) { _ in seizedInputs += 1 }
+        settle()
+        check(seizeUSB.openCalls == reopens && seizeUSB.lastOpenOptions == seize,
+              "a device moving between players is not reopened in between")
+        seizeHID.deactivate(seizeDevices[0], owner: otherOwner)
+        settle()
+        check(seizeUSB.lastOpenOptions == shared, "a released Steam Controller goes back to the shared open")
+        let refused = TestHIDDevice(id: 74, valve: true, product: 0x1302)
+        refused.seizeResult = kIOReturnNotPrivileged
+        seizeHID.manager!.emitMatch(refused)
+        let refusedDevice = seizeHID.devices.last!
+        seizeHID.activate(refusedDevice, owner: seizeOwner) { _ in seizedInputs += 1 }
+        settle()
+        check(refused.openOptionLog == [shared, seize, shared] && refused.isOpen,
+              "a refused exclusive open falls back to a shared open")
+        refused.emit([0x42, 1])
+        check(seizedInputs == 3, "a controller that could not be seized still passes through")
+        seizeHID.vmPaused = true
+        seizeHID.vmPaused = false
+        settle()
+        check(refused.openOptionLog == [shared, seize, shared], "a refused seize is not retried on every pause")
+        check(seizeHID.diagnosticLines().joined(separator: "\n").contains("exclusive"),
+              "diagnostics show the exclusive open")
         #endif
         #if HAS_INPUT_MONITORING_WARNING
         let deniedUSBHID = HIDPassthrough()

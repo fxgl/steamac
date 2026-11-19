@@ -713,21 +713,34 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 - plugged into the Mac over USB (`28de:1302`): passed through with its own IDs and the USB bus,
   with the same Input Monitoring requirement as Bluetooth. When one USB controller can be matched
   unambiguously to its GameController stand-in, HID keeps that player's slot without an extra Xbox
-  360 pad; BLE passthrough does not suppress other GameController pads;
+  360 pad; BLE passthrough does not suppress other GameController pads. While it is passed through
+  and the VM runs, the launcher opens it exclusively (`SeizeDevice`): opened together with
+  GameController its feature report 1 (Steam's command channel) STALLed, and Steam's retries cut
+  Desktop Mode input every 1–2 s. While it is held, the controller's own mouse and keyboard
+  (lizard mode) and its GameController input are gone on the Mac, and other apps get an
+  exclusive-access error opening it. A paused VM (suspended or asleep), a controller that is not
+  passed through, or an exclusive open macOS refuses (logged, the controller stays shared) put it
+  back to the shared open. Like the Bluetooth one, it does not wake a sleeping guest while it is
+  passed through (HID input is dropped while the VM is paused);
 - through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
   controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
   number, which a uhid device does not have, so the slot that carries controller state goes to
   SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
   2 s is removed again (controller off, moved to another slot or to Bluetooth), and the
-  GameController pad of the Puck takes over. In **Desktop Mode** the grace is 30 s and all input
+  Puck's GameController pad, if there is one, is an ordinary pad again. In **Desktop Mode** the
+  grace is 30 s and all input
   reports except wireless status keep the slot alive, including lizard-mode keyboard/mouse and
   battery reports. This keeps Valve passthrough stable during desktop use, including after
   Options wakes the controller. Wireless status never extends either timeout, and a Disconnect
   status removes the slot immediately in both modes. Switching to Desktop Mode does not revive
-  a slot already expired under the 2 s Gaming Mode timeout. That player's Steam Controller is
-  passed through only when exactly one player's GameController controller is a Steam Controller
-  and exactly one Puck slot is live; otherwise those players keep uinput pads, since the slots
-  cannot be matched to their controllers reliably.
+  a slot already expired under the 2 s Gaming Mode timeout. Every live slot is a player of its
+  own, reserved like a Bluetooth controller; the Puck's GameController pad is not passed on as an
+  Xbox 360 pad as well: as many of its publications as there are live slots are left out, in
+  connection order (GameController cannot say which belongs to which slot), and a publication
+  beyond them stays an ordinary pad. A live slot is opened exclusively like a USB controller
+  (see above); while the VM is paused it is shared again. A passed-through slot does not wake a
+  sleeping guest (HID input is dropped while the VM is paused), which the Puck's GameController
+  pad did when it was the player's controller.
 
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks

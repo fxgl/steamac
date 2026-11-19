@@ -60,6 +60,8 @@ if "private var reader: DispatchSourceRead?" in transport[0]:
     flags += ["-D", "HAS_PADPORT_CANCELLATION"]
 if "static func usbStandIn(" in gamepad:
     flags += ["-D", "HAS_USB_STANDIN"]
+if "func updateSeize(" in production:
+    flags += ["-D", "HAS_SEIZE"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:
     directory = Path(temporary)
     source = directory / "main.swift"
