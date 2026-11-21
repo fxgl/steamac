@@ -1,6 +1,6 @@
 # steamac — Valve's official ARM64 SteamOS (the Steam Frame image) in a VM on Apple Silicon
 
-**English** · [Русский](README.ru.md) · [简体中文](README.zh.md)
+**English** · [Русский](README.ru.md) · [简体中文](README.zh.md) · [日本語](README.ja.md)
 
 On macOS 15 (Sequoia), Valve's actual SteamOS for Steam Frame runs in a lightweight VM on
 Hypervisor.framework (libkrun) with GPU acceleration via Venus.

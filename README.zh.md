@@ -1,6 +1,6 @@
 # steamac — Apple Silicon 上虚拟机中的 Valve 官方 ARM64 SteamOS（Steam Frame 映像）
 
-[English](README.md) · [Русский](README.ru.md) · **简体中文**
+[English](README.md) · [Русский](README.ru.md) · **简体中文** · [日本語](README.ja.md)
 
 在 macOS 15（Sequoia）上，Valve 为 Steam Frame 打造的真正的 SteamOS 运行在基于
 Hypervisor.framework（libkrun）的轻量虚拟机中，经 Venus 实现 GPU 加速。
