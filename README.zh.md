@@ -14,7 +14,7 @@ Windows 游戏 GPU 加速、任意手柄、原生声音。
 <a href="manual/zh/README.md">手册</a>
 </p>
 
-<p align="center"><a href="README.md">English</a> · <a href="README.ru.md">Русский</a> · <b>简体中文</b></p>
+<p align="center"><a href="README.md">English</a> · <a href="README.ru.md">Русский</a> · <b>简体中文</b> · <a href="README.ja.md">日本語</a></p>
 
 ![在 FX Steam Launcher 中运行的 Steam 大屏幕界面](docs/media/shot-library.jpg)
 

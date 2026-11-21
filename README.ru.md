@@ -14,7 +14,7 @@ Windows-игры с ускорением графики, любой геймпа
 <a href="manual/ru/README.md">Руководство</a>
 </p>
 
-<p align="center"><a href="README.md">English</a> · <b>Русский</b> · <a href="README.zh.md">简体中文</a></p>
+<p align="center"><a href="README.md">English</a> · <b>Русский</b> · <a href="README.zh.md">简体中文</a> · <a href="README.ja.md">日本語</a></p>
 
 ![Игровой интерфейс Steam в FX Steam Launcher](docs/media/shot-library.jpg)
 
