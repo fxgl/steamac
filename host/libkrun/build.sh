@@ -40,6 +40,9 @@
 # byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after home, so this
 # is hardening, not a fix for observed data loss on steamac's layout. It also
 # protects future guest-wide discard and the planned Reclaim Disk Space (#78).
+# Patch 0026 replaces CaptureWorker's 1-slot sync_channel with a Mutex+Condvar
+# mailbox so repeated STOP/RELEASE/PREPARE stops coalesce instead of failing the
+# following START with "capture worker is busy" while AudioOutputUnitStop runs.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed

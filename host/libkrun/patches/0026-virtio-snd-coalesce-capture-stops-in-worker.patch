@@ -1,0 +1,351 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: KohutYan <55746996+KohutYan@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 23:23:45 +0200
+Subject: [PATCH] virtio-snd: coalesce capture stops in CaptureWorker
+
+CoreAudioBackend calls capture.stop() on STOP, RELEASE and PREPARE. With
+a 1-slot sync_channel(1), a Stop queued by RELEASE/PREPARE while the
+worker is still inside AudioOutputUnitStop fills the channel, so the
+immediately following START fails try_send() with 'capture worker is
+busy' (VIRTIO_SND_S_IO_ERR / guest EIO) without waiting within its
+200 ms budget.
+
+Replace the 1-slot channel with a Mutex+Condvar mailbox that coalesces
+repeated stops into a single flag, clears start_active before replying
+to a successful start, and lets START wait up to START_TIMEOUT for an
+in-flight Stop while still failing fast when an earlier Start is
+blocked in HAL/TCC.
+---
+ .../src/virtio/snd/audio_backends/capture.rs  | 239 ++++++++++++++----
+ 1 file changed, 187 insertions(+), 52 deletions(-)
+
+diff --git a/src/devices/src/virtio/snd/audio_backends/capture.rs b/src/devices/src/virtio/snd/audio_backends/capture.rs
+index 64f9a74..ca1a2cc 100644
+--- a/src/devices/src/virtio/snd/audio_backends/capture.rs
++++ b/src/devices/src/virtio/snd/audio_backends/capture.rs
+@@ -1,10 +1,10 @@
+ // SPDX-License-Identifier: Apache-2.0 or BSD-3-Clause
+ // Keep potentially blocking microphone/TCC calls off virtio's control and playback threads.
+-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+-use std::sync::{mpsc, Arc};
+-use std::time::Duration;
++use std::sync::{mpsc, Arc, Condvar, Mutex};
++use std::time::{Duration, Instant};
+ 
+ const START_TIMEOUT: Duration = Duration::from_millis(200);
++const POLL_INTERVAL: Duration = Duration::from_secs(1);
+ 
+ pub(super) enum Operation<P> {
+     Start(P),
+@@ -12,68 +12,144 @@ pub(super) enum Operation<P> {
+     Poll,
+ }
+ 
+-enum Command<P> {
+-    Start(P, u64, mpsc::SyncSender<Result<(), String>>),
++struct StartRequest<P> {
++    params: P,
++    requested: u64,
++    reply: mpsc::Sender<Result<(), String>>,
++}
++
++struct State<P> {
++    generation: u64,
++    /// True while the worker is inside `Operation::Start` (or stopping a canceled/failed start).
++    /// A blocked HAL/TCC call keeps this true until it returns, so follow-up `start()` calls fail
++    /// promptly instead of waiting another `START_TIMEOUT`.
++    start_active: bool,
++    stop_pending: bool,
++    start_pending: Option<StartRequest<P>>,
++    quit: bool,
++}
++
++struct Shared<P> {
++    state: Mutex<State<P>>,
++    cv: Condvar,
++}
++
++enum Work<P> {
++    Start(StartRequest<P>),
+     Stop,
++    Poll,
++    Quit,
+ }
+ 
+ pub(super) struct CaptureWorker<P> {
+-    tx: mpsc::SyncSender<Command<P>>,
+-    generation: Arc<AtomicU64>,
+-    pending: Arc<AtomicBool>,
+-    quit: Arc<AtomicBool>,
++    shared: Arc<Shared<P>>,
+ }
+ 
+ impl<P: Send + 'static> CaptureWorker<P> {
+     pub(super) fn new(
+         mut handle: impl FnMut(Operation<P>) -> Result<(), String> + Send + 'static,
+     ) -> std::io::Result<Self> {
+-        let (tx, rx) = mpsc::sync_channel(1);
+-        let generation = Arc::new(AtomicU64::new(0));
+-        let pending = Arc::new(AtomicBool::new(false));
+-        let quit = Arc::new(AtomicBool::new(false));
+-        let (epoch, busy, done) = (generation.clone(), pending.clone(), quit.clone());
++        let shared = Arc::new(Shared {
++            state: Mutex::new(State {
++                generation: 0,
++                start_active: false,
++                stop_pending: false,
++                start_pending: None,
++                quit: false,
++            }),
++            cv: Condvar::new(),
++        });
++        let worker = shared.clone();
+         // Do not join on drop: a system audio API can be waiting for a permission dialog.
+         // The worker owns its audio resources until that call returns, then stops them.
+         std::thread::Builder::new()
+             .name("virtio-snd capture".into())
+             .spawn(move || {
+-                while !done.load(Ordering::Acquire) {
+-                    match rx.recv_timeout(Duration::from_secs(1)) {
+-                        Ok(Command::Start(params, requested, reply)) => {
+-                            let result = if epoch.load(Ordering::Acquire) == requested {
+-                                handle(Operation::Start(params))
+-                            } else {
+-                                Err("capture start canceled".into())
+-                            };
++                let mut next_poll = Instant::now() + POLL_INTERVAL;
++                loop {
++                    let work = {
++                        let mut state = worker.state.lock().unwrap();
++                        loop {
++                            if state.quit {
++                                break Work::Quit;
++                            }
++                            if state.stop_pending {
++                                state.stop_pending = false;
++                                break Work::Stop;
++                            }
++                            if let Some(req) = state.start_pending.take() {
++                                if req.requested != state.generation {
++                                    continue;
++                                }
++                                state.start_active = true;
++                                break Work::Start(req);
++                            }
++                            let now = Instant::now();
++                            if now >= next_poll {
++                                next_poll = now + POLL_INTERVAL;
++                                break Work::Poll;
++                            }
++                            let (guard, _) =
++                                worker.cv.wait_timeout(state, next_poll - now).unwrap();
++                            state = guard;
++                        }
++                    };
++                    match work {
++                        Work::Quit => break,
++                        Work::Stop => {
++                            let _ = handle(Operation::Stop);
++                        }
++                        Work::Poll => {
++                            let _ = handle(Operation::Poll);
++                        }
++                        Work::Start(req) => {
++                            let result = handle(Operation::Start(req.params));
+                             let failed = result.is_err();
+-                            if epoch.load(Ordering::Acquire) != requested
+-                                || reply.send(result).is_err()
+-                                || failed
+-                            {
++                            let canceled = {
++                                let mut state = worker.state.lock().unwrap();
++                                let canceled = state.generation != req.requested || state.quit;
++                                if canceled || failed {
++                                    // Operation::Stop runs immediately below; drop any redundant
++                                    // stop queued by the timeout/cancel path.
++                                    state.stop_pending = false;
++                                } else {
++                                    // Clear before replying so an immediate follow-up start()
++                                    // does not race with the worker leaving this branch.
++                                    state.start_active = false;
++                                }
++                                canceled
++                            };
++                            if canceled || failed {
++                                let _ = handle(Operation::Stop);
++                                worker.state.lock().unwrap().start_active = false;
++                                if !canceled {
++                                    let _ = req.reply.send(result);
++                                }
++                            } else if req.reply.send(result).is_err() {
+                                 let _ = handle(Operation::Stop);
+                             }
+-                            busy.store(false, Ordering::Release);
+                         }
+-                        Ok(Command::Stop) => { let _ = handle(Operation::Stop); }
+-                        Err(mpsc::RecvTimeoutError::Timeout) => { let _ = handle(Operation::Poll); }
+-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                     }
+                 }
+                 let _ = handle(Operation::Stop);
+             })?;
+-        Ok(Self { tx, generation, pending, quit })
++        Ok(Self { shared })
+     }
+ 
+     pub(super) fn start(&self, params: P) -> Result<(), String> {
+-        if self.pending.swap(true, Ordering::AcqRel) {
+-            return Err("capture device is still starting/stopping".into());
+-        }
+-        let (tx, rx) = mpsc::sync_channel(0);
+-        let epoch = self.generation.load(Ordering::Acquire);
+-        if self.tx.try_send(Command::Start(params, epoch, tx)).is_err() {
+-            self.pending.store(false, Ordering::Release);
+-            return Err("capture worker is busy".into());
++        let (tx, rx) = mpsc::channel();
++        {
++            let mut state = self.shared.state.lock().unwrap();
++            if state.start_active || state.start_pending.is_some() {
++                return Err("capture device is still starting/stopping".into());
++            }
++            let requested = state.generation;
++            state.start_pending = Some(StartRequest {
++                params,
++                requested,
++                reply: tx,
++            });
++            self.shared.cv.notify_one();
+         }
+         match rx.recv_timeout(START_TIMEOUT) {
+             Ok(result) => result,
+@@ -85,24 +161,27 @@ impl<P: Send + 'static> CaptureWorker<P> {
+     }
+ 
+     pub(super) fn stop(&self) {
+-        self.generation.fetch_add(1, Ordering::AcqRel);
+-        // A full queue contains either Stop or a Start canceled by the generation above.
+-        let _ = self.tx.try_send(Command::Stop);
++        let mut state = self.shared.state.lock().unwrap();
++        state.generation = state.generation.wrapping_add(1);
++        state.start_pending = None;
++        state.stop_pending = true;
++        self.shared.cv.notify_one();
+     }
+ }
+ 
+ impl<P> Drop for CaptureWorker<P> {
+     fn drop(&mut self) {
+-        self.generation.fetch_add(1, Ordering::AcqRel);
+-        self.quit.store(true, Ordering::Release);
++        let mut state = self.shared.state.lock().unwrap();
++        state.generation = state.generation.wrapping_add(1);
++        state.start_pending = None;
++        state.quit = true;
++        self.shared.cv.notify_one();
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use std::sync::Mutex;
+-    use std::time::Instant;
+ 
+     #[test]
+     fn blocked_start_times_out_and_late_start_is_stopped() {
+@@ -115,11 +194,14 @@ mod tests {
+                     entered_tx.send(()).unwrap();
+                     unblock_rx.recv().unwrap();
+                 }
+-                Operation::Stop => { let _ = stopped_tx.send(()); }
++                Operation::Stop => {
++                    let _ = stopped_tx.send(());
++                }
+                 Operation::Poll => (),
+             }
+             Ok(())
+-        }).unwrap();
++        })
++        .unwrap();
+         let before = Instant::now();
+         assert!(worker.start(()).unwrap_err().contains("exceeded 200 ms"));
+         assert!(before.elapsed() < Duration::from_secs(1));
+@@ -140,18 +222,71 @@ mod tests {
+             match op {
+                 Operation::Start(fail) => {
+                     events.lock().unwrap().push("start");
+-                    if fail { return Err("no input device".into()); }
++                    if fail {
++                        return Err("no input device".into());
++                    }
+                 }
+                 Operation::Stop => events.lock().unwrap().push("stop"),
+                 Operation::Poll => (),
+             }
+             Ok(())
+-        }).unwrap();
++        })
++        .unwrap();
+         assert!(worker.start(false).is_ok());
+-        // Pending is cleared after the rendezvous; wait for the worker's next dispatch.
+-        while worker.pending.load(Ordering::Acquire) { std::thread::yield_now(); }
+         assert_eq!(worker.start(true).unwrap_err(), "no input device");
+         worker.stop();
+         assert_eq!(seen.lock().unwrap()[0], "start");
+     }
++
++    #[test]
++    fn rapid_stop_release_prepare_start_succeeds() {
++        let (stop_entered_tx, stop_entered_rx) = mpsc::channel();
++        let worker = CaptureWorker::new(move |op| {
++            match op {
++                Operation::Start(()) => (),
++                Operation::Stop => {
++                    let _ = stop_entered_tx.send(());
++                    std::thread::sleep(Duration::from_millis(25));
++                }
++                Operation::Poll => (),
++            }
++            Ok(())
++        })
++        .unwrap();
++        assert!(worker.start(()).is_ok());
++        // Mirror ALSA/PipeWire STOP -> RELEASE -> PREPARE -> START while Stop is in flight.
++        worker.stop();
++        stop_entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        worker.stop(); // RELEASE
++        worker.stop(); // PREPARE
++        assert_eq!(worker.start(()), Ok(()));
++    }
++
++    #[test]
++    fn blocked_stop_times_out_and_cancels_queued_start() {
++        let (stop_entered_tx, stop_entered_rx) = mpsc::channel();
++        let (unblock_tx, unblock_rx) = mpsc::channel();
++        let (started_tx, started_rx) = mpsc::channel();
++        let worker = CaptureWorker::new(move |op| {
++            match op {
++                Operation::Start(()) => {
++                    let _ = started_tx.send(());
++                }
++                Operation::Stop => {
++                    let _ = stop_entered_tx.send(());
++                    let _ = unblock_rx.recv();
++                }
++                Operation::Poll => (),
++            }
++            Ok(())
++        })
++        .unwrap();
++        worker.stop();
++        stop_entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        let before = Instant::now();
++        assert!(worker.start(()).unwrap_err().contains("exceeded 200 ms"));
++        assert!(before.elapsed() < Duration::from_secs(1));
++        unblock_tx.send(()).unwrap();
++        assert!(started_rx.recv_timeout(Duration::from_millis(50)).is_err());
++    }
+ }
+-- 
+2.39.5 (Apple Git-154)
+
