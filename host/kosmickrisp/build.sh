@@ -512,10 +512,13 @@ xcrun --find metal > /dev/null
 for dep in $BREW_DEPS; do
 	brew list --versions "$dep" > /dev/null 2>&1 || brew install "$dep"
 done
+# The first Python >= 3.10: a versioned name, else Homebrew's python3 (a newer release
+# than the names below), else the one on PATH.
 python=
-for v in 3.14 3.13 3.12 3.11 3.10; do
-	if command -v "python$v" > /dev/null 2>&1; then
-		python=$(command -v "python$v")
+for p in python3.14 python3.13 python3.12 python3.11 python3.10 "$(brew --prefix)/bin/python3" python3; do
+	if command -v "$p" > /dev/null 2>&1 &&
+		"$p" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2> /dev/null; then
+		python=$(command -v "$p")
 		break
 	fi
 done
