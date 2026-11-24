@@ -209,7 +209,7 @@ final class LauncherSettings: ObservableObject {
         }
     }
 
-    /// Experimental: the wmtr virtio-gpu context type (libkrun patch 0018, capset 30), which runs
+    /// Experimental: the wmtr virtio-gpu context type (libkrun patch 0013, capset 30), which runs
     /// DXMT's winemetal calls on the Mac's Metal through a host executor library. libkrun offers it
     /// only with STEAMAC_WMTR=1 and a loadable STEAMAC_WMTR_LIB (set by VM.start); the library
     /// checks its own ABI version against libkrun's.

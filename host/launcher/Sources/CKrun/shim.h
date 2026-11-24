@@ -1,4 +1,4 @@
-// libkrun v1.19.6 C API, found via -Xcc -I<libkrun include dir> (see build.sh).
+// libkrun v1.19.8 C API, found via -Xcc -I<libkrun include dir> (see build.sh).
 #ifndef STEAMAC_CKRUN_SHIM_H
 #define STEAMAC_CKRUN_SHIM_H
 

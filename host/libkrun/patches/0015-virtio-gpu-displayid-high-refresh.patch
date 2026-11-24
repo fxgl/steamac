@@ -10,7 +10,7 @@ minus one, matching Linux DRM's decoder.
 Test 4K240, other high-clock modes, the extension threshold, clock
 saturation, legacy modes and runtime resize transitions.
 
-Applies after patches 0001-0019 to libkrun v1.19.6 (227b2de6).
+Applies after patches 0001-0014 to libkrun v1.19.8 (c4d283c2).
 ---
 diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs
 index 98a528c..2cbbfdf 100644

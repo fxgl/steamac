@@ -10,7 +10,7 @@ explicitly saturating it at 3.55 (lossy for more extreme ratios); there
 is no unspecified aspect sentinel. Use 1:1 only when neither ratio is
 usable. Keep the Type I timing bytes and the legacy EDID path unchanged.
 
-Applies after patch 0020 to SteaMac's libkrun v1.19.6 series. Extend the
+Applies after patch 0015 to SteaMac's libkrun v1.19.8 series. Extend the
 existing tests for units, bounds, portrait ratios, rounding and fallback.
 ---
 diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs

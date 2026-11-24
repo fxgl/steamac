@@ -408,7 +408,7 @@ Proton по его маркеру `.steamac-dxmt`, а не по разрешен
 
 **Как:** Настройки → Основные → «При закрытии окна» → **Приостановить** — тогда закрытие окна
 приостанавливает ВМ вместо выключения; или меню **FX Steam Launcher → Приостановить** (Ctrl+Cmd+S,
-работает и когда клавиатура у гостя). `krun_pause` (патч libkrun 0016) останавливает все vCPU и
+работает и когда клавиатура у гостя). `krun_pause` (патч libkrun 0011) останавливает все vCPU и
 звук гостя, окно прячется, в строке меню появляется значок ⏸: «SteamOS приостановлена», с какого
 времени и сколько памяти занято, **Возобновить**, **Выключить SteamOS**. Приостановленная ВМ не тратит
 CPU (~0 %), Mac может засыпать.
@@ -1139,7 +1139,7 @@ MoltenVK сохраняет отдельные выходы вершинного
 (например, слой нулевого размера или таймаут drawable), DXMT пропускает кадр вместо показа `nil`, на
 котором Metal срабатывал assert и ВМ завершалась (STEAMAC-98); это пишется в лог с ограничением, и
 отрисовка продолжается со следующего drawable. При включении лаунчер даёт гостю контекст
-virtio-gpu wmtr из libkrun (патч 0018, capset 30) и загружает ВМ с `steamac.gfx=dxmt`.
+virtio-gpu wmtr из libkrun (патч 0013, capset 30) и загружает ВМ с `steamac.gfx=dxmt`.
 Гостевой `steam-gfx-path` подменяет библиотеки каждого установленного x86-64 Proton на DXMT и
 следит за установками и обновлениями Proton; после выключения ВМ загружается с `steamac.gfx=vulkan`, и
 исходные файлы Proton восстанавливаются. С необязательным ARM64EC-набором `steam-dxmt-arm64ec` готовит из установленного **Proton 11.0
@@ -1725,7 +1725,7 @@ ID отчёта (первые 8 знаков ID события). Не удало
 | `wmtr/` | Ремотинг winemetal, BSD-3-Clause: гостевой `winemetal.so` через virtio-gpu к `libwmtr_host.dylib` (со связанными DXMT/LLVM), вывод CAMetalLayer во view ВМ |
 | `host/libepoxy/` | libepoxy 1.5.10, стандартные macOS-опции Meson, сборка для macOS 15.0 вместо копирования Homebrew bottle |
 | `host/virglrenderer/` | virglrenderer UTM `macos-next` + слияние с upstream main (venus-protocol 1.1.3) + LINEAR-модификатор, импорт shm как host memory, заглушки для неудавшихся конвейеров (draw отбрасываются в virglrenderer), пересоздание отвергнутого кэша, отложенный unmap shm, QoS потоков, Vulkan-драйвер открывается во время работы (`VKR_VULKAN_DRIVER`) |
-| `host/libkrun/` | libkrun v1.19.6 + патчи: `VIRTIO_GPU_F_BLOB_ALIGNMENT` (16K), маска SME для M4, 2D-ресурсы без virgl, `SET_SCANOUT_BLOB`, маппинг SHM-блобов, сигнализация Venus-фенсов, логи virglrenderer, `krun_display_resize` (смена разрешения на лету), QoS vCPU/GPU-потоков |
+| `host/libkrun/` | libkrun v1.19.8 (уже с `VIRTIO_GPU_F_BLOB_ALIGNMENT` (16K) и маской SME для M4) + патчи: 2D-ресурсы без virgl, `SET_SCANOUT_BLOB`, маппинг SHM-блобов, сигнализация Venus-фенсов, логи virglrenderer, `krun_display_resize` (смена разрешения на лету), QoS vCPU/GPU-потоков |
 | `host/launcher/` | `steamac-vm` (Swift/AppKit): окно на Metal (Сверхвысокое разрешение MetalFX по желанию), оверлей «FX STEAM LAUNCHER» с прогрессом загрузки/выключения, разрешение гостя = размер окна (× backing scale экрана с Разрешение Retina) при постоянном DPI (EDID из физического размера экрана), клавиатура/мышь/планшет, pad гостя Xbox 360 / DualSense / DualShock 4 из GameController.framework с вибрацией или DualSense, проброшенный как сырое HID-устройство (`fx.pad`), сеть через gvproxy, перезапуск ВМ при reboot гостя, `--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9, всё встроено, 4K-страницы, выравнивание blob-узлов по 16K, Apple TSO для FEX; uhid, hidraw и `hid-playstation` (с нужными ему классами LED) для проброшенного DualSense |
 | `guest/mesa/` | Из закреплённого Mesa: Venus ICD для aarch64 (Proton, gamescope, zink) и x86_64/i386 (FEX-провайдер графики); GL-стек zink (libgallium, GLX/EGL/GBM) поверх штатного в обоих, с бэкпортами из `guest/mesa/patches/` (Mesa 6abefa51: zink пересоздаёт pipeline, когда меняется только формат вершин; без `VK_EXT_vertex_input_dynamic_state`, которого нет у Venus на Metal, GL-игры иначе рисуют со старыми форматами вершин); x86_64-репортёр сбоев эмулируемых игр (`/usr/lib/steamac/x86_64/fault-report.so`) |

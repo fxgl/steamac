@@ -58,7 +58,7 @@ enum VMSizing {
     }
 
     /// One vCPU per performance core, 2...8: M1 / M2 / M3 / M4 (4 P) → 4, Pro chips → 6-8, Max → 8.
-    /// The vCPU threads run at user-interactive QoS (libkrun patch 0013), so macOS keeps them on
+    /// The vCPU threads run at user-interactive QoS (libkrun patch 0008), so macOS keeps them on
     /// P-cores; more vCPUs than P-cores puts guest threads on efficiency cores (a fraction of the
     /// speed), where a lock holder or a FEX JIT thread stalls the vCPUs waiting for it. Past 8,
     /// Steam, Proton and FEX gain little, while the host's own frame-path threads (virglrenderer

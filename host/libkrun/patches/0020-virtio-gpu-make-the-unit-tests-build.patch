@@ -1,0 +1,71 @@
+From 92d199941fb986fa2a92a7d7901c87960bc5d00d Mon Sep 17 00:00:00 2001
+From: Willie Abrams <willie@pobox.com>
+Date: Tue, 10 Nov 2026 17:22:17 -0600
+Subject: [PATCH] virtio/gpu: make the unit tests build
+
+blob_alignment_offered and test_read_2d_resource_larger_than_scanout
+came in with cherry-picks from main and use main's APIs: the display
+module's path, Gpu::new's arguments, rutabaga_gfx's builder and
+Transfer3D::new_2d. On this branch they don't compile, so
+`cargo test -p krun-devices --features gpu` builds no test at all.
+
+Use this branch's APIs.
+
+Assisted-by: Claude Code / claude-fable-5-2
+Signed-off-by: Willie Abrams <willie@pobox.com>
+
+[steamac: from libkrun/libkrun PR #997, commit 92d19994 on stable-1.19.x,
+after v1.19.8. Without it, the gpu unit tests of v1.19.8 do not compile.]
+---
+ src/devices/src/virtio/gpu/device.rs     | 3 ++-
+ src/devices/src/virtio/gpu/virtio_gpu.rs | 7 +++----
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/devices/src/virtio/gpu/device.rs b/src/devices/src/virtio/gpu/device.rs
+index a1d5c257..bae406fe 100644
+--- a/src/devices/src/virtio/gpu/device.rs
++++ b/src/devices/src/virtio/gpu/device.rs
+@@ -271,13 +271,14 @@ impl VirtioDevice for Gpu {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::display::NoopDisplayBackend;
++    use crate::virtio::gpu::display::NoopDisplayBackend;
+     use krun_display::IntoDisplayBackend;
+ 
+     #[test]
+     fn blob_alignment_offered() {
+         let gpu = Gpu::new(
+             0,
++            None,
+             Box::new([]),
+             NoopDisplayBackend::into_display_backend(None),
+             Arc::new(DisplayControl::new(&[])),
+diff --git a/src/devices/src/virtio/gpu/virtio_gpu.rs b/src/devices/src/virtio/gpu/virtio_gpu.rs
+index 337614c1..9abbe532 100644
+--- a/src/devices/src/virtio/gpu/virtio_gpu.rs
++++ b/src/devices/src/virtio/gpu/virtio_gpu.rs
+@@ -1530,9 +1530,8 @@ mod test {
+             RutabagaIovec, Transfer3D, RUTABAGA_PIPE_BIND_RENDER_TARGET, RUTABAGA_PIPE_TEXTURE_2D,
+         };
+ 
+-        let mut rutabaga = RutabagaBuilder::new(0, RutabagaFenceHandler::new(|_| {}))
+-            .set_default_component(RutabagaComponentType::Rutabaga2D)
+-            .build()
++        let mut rutabaga = RutabagaBuilder::new(RutabagaComponentType::Rutabaga2D, 0, 0)
++            .build(RutabagaFenceHandler::new(|_| {}), None)
+             .unwrap();
+         let (width, height) = (4, 2);
+         rutabaga
+@@ -1563,7 +1562,7 @@ mod test {
+             )
+             .unwrap();
+         rutabaga
+-            .transfer_write(0, 1, Transfer3D::new_2d(0, 0, width, height, 0), None)
++            .transfer_write(0, 1, Transfer3D::new_2d(0, 0, width, height))
+             .unwrap();
+ 
+         let resource = VirtioGpuResource::new(1, width, height, None, 0);
+-- 
+2.54.0 (Apple Git-157)
+

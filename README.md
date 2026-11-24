@@ -404,7 +404,7 @@ old assignments, and removal restores the previous launch options.
 
 **How:** Settings → General → “When closing the window” → **Suspend** — closing the window then
 suspends the VM instead of shutting it down; or use **FX Steam Launcher → Suspend** (Ctrl+Cmd+S,
-works even when the guest has the keyboard). `krun_pause` (libkrun patch 0016) stops all vCPUs and
+works even when the guest has the keyboard). `krun_pause` (libkrun patch 0011) stops all vCPUs and
 guest audio, the window is hidden, and a ⏸ icon appears in the menu bar: “SteamOS suspended”,
 since when and how much memory is in use, **Resume**, **Shut Down SteamOS**. A suspended VM uses
 no CPU (~0%); the Mac can sleep.
@@ -1137,7 +1137,7 @@ The app bundles `libwmtr_host.dylib`; the guest layer carries DXMT's
 example a zero-size layer or a drawable timeout), DXMT skips that frame instead of presenting `nil`, which
 Metal turns into an assertion that ended the VM (STEAMAC-98); a bounded log line records it and rendering
 continues with the next drawable. With the toggle on, the launcher offers
-libkrun's wmtr virtio-gpu context (patch 0018, capset 30) and boots with `steamac.gfx=dxmt`.
+libkrun's wmtr virtio-gpu context (patch 0013, capset 30) and boots with `steamac.gfx=dxmt`.
 The guest's `steam-gfx-path` swaps DXMT into every installed x86-64 Proton and watches for Proton
 installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and restores Proton's
 original files. With the optional ARM64EC payload, `steam-dxmt-arm64ec` prepares a separate
@@ -1712,7 +1712,7 @@ then it closes on its own; `STEAMAC_REPORT_TEST_SEND=1` also sends a test report
 | `wmtr/` | BSD-3-Clause winemetal remoting: guest `winemetal.so` over virtio-gpu to `libwmtr_host.dylib` (DXMT/LLVM linked in), presenting a CAMetalLayer inside the VM view |
 | `host/libepoxy/` | libepoxy 1.5.10, upstream macOS Meson options, built for macOS 15.0 instead of copying a Homebrew bottle |
 | `host/virglrenderer/` | virglrenderer UTM `macos-next` + merge with upstream main (venus-protocol 1.1.3) + LINEAR modifier, shm import as host memory, stubs for failed pipelines (draws dropped in virglrenderer), recreation of rejected cache, deferred shm unmap, thread QoS, Vulkan driver opened at runtime (`VKR_VULKAN_DRIVER`) |
-| `host/libkrun/` | libkrun v1.19.6 + patches: `VIRTIO_GPU_F_BLOB_ALIGNMENT` (16K), SME mask for M4, 2D resources without virgl, `SET_SCANOUT_BLOB`, SHM blob mapping, Venus fence signaling, virglrenderer logs, `krun_display_resize` (resolution changes on the fly), vCPU/GPU thread QoS |
+| `host/libkrun/` | libkrun v1.19.8 (has `VIRTIO_GPU_F_BLOB_ALIGNMENT` (16K) and the SME mask for M4) + patches: 2D resources without virgl, `SET_SCANOUT_BLOB`, SHM blob mapping, Venus fence signaling, virglrenderer logs, `krun_display_resize` (resolution changes on the fly), vCPU/GPU thread QoS |
 | `host/launcher/` | `steamac-vm` (Swift/AppKit): Metal window (optional MetalFX super resolution), “FX STEAM LAUNCHER” overlay with boot/shutdown progress, guest resolution = window size (× the screen's backing scale with Retina resolution) at constant DPI (EDID from the physical screen size), keyboard/mouse/tablet, the guest's Xbox 360 / DualSense / DualShock 4 pad from GameController.framework with rumble or a DualSense passed through as raw HID (`fx.pad`), network via gvproxy, VM restart on guest reboot, `--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9, everything built in, 4K pages, 16K blob-node alignment, Apple TSO for FEX; uhid, hidraw and `hid-playstation` (with the LED classes it needs) for the passed-through DualSense |
 | `guest/mesa/` | From the pinned Mesa: Venus ICD for aarch64 (Proton, gamescope, zink) and x86_64/i386 (FEX graphics provider); zink GL stack (libgallium, GLX/EGL/GBM) over the stock one in both, with backports in `guest/mesa/patches/` (Mesa 6abefa51: zink rebuilds the pipeline when only the vertex layout changes; without `VK_EXT_vertex_input_dynamic_state`, which Venus on Metal lacks, GL games otherwise draw with stale vertex formats); x86_64 fault reporter for emulated games (`/usr/lib/steamac/x86_64/fault-report.so`) |

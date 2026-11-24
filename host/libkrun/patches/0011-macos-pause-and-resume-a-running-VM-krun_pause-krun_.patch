@@ -45,7 +45,7 @@ The WFx trap's timeout now compares CNTV_CVAL with the virtual counter
  9 files changed, 381 insertions(+), 5 deletions(-)
 
 diff --git a/include/libkrun.h b/include/libkrun.h
-index e9c9c3a..4306e36 100644
+index fb0605fd..6fecc6b6 100644
 --- a/include/libkrun.h
 +++ b/include/libkrun.h
 @@ -900,6 +900,40 @@ int32_t krun_snd_set_volume(uint32_t ctx_id, float gain, bool mute);
@@ -90,7 +90,7 @@ index e9c9c3a..4306e36 100644
   * Configures a map of rlimits to be set in the guest before starting the isolated binary.
   *
 diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
-index 712f98d..8279afb 100644
+index 712f98db..8279afbb 100644
 --- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
 +++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
 @@ -1303,6 +1303,9 @@ struct HostStream {
@@ -166,7 +166,7 @@ index 712f98d..8279afb 100644
              unit.stop();
          }
 diff --git a/src/devices/src/virtio/snd/mod.rs b/src/devices/src/virtio/snd/mod.rs
-index c52f341..c95b407 100644
+index c52f3411..c95b4070 100644
 --- a/src/devices/src/virtio/snd/mod.rs
 +++ b/src/devices/src/virtio/snd/mod.rs
 @@ -29,6 +29,8 @@ pub struct SndControl {
@@ -206,7 +206,7 @@ index c52f341..c95b407 100644
          self.generation.load(Ordering::Acquire)
      }
 diff --git a/src/hvf/src/lib.rs b/src/hvf/src/lib.rs
-index cfc5269..b111a89 100644
+index 2c6d5d06..535c738e 100644
 --- a/src/hvf/src/lib.rs
 +++ b/src/hvf/src/lib.rs
 @@ -123,6 +123,7 @@ pub enum Error {
@@ -225,7 +225,7 @@ index cfc5269..b111a89 100644
              VmCreate => write!(f, "Error creating HVF VM instance"),
          }
      }
-@@ -370,6 +372,8 @@ pub struct HvfVcpu<'a> {
+@@ -371,6 +373,8 @@ pub struct HvfVcpu<'a> {
      pending_mmio_read: Option<MmioRead>,
      pending_advance_pc: bool,
      vtimer_masked: bool,
@@ -234,7 +234,7 @@ index cfc5269..b111a89 100644
      nested_enabled: bool,
  }
  
-@@ -409,6 +413,12 @@ impl HvfVcpu<'_> {
+@@ -410,6 +414,12 @@ impl HvfVcpu<'_> {
  
          let vcpu_exit: &hv_vcpu_exit_t = unsafe { vcpu_exit_ptr.as_mut().unwrap() };
  
@@ -247,7 +247,7 @@ index cfc5269..b111a89 100644
          Ok(Self {
              vcpuid,
              vcpu_exit,
-@@ -417,10 +427,27 @@ impl HvfVcpu<'_> {
+@@ -418,10 +428,27 @@ impl HvfVcpu<'_> {
              pending_mmio_read: None,
              pending_advance_pc: false,
              vtimer_masked: false,
@@ -275,7 +275,7 @@ index cfc5269..b111a89 100644
      pub fn set_initial_state(
          &self,
          ipa_size: u32,
-@@ -797,7 +824,8 @@ impl HvfVcpu<'_> {
+@@ -798,7 +825,8 @@ impl HvfVcpu<'_> {
  
                  // Also CNTV_CVAL & CNTV_CVAL_EL0
                  let cval = self.read_sys_reg(hv_sys_reg_t_HV_SYS_REG_CNTV_CVAL_EL0)?;
@@ -286,10 +286,10 @@ index cfc5269..b111a89 100644
                      return Ok(VcpuExit::WaitForEventExpired);
                  }
 diff --git a/src/libkrun/src/lib.rs b/src/libkrun/src/lib.rs
-index 17f1e72..8fb4f51 100644
+index 0607bce2..97def736 100644
 --- a/src/libkrun/src/lib.rs
 +++ b/src/libkrun/src/lib.rs
-@@ -2157,6 +2157,88 @@ pub extern "C" fn krun_snd_set_buffer_ms(ctx_id: u32, ms: u32) -> i32 {
+@@ -2159,6 +2159,88 @@ pub extern "C" fn krun_snd_set_buffer_ms(ctx_id: u32, ms: u32) -> i32 {
      }
  }
  
@@ -378,7 +378,7 @@ index 17f1e72..8fb4f51 100644
  #[allow(unused_assignments)]
  #[no_mangle]
  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-@@ -3178,6 +3260,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
+@@ -3221,6 +3303,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
      let _display_control = DisplayControlRegistration::new(ctx_id, &mut ctx_cfg);
      #[cfg(feature = "snd")]
      let _snd_control = SndControlRegistration::new(ctx_id, &mut ctx_cfg);
@@ -388,10 +388,10 @@ index 17f1e72..8fb4f51 100644
  
      if ctx_cfg.vmr.external_kernel.is_none()
 diff --git a/src/vmm/src/builder.rs b/src/vmm/src/builder.rs
-index 2daa5a4..b0eee6e 100644
+index 904c88e1..2b4cf15d 100644
 --- a/src/vmm/src/builder.rs
 +++ b/src/vmm/src/builder.rs
-@@ -909,6 +909,11 @@ pub fn build_microvm(
+@@ -926,6 +926,11 @@ pub fn build_microvm(
              Arc::new(Mutex::new(gic))
          };
  
@@ -403,7 +403,7 @@ index 2daa5a4..b0eee6e 100644
          vcpus = create_vcpus_aarch64(
              &vm,
              &vcpu_config,
-@@ -917,6 +922,7 @@ pub fn build_microvm(
+@@ -934,6 +939,7 @@ pub fn build_microvm(
              &exit_evt,
              vcpu_list.clone(),
              vm_resources.nested_enabled,
@@ -411,7 +411,7 @@ index 2daa5a4..b0eee6e 100644
          )
          .map_err(StartMicrovmError::Internal)?;
  
-@@ -1800,6 +1806,7 @@ fn create_vcpus_aarch64(
+@@ -1869,6 +1875,7 @@ fn create_vcpus_aarch64(
  }
  
  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -419,7 +419,7 @@ index 2daa5a4..b0eee6e 100644
  fn create_vcpus_aarch64(
      _vm: &Vm,
      vcpu_config: &VcpuConfig,
-@@ -1808,6 +1815,7 @@ fn create_vcpus_aarch64(
+@@ -1877,6 +1884,7 @@ fn create_vcpus_aarch64(
      exit_evt: &EventFd,
      vcpu_list: Arc<VcpuList>,
      nested_enabled: bool,
@@ -427,7 +427,7 @@ index 2daa5a4..b0eee6e 100644
  ) -> super::Result<Vec<Vcpu>> {
      let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
      let mut boot_senders: HashMap<u64, Sender<u64>> = HashMap::new();
-@@ -1828,6 +1836,7 @@ fn create_vcpus_aarch64(
+@@ -1897,6 +1905,7 @@ fn create_vcpus_aarch64(
              exit_evt.try_clone().map_err(Error::EventFd)?,
              vcpu_list.clone(),
              nested_enabled,
@@ -436,7 +436,7 @@ index 2daa5a4..b0eee6e 100644
          .map_err(Error::Vcpu)?;
  
 diff --git a/src/vmm/src/lib.rs b/src/vmm/src/lib.rs
-index 0f0f8c2..87ee074 100644
+index c73b9e28..4543b36e 100644
 --- a/src/vmm/src/lib.rs
 +++ b/src/vmm/src/lib.rs
 @@ -35,6 +35,8 @@ pub mod worker;
@@ -449,12 +449,12 @@ index 0f0f8c2..87ee074 100644
  use std::fmt::{Display, Formatter};
  use std::io;
 diff --git a/src/vmm/src/macos/vstate.rs b/src/vmm/src/macos/vstate.rs
-index 893e086..6cd0160 100644
+index 6d969a93..fbf373ec 100644
 --- a/src/vmm/src/macos/vstate.rs
 +++ b/src/vmm/src/macos/vstate.rs
-@@ -10,9 +10,10 @@ use std::collections::HashMap;
- use std::fmt::{Display, Formatter};
+@@ -11,9 +11,10 @@ use std::fmt::{Display, Formatter};
  use std::io;
+ use std::ops::Range;
  use std::result;
 -use std::sync::Arc;
 +use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -465,16 +465,16 @@ index 893e086..6cd0160 100644
  
  use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
  use crate::vmm_config::machine_config::CpuFeaturesTemplate;
-@@ -20,7 +21,7 @@ use crate::vmm_config::machine_config::CpuFeaturesTemplate;
+@@ -21,7 +22,7 @@ use crate::vmm_config::machine_config::CpuFeaturesTemplate;
  use arch::ArchMemoryInfo;
  use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
  use devices::legacy::VcpuList;
 -use hvf::{HvfVcpu, HvfVm, VcpuExit, Vcpus};
 +use hvf::{vcpu_request_exit, HvfVcpu, HvfVm, VcpuExit, Vcpus};
  use utils::eventfd::EventFd;
+ use utils::worker_message::RECLAIM_BLOCK_SIZE;
  use vm_memory::{
-     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
-@@ -172,6 +173,161 @@ pub struct VcpuConfig {
+@@ -288,6 +289,161 @@ pub struct VcpuConfig {
      pub cpu_template: Option<CpuFeaturesTemplate>,
  }
  
@@ -636,7 +636,7 @@ index 893e086..6cd0160 100644
  // Using this for easier explicit type-casting to help IDEs interpret the code.
  type VcpuCell = Cell<Option<*const Vcpu>>;
  
-@@ -201,6 +357,7 @@ pub struct Vcpu {
+@@ -317,6 +473,7 @@ pub struct Vcpu {
  
      vcpu_list: Arc<VcpuList>,
      nested_enabled: bool,
@@ -644,7 +644,7 @@ index 893e086..6cd0160 100644
  }
  
  impl Vcpu {
-@@ -276,6 +433,7 @@ impl Vcpu {
+@@ -392,6 +549,7 @@ impl Vcpu {
          exit_evt: EventFd,
          vcpu_list: Arc<VcpuList>,
          nested_enabled: bool,
@@ -652,7 +652,7 @@ index 893e086..6cd0160 100644
      ) -> Result<Self> {
          let (event_sender, event_receiver) = unbounded();
          let (response_sender, response_receiver) = unbounded();
-@@ -296,6 +454,7 @@ impl Vcpu {
+@@ -412,6 +570,7 @@ impl Vcpu {
              response_sender,
              vcpu_list,
              nested_enabled,
@@ -660,7 +660,7 @@ index 893e086..6cd0160 100644
          })
      }
  
-@@ -450,9 +609,13 @@ impl Vcpu {
+@@ -570,9 +729,13 @@ impl Vcpu {
  
          let (wfe_sender, wfe_receiver) = unbounded();
          self.vcpu_list.register(hvf_vcpuid, wfe_sender);
@@ -675,7 +675,7 @@ index 893e086..6cd0160 100644
          } else {
              self.boot_entry_addr
          };
-@@ -461,7 +624,11 @@ impl Vcpu {
+@@ -581,7 +744,11 @@ impl Vcpu {
              .set_initial_state(self.ipa_size, entry_addr, self.fdt_addr)
              .unwrap_or_else(|_| panic!("Can't set HVF vCPU {hvf_vcpuid} initial state"));
  
@@ -687,7 +687,7 @@ index 893e086..6cd0160 100644
              match self.run_emulation(&mut hvf_vcpu) {
                  // Emulation ran successfully, continue.
                  Ok(VcpuEmulation::Handled) => (),
-@@ -496,6 +663,7 @@ impl Vcpu {
+@@ -620,6 +787,7 @@ impl Vcpu {
          timeout: Option<Duration>,
      ) {
          if self.vcpu_list.should_wait(hvf_vcpuid) {
@@ -695,7 +695,7 @@ index 893e086..6cd0160 100644
              if let Some(timeout) = timeout {
                  match receiver.recv_timeout(timeout) {
                      Ok(_) => {}
-@@ -507,6 +675,7 @@ impl Vcpu {
+@@ -631,6 +799,7 @@ impl Vcpu {
              } else {
                  receiver.recv().unwrap();
              }
@@ -704,10 +704,10 @@ index 893e086..6cd0160 100644
      }
  
 diff --git a/src/vmm/src/resources.rs b/src/vmm/src/resources.rs
-index 1719a80..548f4dd 100644
+index c6a93ef7..873cd039 100644
 --- a/src/vmm/src/resources.rs
 +++ b/src/vmm/src/resources.rs
-@@ -182,6 +182,9 @@ pub struct VmResources {
+@@ -184,6 +184,9 @@ pub struct VmResources {
      /// Runtime audio settings (krun_snd_set_*), shared with the virtio-snd backend.
      #[cfg(feature = "snd")]
      pub snd_control: Option<Arc<devices::virtio::SndControl>>,
@@ -717,7 +717,7 @@ index 1719a80..548f4dd 100644
      /// File to send console output.
      pub console_output: Option<PathBuf>,
      /// SMBIOS OEM Strings
-@@ -447,6 +450,8 @@ mod tests {
+@@ -456,6 +459,8 @@ mod tests {
              snd_device: false,
              #[cfg(feature = "snd")]
              snd_control: None,

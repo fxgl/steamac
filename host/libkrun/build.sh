@@ -1,11 +1,11 @@
 #!/bin/sh
-# Build libkrun v1.19.6 + steamac patches for the macOS launcher.
+# Build libkrun v1.19.8 + steamac patches for the macOS launcher.
 #
 #   host/libkrun/build.sh        build/refresh work/out/host/{lib,include}
 #   host/libkrun/build.sh clean  drop the source/build tree (next build is from scratch)
 #
 # Inputs (all pinned):
-#   libkrun        tag v1.19.6 (227b2de6), github.com/libkrun/libkrun
+#   libkrun        tag v1.19.8 (c4d283c2), github.com/libkrun/libkrun
 #   patches/       applied in order (git format-patch series, see each header)
 #   virglrenderer  host/virglrenderer/build.sh output in work/out/host (built first if
 #                  missing); Venus over the steamac MoltenVK (host/moltenvk)
@@ -13,33 +13,33 @@
 #   libepoxy       host/libepoxy/build.sh output (built first if missing)
 #   Homebrew       dtc, xz, lld (init cross-link), pkgconf
 #
-# Features: make GPU=1 BLK=1 NET=1 INPUT=1 SND=1. v1.19.6 has no TIMESYNC make flag (the
+# Features: make GPU=1 BLK=1 NET=1 INPUT=1 SND=1. v1.19.8 has no TIMESYNC make flag (the
 # vsock timesync is always built). SND on macOS uses the CoreAudio virtio-snd backend from
-# patch 0014 (no PipeWire); its debug knob STEAMAC_SND_DUMP=/path.wav records the playback
-# guest PCM before speaker mapping (patch 0017 detects and routes output speakers).
-# GPU also has the wmtr context type (patch 0018, capset 30) for a host executor library; it
+# patch 0009 (no PipeWire); its debug knob STEAMAC_SND_DUMP=/path.wav records the playback
+# guest PCM before speaker mapping (patch 0012 detects and routes output speakers).
+# GPU also has the wmtr context type (patch 0013, capset 30) for a host executor library; it
 # exists only with STEAMAC_WMTR=1 and a loadable STEAMAC_WMTR_LIB, so by default nothing changes.
-# Patch 0019 logs the block id/path and concrete initialization error behind -EINVAL
+# Patch 0014 logs the block id/path and concrete initialization error behind -EINVAL
 # (STEAMAC-15), so inaccessible, locked and malformed disks are distinguishable.
-# Patch 0020 adds a DisplayID timing when the legacy EDID clock cannot hold the
+# Patch 0015 adds a DisplayID timing when the legacy EDID clock cannot hold the
 # requested refresh (e.g. 3840x2160 at 240 Hz); legacy modes retain their base EDID.
-# Patch 0021 adds the required DisplayID 1.3 Display Parameters block while
+# Patch 0016 adds the required DisplayID 1.3 Display Parameters block while
 # preserving the high-refresh timing bytes and legacy EDID output.
-# Patch 0022 distinguishes local virtio-net socket bind failures from proxy connect
+# Patch 0017 distinguishes local virtio-net socket bind failures from proxy connect
 # failures, retaining endpoint paths and errno (STEAMAC-82: eth0 Binding(ENOSPC)
 # was ambiguous). It does not retry or change activation failure behavior.
-# Patch 0023 exposes a non-realtime guest playback tap for Moonlight, before host
+# Patch 0018 exposes a non-realtime guest playback tap for Moonlight, before host
 # volume/mute and physical speaker mapping; unregister waits for pending delivery.
-# Patch 0024 isolates microphone/TCC work from playback and virtio's control queue.
+# Patch 0019 isolates microphone/TCC work from playback and virtio's control queue.
 # Capture START has a 200 ms deadline and returns IO_ERR on device/permission failure;
 # late starts are canceled, STOP never waits for HAL, RELEASE returns queued buffers.
 # test/capture-guest.sh checks repeated capture failure/recovery and surviving playback
 # inside a fresh throwaway VM; unavailable input is an ordinary logged audio error.
-# Patch 0025 bumps imago to 0.2.6 (libkrun/libkrun#980, the open 1.19.8 cherry-picks).
-# imago 0.2.3 shrinks a raw image when a discard or write-zeroes reaches its last
-# byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after home, so this
-# is hardening, not a fix for observed data loss on steamac's layout. It also
-# protects future guest-wide discard and the planned Reclaim Disk Space (#78).
+# Patch 0020 is upstream's 92d19994 from stable-1.19.x (after v1.19.8): without it the
+# gpu unit tests of v1.19.8 do not compile.
+# v1.19.8 already has what patches 0001, 0002, 0004, 0005, 0006 and 0025 of the v1.19.6
+# series added: VIRTIO_GPU_F_BLOB_ALIGNMENT, the SME mask on every vCPU, the virtio-input
+# select/subsel and ABS_INFO fixes, the scanout-area read and imago 0.2.6.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -56,8 +56,8 @@
 set -eu
 
 REPO=https://github.com/libkrun/libkrun.git
-TAG=v1.19.6
-COMMIT=227b2de6ed323fe180e02f871c5f325a90c13cc2
+TAG=v1.19.8
+COMMIT=c4d283c233bc0ae1993c289ec2a1b4da2242f1f8
 RUST_TOOLCHAIN=${RUST_TOOLCHAIN:-1.90.0}
 BREW_DEPS="dtc xz lld pkgconf"
 export MACOSX_DEPLOYMENT_TARGET=15.0 # rustc and cc build scripts inherit this target
@@ -143,7 +143,7 @@ done
 
 # --- install (temp file + rename for every output)
 lib=$out/lib/libkrun.1.dylib
-cp "$src/target/release/libkrun.1.19.6.dylib" "$lib.tmp"
+cp "$src/target/release/libkrun.1.19.8.dylib" "$lib.tmp"
 install_name_tool -id @rpath/libkrun.1.dylib "$lib.tmp"
 codesign --force -s - "$lib.tmp"
 mv -f "$lib.tmp" "$lib"

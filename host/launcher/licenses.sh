@@ -99,9 +99,9 @@ host = 'Contents/Frameworks'
 res = 'Contents/Resources'
 launcher = 'Contents/MacOS/steamac-vm'
 krun = root / 'work/build/host-libkrun/src'
-source('libkrun', '1.19.6', 'Apache-2.0', host + '/libkrun.1.dylib',
-       'https://github.com/libkrun/libkrun/tree/v1.19.6', krun)
-source('libkrun-rutabaga-gfx', '1.19.6', 'BSD-3-Clause', host + '/libkrun.1.dylib',
+source('libkrun', '1.19.8', 'Apache-2.0', host + '/libkrun.1.dylib',
+       'https://github.com/libkrun/libkrun/tree/v1.19.8', krun)
+source('libkrun-rutabaga-gfx', '1.19.8', 'BSD-3-Clause', host + '/libkrun.1.dylib',
        'https://github.com/google/crosvm/tree/main/rutabaga_gfx',
        krun / 'src/rutabaga_gfx', ('ffi/LICENSE',))
 source('virglrenderer', '5d26f605+aafa9bd2', 'MIT', host + '/libvirglrenderer.1.dylib',

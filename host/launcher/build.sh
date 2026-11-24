@@ -12,7 +12,7 @@
 # catalog with the code), reports untranslated keys and compiles both catalogs to
 # work/out/<lang>.lproj (next to the dev binary) and the .app's Resources (bundle.sh).
 #
-# libkrun (v1.19.6 C API, built with GPU=1 INPUT=1 BLK=1 NET=1) is taken from
+# libkrun (v1.19.8 C API, built with GPU=1 INPUT=1 BLK=1 NET=1) is taken from
 # $KRUN_PREFIX (default: work/out/host, produced by host/libkrun). The binary's rpath is
 # @executable_path/host/lib (= work/out/host/lib) first, then $KRUN_PREFIX/lib.
 set -euo pipefail

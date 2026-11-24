@@ -42,7 +42,7 @@ display size through the existing path.
  9 files changed, 559 insertions(+), 18 deletions(-)
 
 diff --git a/include/libkrun.h b/include/libkrun.h
-index 5c62ef0..2271e40 100644
+index e6d44baf..49e8e21b 100644
 --- a/include/libkrun.h
 +++ b/include/libkrun.h
 @@ -726,6 +726,42 @@ int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi)
@@ -89,7 +89,7 @@ index 5c62ef0..2271e40 100644
   * Configure refresh rate for a display
   *
 diff --git a/src/devices/src/virtio/gpu/device.rs b/src/devices/src/virtio/gpu/device.rs
-index 3437c1f..cc0f8d4 100644
+index 6c6396c3..dc6b58bd 100644
 --- a/src/devices/src/virtio/gpu/device.rs
 +++ b/src/devices/src/virtio/gpu/device.rs
 @@ -1,5 +1,6 @@
@@ -177,8 +177,8 @@ index 3437c1f..cc0f8d4 100644
          );
          worker.run();
  
-@@ -260,6 +279,7 @@ mod tests {
-             None,
+@@ -259,6 +278,7 @@ mod tests {
+             0,
              Box::new([]),
              NoopDisplayBackend::into_display_backend(None),
 +            Arc::new(DisplayControl::new(&[])),
@@ -186,7 +186,7 @@ index 3437c1f..cc0f8d4 100644
              crossbeam_channel::unbounded().0,
          )
 diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs
-index 5bc6b17..da58617 100644
+index 5bc6b17d..da586178 100644
 --- a/src/devices/src/virtio/gpu/display.rs
 +++ b/src/devices/src/virtio/gpu/display.rs
 @@ -1,7 +1,11 @@
@@ -522,7 +522,7 @@ index 5bc6b17..da58617 100644
 +    }
 +}
 diff --git a/src/devices/src/virtio/gpu/edid.rs b/src/devices/src/virtio/gpu/edid.rs
-index 218636b..59e5125 100644
+index 218636b2..59e5125e 100644
 --- a/src/devices/src/virtio/gpu/edid.rs
 +++ b/src/devices/src/virtio/gpu/edid.rs
 @@ -25,6 +25,12 @@ const DEFAULT_HORIZONTAL_FRONT_PORCH: u16 = 64;
@@ -601,11 +601,11 @@ index 218636b..59e5125 100644
  
      let width_lsb: u8 = (info.width & 0xFF) as u8;
 diff --git a/src/devices/src/virtio/gpu/virtio_gpu.rs b/src/devices/src/virtio/gpu/virtio_gpu.rs
-index 48e0b7a..ef9e9af 100644
+index 14da270a..337614c1 100644
 --- a/src/devices/src/virtio/gpu/virtio_gpu.rs
 +++ b/src/devices/src/virtio/gpu/virtio_gpu.rs
 @@ -42,7 +42,7 @@ use utils::worker_message::WorkerMessage;
- use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
+ use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap};
  
  use super::{GpuError, Result};
 -use crate::virtio::display::DisplayInfo;
@@ -641,7 +641,7 @@ index 48e0b7a..ef9e9af 100644
      pub fn transfer_write(
          &mut self,
 diff --git a/src/devices/src/virtio/gpu/worker.rs b/src/devices/src/virtio/gpu/worker.rs
-index ae6fe80..88c0502 100644
+index 8c1bc03a..2f50bd58 100644
 --- a/src/devices/src/virtio/gpu/worker.rs
 +++ b/src/devices/src/virtio/gpu/worker.rs
 @@ -22,7 +22,7 @@ use super::protocol::{
@@ -720,10 +720,10 @@ index ae6fe80..88c0502 100644
          &mut self,
          virtio_gpu: &mut VirtioGpu,
 diff --git a/src/libkrun/src/lib.rs b/src/libkrun/src/lib.rs
-index a797fd1..1a485b4 100644
+index cd984678..984a3c10 100644
 --- a/src/libkrun/src/lib.rs
 +++ b/src/libkrun/src/lib.rs
-@@ -65,9 +65,13 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
+@@ -67,9 +67,13 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
  use aws_nitro::enclave::NitroEnclave;
  
  #[cfg(feature = "gpu")]
@@ -738,7 +738,7 @@ index a797fd1..1a485b4 100644
  
  // Value returned on success. We use libc's errors otherwise.
  const KRUN_SUCCESS: i32 = 0;
-@@ -1868,6 +1872,93 @@ pub extern "C" fn krun_display_set_dpi(_ctx_id: u32, _display_id: u32, _dpi: u32
+@@ -1870,6 +1874,93 @@ pub extern "C" fn krun_display_set_dpi(_ctx_id: u32, _display_id: u32, _dpi: u32
      -libc::ENOTSUP
  }
  
@@ -832,7 +832,7 @@ index a797fd1..1a485b4 100644
  #[allow(clippy::missing_safety_doc)]
  #[no_mangle]
  pub unsafe extern "C" fn krun_set_snd_device(ctx_id: u32, enable: bool) -> i32 {
-@@ -2892,10 +2983,16 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
+@@ -2935,10 +3026,16 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
          }
      };
  
@@ -851,10 +851,10 @@ index a797fd1..1a485b4 100644
      if ctx_cfg.vmr.external_kernel.is_none()
          && ctx_cfg.vmr.kernel_bundle.is_none()
 diff --git a/src/vmm/src/builder.rs b/src/vmm/src/builder.rs
-index 72831f1..e43a98b 100644
+index 0281dd04..6ff0f551 100644
 --- a/src/vmm/src/builder.rs
 +++ b/src/vmm/src/builder.rs
-@@ -70,9 +70,9 @@ use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
+@@ -76,9 +76,9 @@ use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
  use arch::{ArchMemoryInfo, InitrdConfig};
  use device_manager::shm::ShmManager;
  #[cfg(feature = "gpu")]
@@ -866,7 +866,7 @@ index 72831f1..e43a98b 100644
  #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
  use devices::virtio::{fs::ExportTable, VirtioShmRegion};
  use flate2::read::GzDecoder;
-@@ -1018,6 +1018,10 @@ pub fn build_microvm(
+@@ -1047,6 +1047,10 @@ pub fn build_microvm(
          let display_backend = vm_resources
              .display_backend
              .unwrap_or_else(|| NoopDisplayBackend::into_display_backend(None));
@@ -877,7 +877,7 @@ index 72831f1..e43a98b 100644
  
          attach_gpu_device(
              &mut vmm,
-@@ -1029,6 +1033,7 @@ pub fn build_microvm(
+@@ -1058,6 +1062,7 @@ pub fn build_microvm(
              vm_resources.gpu_render_server_fd,
              Box::from(&vm_resources.displays[..]),
              display_backend,
@@ -885,7 +885,7 @@ index 72831f1..e43a98b 100644
              #[cfg(target_os = "macos")]
              _sender.clone(),
          )?;
-@@ -2280,6 +2285,7 @@ fn attach_gpu_device(
+@@ -2363,6 +2368,7 @@ fn attach_gpu_device(
      render_server_fd: Option<RawFd>,
      displays: Box<[DisplayInfo]>,
      display_backend: DisplayBackend<'static>,
@@ -893,7 +893,7 @@ index 72831f1..e43a98b 100644
      #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
  ) -> std::result::Result<(), StartMicrovmError> {
      use self::StartMicrovmError::*;
-@@ -2290,6 +2296,7 @@ fn attach_gpu_device(
+@@ -2373,6 +2379,7 @@ fn attach_gpu_device(
              render_server_fd,
              displays,
              display_backend,
@@ -902,7 +902,7 @@ index 72831f1..e43a98b 100644
              map_sender,
          )
 diff --git a/src/vmm/src/resources.rs b/src/vmm/src/resources.rs
-index aa32404..5d22aca 100644
+index 14178486..91cea6d4 100644
 --- a/src/vmm/src/resources.rs
 +++ b/src/vmm/src/resources.rs
 @@ -9,6 +9,8 @@ use std::fs::File;
@@ -914,16 +914,16 @@ index aa32404..5d22aca 100644
  
  #[cfg(feature = "tee")]
  use serde::{Deserialize, Serialize};
-@@ -29,7 +31,7 @@ use crate::vmm_config::net::{NetBuilder, NetworkInterfaceConfig, NetworkInterfac
- use crate::vmm_config::vsock::*;
- use crate::vstate::VcpuConfig;
+@@ -31,7 +33,7 @@ use crate::vstate::VcpuConfig;
+ #[cfg(not(feature = "tee"))]
+ use devices::virtio::balloon::FreePageReportingMode;
  #[cfg(feature = "gpu")]
 -use devices::virtio::display::DisplayInfo;
 +use devices::virtio::display::{DisplayControl, DisplayInfo};
  #[cfg(feature = "tee")]
  use kbs_types::Tee;
  #[cfg(feature = "gpu")]
-@@ -166,6 +168,9 @@ pub struct VmResources {
+@@ -168,6 +170,9 @@ pub struct VmResources {
      pub display_backend: Option<DisplayBackend<'static>>,
      #[cfg(feature = "gpu")]
      pub displays: Vec<DisplayInfo>,
@@ -933,7 +933,7 @@ index aa32404..5d22aca 100644
      #[cfg(feature = "input")]
      pub input_backends: Vec<(
          krun_input::InputConfigBackend<'static>,
-@@ -431,6 +436,8 @@ mod tests {
+@@ -440,6 +445,8 @@ mod tests {
              display_backend: None,
              #[cfg(feature = "gpu")]
              displays: Vec::new(),
@@ -942,5 +942,3 @@ index aa32404..5d22aca 100644
              #[cfg(feature = "input")]
              input_backends: Vec::new(),
              #[cfg(feature = "snd")]
--- 
-2.50.1

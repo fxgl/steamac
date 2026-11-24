@@ -1,5 +1,5 @@
 // swift-tools-version:6.0
-// steamac-vm: AppKit/Metal launcher for libkrun v1.19.6 (C API).
+// steamac-vm: AppKit/Metal launcher for libkrun v1.19.8 (C API).
 // libkrun headers/dylib location is supplied by build.sh (-Xcc -I / -Xlinker -L / rpath).
 import PackageDescription
 

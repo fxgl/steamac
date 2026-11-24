@@ -155,7 +155,7 @@ final class VM {
         setenv("VKR_GPU_BUDGET_MIB", String(o.gpuBudgetMiB), 1)
         OverlayView.vulkanDriver = o.vulkanDriver
         log("gpu: Venus → \(o.vulkanDriver.name), \(o.gpuBudgetMiB) MiB advertised memory budget")
-        // Experimental wmtr context type (libkrun 0018): libkrun reads these when it builds the GPU.
+        // Experimental wmtr context type (libkrun 0013): libkrun reads these when it builds the GPU.
         // The setting (or --wmtr-lib / --no-wmtr) decides, not an inherited environment.
         if let lib = o.wmtrLibrary {
             setenv("STEAMAC_WMTR", "1", 1)
@@ -255,7 +255,7 @@ final class VM {
         log("display: resized to \(width)x\(height) px (\(wmm)×\(hmm) mm, same DPI)")
     }
 
-    /// Press the guest power key (gpio-keys, KEY_RESTART in libkrun 1.19.6's FDT; systemd-logind
+    /// Press the guest power key (gpio-keys, KEY_RESTART in libkrun 1.19.8's FDT; systemd-logind
     /// shuts down and libkrun exits on PSCI SYSTEM_OFF/RESET). Returns false if unavailable.
     @discardableResult
     func requestShutdown() -> Bool {
