@@ -8,7 +8,7 @@
 
 **How:** Settings → General → “When closing the window” → **Suspend** — closing the window then
 suspends the VM instead of shutting it down; or use **FX Steam Launcher → Suspend** (Ctrl+Cmd+S,
-works even when the guest has the keyboard). `krun_pause` (libkrun patch 0016) stops all vCPUs and
+works even when the guest has the keyboard). `krun_pause` (libkrun patch 0011) stops all vCPUs and
 guest audio, the window is hidden, and a ⏸ icon appears in the menu bar: “SteamOS suspended”,
 since when and how much memory is in use, **Resume**, **Shut Down SteamOS**. A suspended VM uses
 no CPU (~0%); the Mac can sleep.

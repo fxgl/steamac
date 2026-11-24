@@ -9,7 +9,7 @@ side above 4095 pixels cannot be described there. Wide displays such as
 5120x1440 were rejected by krun_display_resize, and a larger initial
 size would have been truncated.
 
-Add the DisplayID 1.3 Type I timing from patch 0020 when a side is above
+Add the DisplayID 1.3 Type I timing from patch 0015 when a side is above
 4095. Its 16-bit dimensions hold the full-size preferred mode. Keep
 the largest same-aspect mode that fits in the base DTD for legacy
 readers. Linux also marks the first EDID 1.4 DTD preferred and
@@ -27,7 +27,7 @@ Raise the resize limit to 8192 pixels, the Linux virtio-gpu mode limit
 (XRES_MAX, YRES_MAX). Physical sizes stay at 4095 mm, which the base
 DTD still holds.
 
-Applies after patches 0001-0026 to libkrun v1.19.6 (227b2de6).
+Applies after patches 0001-0021 to libkrun v1.19.8 (c4d283c2).
 ---
  include/libkrun.h                     |  4 +-
  src/devices/src/virtio/gpu/display.rs | 45 ++++++++++++----

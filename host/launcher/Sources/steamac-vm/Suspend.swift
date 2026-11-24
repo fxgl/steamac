@@ -6,7 +6,7 @@ import QuartzCore
 
 /// In-memory suspend of the running VM (Settings > General "When closing the window: Suspend",
 /// menu Suspend / Ctrl+Cmd+S): krun_pause stops every vCPU and the guest's audio (libkrun patch
-/// 0016), the window hides and a menu-bar item offers Resume / Shut Down SteamOS while the app
+/// 0011), the window hides and a menu-bar item offers Resume / Shut Down SteamOS while the app
 /// keeps running (Dock icon). Nothing is written to disk: the guest's memory and the host's GPU
 /// state (virglrenderer, MoltenVK, Metal) cannot be saved, so the suspended state lives only as
 /// long as this process. Resume (Dock icon, the menu-bar item, the app menu, opening the app

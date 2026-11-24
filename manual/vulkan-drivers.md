@@ -134,7 +134,7 @@ The app bundles `libwmtr_host.dylib`; the guest layer carries DXMT's
 example a zero-size layer or a drawable timeout), DXMT skips that frame instead of presenting `nil`, which
 Metal turns into an assertion that ended the VM (STEAMAC-98); a bounded log line records it and rendering
 continues with the next drawable. With the toggle on, the launcher offers
-libkrun's wmtr virtio-gpu context (patch 0018, capset 30) and boots with `steamac.gfx=dxmt`.
+libkrun's wmtr virtio-gpu context (patch 0013, capset 30) and boots with `steamac.gfx=dxmt`.
 The guest's `steam-gfx-path` swaps DXMT into every installed x86-64 Proton and watches for Proton
 installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and restores Proton's
 original files. With the optional ARM64EC payload, `steam-dxmt-arm64ec` prepares a separate

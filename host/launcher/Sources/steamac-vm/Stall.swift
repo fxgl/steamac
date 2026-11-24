@@ -11,7 +11,7 @@ import QuartzCore
 /// Desktop Mode), and both clocks start over after the VM was paused (suspend, guest sleep) or
 /// the Mac slept.
 ///
-/// GPU work = libkrun's krun_gpu_get_activity counters (libkrun patch 0015), sampled every
+/// GPU work = libkrun's krun_gpu_get_activity counters (libkrun patch 0010), sampled every
 /// `tick`: virtio-gpu control-queue commands (SUBMIT_3D, RESOURCE_FLUSH, SET_SCANOUT*, …) and
 /// Venus commands virglrenderer dispatched from its in-process rings (virglrenderer patch 0009).
 /// The idle window starts at the latest of: last GPU work, gate opening (overlay gone, setting

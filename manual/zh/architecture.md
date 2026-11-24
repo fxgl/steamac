@@ -14,7 +14,7 @@
 | `wmtr/` | BSD-3-Clause 的 winemetal 远程调用：客户机 `winemetal.so` 经 virtio-gpu 到达 `libwmtr_host.dylib`（链接 DXMT/LLVM），在虚拟机视图中呈现 CAMetalLayer |
 | `host/libepoxy/` | libepoxy 1.5.10，上游 macOS Meson 选项，为 macOS 15.0 而非拷贝 Homebrew 瓶构建 |
 | `host/virglrenderer/` | virglrenderer UTM `macos-next` + 合并上游主线（venus-protocol 1.1.3）+ LINEAR 修饰符、shm 按宿主内存导入、失败管线桩（virglrenderer 中丢弃绘制）、拒绝缓存重建、延迟 shm 解映射、线程 QoS、运行时打开 Vulkan 驱动（`VKR_VULKAN_DRIVER`） |
-| `host/libkrun/` | libkrun v1.19.6 + 补丁：`VIRTIO_GPU_F_BLOB_ALIGNMENT`（16K）、M4 SME 掩码、无 virgl 的 2D 资源、`SET_SCANOUT_BLOB`、SHM blob 映射、Venus fence 信令、virglrenderer 日志、`krun_display_resize`（运行时改分辨率）、vCPU/GPU 线程 QoS |
+| `host/libkrun/` | libkrun v1.19.8（已含 `VIRTIO_GPU_F_BLOB_ALIGNMENT`（16K）与 M4 SME 掩码）+ 补丁：无 virgl 的 2D 资源、`SET_SCANOUT_BLOB`、SHM blob 映射、Venus fence 信令、virglrenderer 日志、`krun_display_resize`（运行时改分辨率）、vCPU/GPU 线程 QoS |
 | `host/launcher/` | `steamac-vm`（Swift/AppKit）：Metal 窗口（可选 MetalFX 超分辨率）、带开关机进度的“FX STEAM LAUNCHER”覆盖层、客户机分辨率 = 窗口大小（Retina 分辨率下 × 屏幕 backing scale）恒定 DPI（EDID 取自屏幕物理尺寸）、键盘/鼠标/平板、GameController.framework 的客户机 Xbox 360 / DualSense / DualShock 4 手柄带振动或 DualSense 裸 HID 直通（`fx.pad`）、gvproxy 网络、客户机重启则虚拟机重启、`--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9，全编入，4K 页，16K blob 节点对齐，FEX 用 Apple TSO；直通 DualSense 用的 uhid、hidraw 与 `hid-playstation`（含其所需 LED 类） |
 | `guest/mesa/` | 来自锁定的 Mesa：Venus ICD aarch64 版（Proton、gamescope、zink）与 x86_64/i386 版（FEX 图形提供方）；两者中替换原装的 zink GL 栈（libgallium、GLX/EGL/GBM），带 `guest/mesa/patches/` 中的回移植（Mesa 6abefa51：仅顶点布局变化时 zink 也重建管线；Metal 上的 Venus 缺 `VK_EXT_vertex_input_dynamic_state`，否则 GL 游戏会用过时的顶点格式绘制）；模拟游戏 x86_64 fault 上报器（`/usr/lib/steamac/x86_64/fault-report.so`） |

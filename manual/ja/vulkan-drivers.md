@@ -134,7 +134,7 @@ the Mac's Metal)** はデフォルトでオフで、次回起動時に適用さ�
 たとえばサイズ 0 のレイヤーやドローアブルのタイムアウト)、DXMT は `nil` を表示する代わりにそのフレームをスキップします。これは
 Metal によってアサーションとなり、VM を終了させていました (STEAMAC-98)。上限付きのログ行にそれが記録され、レンダリングは
 次のドローアブルで続行されます。トグルがオンの場合、ランチャーは
-libkrun の wmtr virtio-gpu コンテキスト (パッチ 0018、capset 30) を提供し、`steamac.gfx=dxmt` で起動します。
+libkrun の wmtr virtio-gpu コンテキスト (パッチ 0013、capset 30) を提供し、`steamac.gfx=dxmt` で起動します。
 ゲストの `steam-gfx-path` は、インストール済みのすべての x86-64 の Proton に DXMT を組み込み、Proton の
 インストールとアップデートを監視します。トグルをオフにすると `steamac.gfx=vulkan` で起動し、Proton の
 元のファイルを復元します。オプションの ARM64EC ペイロードがある場合、`steam-dxmt-arm64ec` は、インストール済みの **Proton 11.0 (ARM64)** から

@@ -8,7 +8,7 @@
 
 **方法:** Settings → General → “When closing the window” → **Suspend** — ウィンドウを閉じると、
 VM はシャットダウンする代わりにサスペンドします。または **FX Steam Launcher → Suspend** (Ctrl+Cmd+S、
-ゲストがキーボードを使っているときも動作します) を使います。`krun_pause` (libkrun パッチ 0016) がすべての vCPU と
+ゲストがキーボードを使っているときも動作します) を使います。`krun_pause` (libkrun パッチ 0011) がすべての vCPU と
 ゲストの音声を止め、ウィンドウは非表示になり、メニューバーに ⏸ アイコンが表示されます: “SteamOS suspended”、
 いつからか、メモリの使用量、**Resume**、**Shut Down SteamOS**。サスペンド中の VM は
 CPU を使いません (約 0%)。Mac はスリープできます。
