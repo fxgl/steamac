@@ -679,10 +679,10 @@ private struct DisplayTab: View {
                     HStack {
                         Text("Custom size")
                         Spacer()
-                        TextField("W", value: intBinding($settings.windowWidth, 800...4094), format: .number.grouping(.never))
+                        TextField("W", value: intBinding($settings.windowWidth, 800...8192), format: .number.grouping(.never))
                             .frame(width: 64).multilineTextAlignment(.trailing)
                         Text(verbatim: "×")
-                        TextField("H", value: intBinding($settings.windowHeight, 500...4094), format: .number.grouping(.never))
+                        TextField("H", value: intBinding($settings.windowHeight, 500...8192), format: .number.grouping(.never))
                             .frame(width: 64).multilineTextAlignment(.trailing)
                         Text("pt")
                     }

@@ -216,7 +216,7 @@ struct Options {
       --display WxH        initial window size in points (default 1280x800); the guest display follows
                            the window: content size in points = guest pixels, x the screen's backing
                            scale with Settings > Display > Retina resolution (even, min 800x500, max
-                           4094), applied when a resize / fullscreen switch ends
+                           8192), applied when a resize / fullscreen switch ends
       --refresh HZ         EDID refresh rate (default 60)
       --dpi N              EDID pixel density instead of the default physical size (below)
       --display-mm WxH     EDID physical size in millimetres at the initial size (overrides --dpi)

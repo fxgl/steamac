@@ -34,8 +34,9 @@ final class VM {
     /// Boot EDID; its mm-per-pixel is reused for every resize (constant DPI).
     let edid: EdidSize.Result
     private var displaySize: (Int, Int, Int, Int)   // px w, h, mm w, h
-    /// Largest guest display side libkrun's EDID detailed timing can describe.
-    static let maxDisplaySide = 4095
+    /// Largest guest display side: Linux virtio-gpu's mode limit. libkrun advertises sides
+    /// above 4095 (the EDID detailed timing limit) with a DisplayID extension.
+    static let maxDisplaySide = 8192
 
     /// A macOS guest can expose a paravirtual Metal GPU but no usable nested Hypervisor API
     /// (STEAMAC-15: IpaGetMaximum failed before the first guest instruction).

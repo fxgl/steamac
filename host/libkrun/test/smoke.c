@@ -147,8 +147,8 @@ int main(void)
           krun_display_resize(ctx, 0, 1600, 1000, 423, 265), 0);
     check("krun_display_resize(display 1) [no such display]",
           krun_display_resize(ctx, 1, 1600, 1000, 423, 265), -EINVAL);
-    check("krun_display_resize(4096x1000) [too wide]",
-          krun_display_resize(ctx, 0, 4096, 1000, 423, 265), -EINVAL);
+    check("krun_display_resize(8193x1000) [too wide]",
+          krun_display_resize(ctx, 0, 8193, 1000, 423, 265), -EINVAL);
     check("krun_display_resize(unknown ctx)",
           krun_display_resize(ctx + 1000, 0, 1600, 1000, 423, 265), -ENODEV);
     uint64_t ctrl_cmds = 1, ring_cmds = 1;
