@@ -1,0 +1,268 @@
+From ae63ceb028e14405ec3d8df3faf9f26dcd3ff573 Mon Sep 17 00:00:00 2001
+From: Aaron Reisman <aaron@lifeiscontent.net>
+Date: Tue, 24 Nov 2026 22:31:19 +0700
+Subject: [PATCH] virtio-gpu: advertise displays wider than 4095 pixels with
+ DisplayID
+
+The base EDID detailed timing has 12-bit width and height fields, so a
+side above 4095 pixels cannot be described there. Wide displays such as
+5120x1440 were rejected by krun_display_resize, and a larger initial
+size would have been truncated.
+
+Add the DisplayID 1.3 Type I timing from patch 0020 when a side is above
+4095 as well. Its sizes are 16 bits. The base DTD gets the largest mode
+with the same aspect ratio that fits, so legacy readers still get a
+usable mode at the requested refresh rate. Linux sorts preferred modes
+by area, so the full-size DisplayID mode comes first.
+
+Raise the resize limit to 8192 pixels, the Linux virtio-gpu mode limit
+(XRES_MAX, YRES_MAX). Physical sizes stay at 4095 mm, which the base
+DTD still holds.
+
+Applies after patches 0001-0025 to libkrun v1.19.6 (227b2de6).
+---
+ include/libkrun.h                     |  4 +-
+ src/devices/src/virtio/gpu/display.rs | 45 ++++++++++++----
+ src/devices/src/virtio/gpu/edid.rs    | 74 ++++++++++++++++++++++++---
+ 3 files changed, 104 insertions(+), 19 deletions(-)
+
+diff --git a/include/libkrun.h b/include/libkrun.h
+index 3dc3d39..d0bda9a 100644
+--- a/include/libkrun.h
++++ b/include/libkrun.h
+@@ -747,8 +747,8 @@ int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uin
+  * Arguments:
+  *  "ctx_id"      - the configuration context ID.
+  *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+- *  "width"       - new width in pixels, 1..4095 (EDID detailed timing limit)
+- *  "height"      - new height in pixels, 1..4095
++ *  "width"       - new width in pixels, 1..8192 (above 4095: EDID with a DisplayID extension)
++ *  "height"      - new height in pixels, 1..8192
+  *  "width_mm"    - physical width in millimeters, 0..4095 (0: unknown)
+  *  "height_mm"   - physical height in millimeters, 0..4095 (0: unknown)
+  *
+diff --git a/src/devices/src/virtio/gpu/display.rs b/src/devices/src/virtio/gpu/display.rs
+index 598445c..4ba89e4 100644
+--- a/src/devices/src/virtio/gpu/display.rs
++++ b/src/devices/src/virtio/gpu/display.rs
+@@ -82,9 +82,12 @@ impl DisplayInfo {
+     }
+ }
+ 
+-/// The largest width, height (pixels) and physical size (mm) a generated EDID
+-/// can describe: its detailed timing descriptor has 12-bit fields.
+-pub const MAX_RESIZE_DIMENSION: u32 = 4095;
++/// The largest width and height (pixels) of a resize: Linux virtio-gpu's mode
++/// limit (XRES_MAX, YRES_MAX). Sides above 4095 are advertised with DisplayID.
++pub const MAX_RESIZE_DIMENSION: u32 = 8192;
++/// The largest physical width and height (mm) a generated EDID can describe:
++/// its detailed timing descriptor has 12-bit fields.
++pub const MAX_RESIZE_MILLIMETERS: u32 = 4095;
+ 
+ /// A display size change requested at runtime (krun_display_resize).
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -98,7 +101,7 @@ pub struct DisplayResize {
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum DisplayResizeError {
+-    /// Zero size, or larger than MAX_RESIZE_DIMENSION.
++    /// Zero size, or larger than MAX_RESIZE_DIMENSION or MAX_RESIZE_MILLIMETERS.
+     InvalidSize,
+     /// No display with this id.
+     InvalidDisplay,
+@@ -112,8 +115,8 @@ impl DisplayResize {
+         let fits = |v: u32| (1..=MAX_RESIZE_DIMENSION).contains(&v);
+         if !fits(self.width)
+             || !fits(self.height)
+-            || u32::from(self.width_mm) > MAX_RESIZE_DIMENSION
+-            || u32::from(self.height_mm) > MAX_RESIZE_DIMENSION
++            || u32::from(self.width_mm) > MAX_RESIZE_MILLIMETERS
++            || u32::from(self.height_mm) > MAX_RESIZE_MILLIMETERS
+         {
+             return Err(DisplayResizeError::InvalidSize);
+         }
+@@ -309,9 +312,14 @@ mod tests {
+             let t = &edid[151..171];
+             let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
+             let dimension = |i| u32::from(u16::from_le_bytes([t[i], t[i + 1]])) + 1;
+-            assert_eq!((dimension(4), dimension(12)), (width, height));
+-            f64::from(clock) * 10_000.0
+-                / f64::from((width + dimension(6)) * (height + dimension(14)))
++            let (w, h) = (dimension(4), dimension(12));
++            // The base DTD describes the same mode unless a side exceeds its 12 bits.
++            if w <= 4095 && h <= 4095 {
++                assert_eq!((w, h), (width, height));
++            }
++            let refresh =
++                f64::from(clock) * 10_000.0 / f64::from((w + dimension(6)) * (h + dimension(14)));
++            return (w, h, refresh, width_mm, height_mm);
+         } else {
+             clock_hz / f64::from((width + hblank) * (height + vblank))
+         };
+@@ -362,6 +370,21 @@ mod tests {
+         assert!((hz - 60.0).abs() < 0.01, "{hz} Hz");
+     }
+ 
++    #[test]
++    fn resize_to_wide_modes_advertises_the_full_size() {
++        let mut display = DisplayInfo::new(1920, 1080);
++        for (w, h, wmm, hmm) in [(5120, 1440, 1196, 336), (8192, 8192, 600, 600)] {
++            assert_eq!(display.resize(&resize(w, h, wmm, hmm)), Ok(true));
++            let edid = display.edid_bytes();
++            assert_eq!(edid.len(), 256);
++            let (pw, ph, hz, pwmm, phmm) = preferred_mode(&edid);
++            assert_eq!((pw, ph, pwmm, phmm), (w, h, wmm, hmm));
++            assert!((hz - 60.0).abs() < 0.5, "{w}x{h}: {hz} Hz");
++        }
++        assert_eq!(display.resize(&resize(1920, 1080, 531, 299)), Ok(true));
++        assert_eq!(display.edid_bytes().len(), 128);
++    }
++
+     #[test]
+     fn resize_transitions_between_legacy_and_displayid() {
+         let mut display = DisplayInfo::new(1920, 1080);
+@@ -387,8 +410,10 @@ mod tests {
+         for bad in [
+             resize(0, 800, 339, 212),
+             resize(1280, 0, 339, 212),
+-            resize(4096, 800, 339, 212),
++            resize(8193, 800, 339, 212),
++            resize(1280, 8193, 339, 212),
+             resize(1280, 800, 4096, 212),
++            resize(1280, 800, 339, 4096),
+         ] {
+             assert_eq!(display.resize(&bad), Err(DisplayResizeError::InvalidSize));
+         }
+diff --git a/src/devices/src/virtio/gpu/edid.rs b/src/devices/src/virtio/gpu/edid.rs
+index a280de4..ba69461 100644
+--- a/src/devices/src/virtio/gpu/edid.rs
++++ b/src/devices/src/virtio/gpu/edid.rs
+@@ -32,6 +32,8 @@ const REDUCED_HORIZONTAL_FRONT_PORCH: u16 = 48;
+ const REDUCED_HORIZONTAL_SYNC_PULSE: u16 = 32;
+ // Largest pixel clock (10 kHz units) the detailed timing holds, rounded down to 100 kHz.
+ const MAX_PIXEL_CLOCK: u64 = 65530;
++// Largest width or height the detailed timing holds (12-bit fields).
++const MAX_DTD_DIMENSION: u32 = 4095;
+ const MILLIMETERS_PER_INCH: f32 = 25.4;
+ 
+ #[derive(Copy, Clone)]
+@@ -100,6 +102,23 @@ impl EdidInfo {
+         self.wanted_pixel_clock().min(MAX_PIXEL_CLOCK) as u16
+     }
+ 
++    /// The mode the base EDID's detailed timing describes. A side above its 12-bit
++    /// fields gets the largest mode with the same aspect ratio that fits; the
++    /// DisplayID extension advertises the requested size.
++    fn legacy_mode(&self) -> Self {
++        let long = self.width.max(self.height);
++        if long <= MAX_DTD_DIMENSION {
++            return *self;
++        }
++        let fit =
++            |v: u32| (u64::from(v) * u64::from(MAX_DTD_DIMENSION) / u64::from(long)).max(1) as u32;
++        Self {
++            width: fit(self.width),
++            height: fit(self.height),
++            ..*self
++        }
++    }
++
+     pub fn width_centimeters(&self) -> u8 {
+         (self.width_millimeters / 10).min(u8::MAX.into()) as u8
+     }
+@@ -109,7 +128,10 @@ impl EdidInfo {
+     }
+ 
+     pub fn bytes(self) -> Box<[u8]> {
+-        let extended = self.wanted_pixel_clock() > MAX_PIXEL_CLOCK;
++        let legacy = self.legacy_mode();
++        let extended = self.wanted_pixel_clock() > MAX_PIXEL_CLOCK
++            || legacy.width != self.width
++            || legacy.height != self.height;
+         let length = EDID_DATA_LENGTH * if extended { 2 } else { 1 };
+         let mut edid_box: Box<[u8]> = vec![0; length].into_boxed_slice();
+         let edid = &mut edid_box[..];
+@@ -117,11 +139,11 @@ impl EdidInfo {
+         populate_header(edid);
+         populate_edid_version(edid);
+         populate_size(edid, &self);
+-        populate_standard_timings(edid, &self);
++        populate_standard_timings(edid, &legacy);
+ 
+         // 4 available descriptor blocks
+         let block0 = &mut edid[54..72];
+-        populate_detailed_timing(block0, &self);
++        populate_detailed_timing(block0, &legacy);
+ 
+         let block1 = &mut edid[72..90];
+         populate_display_name(block1);
+@@ -140,7 +162,7 @@ impl EdidInfo {
+ }
+ 
+ // DisplayID 1.3 Type I timing, adapted from ChromiumOS crosvm.
+-// Unlike the base EDID DTD, this supports a 24-bit pixel clock.
++// Unlike the base EDID DTD, this supports a 24-bit pixel clock and 16-bit sizes.
+ fn populate_displayid_extension(ext: &mut [u8], info: &EdidInfo) {
+     assert_eq!(ext.len(), EDID_DATA_LENGTH);
+ 
+@@ -519,9 +541,10 @@ mod tests {
+     #[test]
+     fn extension_starts_above_legacy_clock_limit() {
+         let mut info = EdidInfo::new(3840, 2160, &EdidParams::default());
+-        // Isolate the rounded clock boundary from the blanking selection.
+-        info.width = 6553;
+-        info.height = 1000;
++        // Isolate the rounded clock boundary from the blanking selection, with
++        // both sides inside the base DTD's 12-bit fields.
++        info.width = 4093;
++        info.height = 1601;
+         info.horizontal_blanking = 0;
+         info.vertical_blanking = 0;
+         info.refresh_rate = 100;
+@@ -536,6 +559,43 @@ mod tests {
+         checksums(&extended);
+     }
+ 
++    #[test]
++    fn wide_modes_use_displayid_with_a_legacy_fallback() {
++        let hi = |lsb: u8, msb: u8| u32::from(lsb) | (u32::from(msb) << 8);
++        for (width, height, fallback) in [
++            (5120, 1440, (4095, 1151)),
++            (4096, 2160, (4095, 2159)),
++            (1440, 5120, (1151, 4095)),
++            (7680, 2160, (4095, 1151)),
++        ] {
++            let edid = EdidInfo::new(width, height, &EdidParams::default()).bytes();
++            assert_eq!(edid.len(), 256, "{width}x{height}");
++            checksums(&edid);
++            let t = &edid[151..171];
++            let clock = (u32::from(t[0]) | (u32::from(t[1]) << 8) | (u32::from(t[2]) << 16)) + 1;
++            let dimension = |i| u32::from(u16::from_le_bytes([t[i], t[i + 1]])) + 1;
++            assert_eq!((dimension(4), dimension(12)), (width, height));
++            assert_eq!(t[3], 0x88);
++            let refresh = f64::from(clock) * 10_000.0
++                / f64::from((width + dimension(6)) * (height + dimension(14)));
++            assert!(
++                (refresh - 60.0).abs() < 0.5,
++                "{width}x{height}: {refresh} Hz"
++            );
++            // The base DTD keeps the aspect ratio and the refresh at a size it can hold.
++            let dtd = &edid[54..72];
++            let (w, h) = (hi(dtd[2], dtd[4] >> 4), hi(dtd[5], dtd[7] >> 4));
++            assert_eq!((w, h), fallback, "{width}x{height}");
++            let clock = f64::from(u16::from_le_bytes([dtd[0], dtd[1]])) * 10_000.0;
++            let refresh =
++                clock / f64::from((w + hi(dtd[3], dtd[4] & 0xf)) * (h + hi(dtd[6], dtd[7] & 0xf)));
++            assert!(
++                (refresh - 60.0).abs() < 0.5,
++                "{width}x{height} fallback: {refresh} Hz"
++            );
++        }
++    }
++
+     #[test]
+     fn displayid_clock_saturates_without_wrapping() {
+         let params = EdidParams {
+-- 
+2.54.0 (Apple Git-157)
+

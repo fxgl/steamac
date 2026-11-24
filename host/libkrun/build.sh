@@ -43,6 +43,9 @@
 # Patch 0026 replaces CaptureWorker's 1-slot sync_channel with a Mutex+Condvar
 # mailbox so repeated STOP/RELEASE/PREPARE stops coalesce instead of failing the
 # following START with "capture worker is busy" while AudioOutputUnitStop runs.
+# Patch 0026 also adds the DisplayID timing when a side is above 4095 pixels, the base
+# EDID's 12-bit limit (e.g. 5120x1440, #112). The base DTD keeps the largest mode with
+# the same aspect ratio. Resizes accept up to 8192 pixels, Linux virtio-gpu's mode limit.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
