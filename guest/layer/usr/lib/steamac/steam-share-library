@@ -52,8 +52,16 @@ def vdf_quote(value):
 
 def vdf_entries(text):
     """Scalar spans and block closing offsets, like the other Steam VDF hooks."""
-    tokens = [m for m in re.finditer(r'//[^\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+', text)
-              if not m[0].startswith("//")]
+    tokens, end = [], 0
+    for m in re.finditer(r'//[^\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+', text):
+        # finditer skips unmatched quotes. Never rewrite a partially tokenized file.
+        if text[end:m.start()].strip():
+            raise ValueError("invalid VDF token")
+        end = m.end()
+        if not m[0].startswith("//"):
+            tokens.append(m)
+    if text[end:].strip():
+        raise ValueError("invalid VDF token")
     values, blocks, seen, stack = {}, {}, set(), []
     i = 0
     while i < len(tokens):
