@@ -87,14 +87,16 @@ struct GameRecommendation: Decodable {
     struct Response: Decodable { let recommended: GameRecommendation? }
 }
 
-/// Lifetime is one Games tab opening; failed lookups are quiet and are not retried while open.
+/// Lifetime is one Games tab opening. A lookup sends the appid and this Mac's limits to the
+/// statistics service, so it runs only when the player asks for it (Get Recommendation), never
+/// on its own; a failed lookup can be asked for again.
 final class GameRecommendations: ObservableObject {
     enum State { case loading, unavailable, found(GameRecommendation) }
     @Published private(set) var rows: [Int: State] = [:]
     private var generation = UUID()
     func reset() { generation = UUID(); rows = [:] }
     func fetch(_ appid: Int) {
-        guard rows[appid] == nil else { return }
+        if case .loading = rows[appid] { return }
         guard let base = ProcessInfo.processInfo.environment[GameStatsStore.urlEnv].flatMap(URL.init(string:))
                 ?? (Bundle.main.object(forInfoDictionaryKey: "SteamacGameStatsURL") as? String).flatMap(URL.init(string:)),
               var c = URLComponents(url: base.appendingPathComponent("v1/games/\(appid)"), resolvingAgainstBaseURL: false) else {
