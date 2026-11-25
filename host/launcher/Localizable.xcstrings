@@ -3251,6 +3251,22 @@
         }
       }
     },
+    "Get Recommendation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Получить рекомендацию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "获取推荐"
+          }
+        }
+      }
+    },
     "GitHub's request limit for this network is reached; try again later." : {
       "localizations" : {
         "ru" : {
@@ -6130,6 +6146,22 @@
         }
       }
     },
+    "Sends this game's Steam App ID and this Mac's RAM, GPU core and performance core counts to the FX Steam Launcher statistics service. Nothing is sent until you click." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет App ID игры в Steam и число ядер GPU, производительных ядер и объём ОЗУ этого Mac в сервис статистики FX Steam Launcher. Пока вы не нажмёте, ничего не отправляется."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将此游戏的 Steam App ID 以及本机的内存大小、GPU 核心数和性能核心数发送到 FX Steam Launcher 统计服务。点击之前不会发送任何内容。"
+          }
+        }
+      }
+    },
     "Session started" : {
       "localizations" : {
         "ru" : {
@@ -8231,6 +8263,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 SteamOS 内修剪空闲块，以减小稀疏磁盘映像的已分配大小。游戏和存档不会被删除，容量不变。仅当映像位于 APFS 上时有效；克隆和快照可能仍在 Mac 上占用空间。当前已分配 %@。这可能需要几分钟。"
+          }
+        }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试"
           }
         }
       }

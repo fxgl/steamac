@@ -79,8 +79,11 @@ means the profile adds no overrides (the field no longer shows a `VKD3D_CONFIG=d
 like a forced value, STEAMAC-8X). The Metal Performance HUD shows the Mac's drawable size, which can
 differ from the game's rendering resolution.
 
-**Recommended: … — Apply** fetches a profile from the statistics service using this Mac's **My Mac**
-limits (GPU cores, RAM and performance cores no greater than this Mac's). Configurations are ranked
+**Get Recommendation** fetches a profile from the statistics service using this Mac's **My Mac**
+limits (GPU cores, RAM and performance cores no greater than this Mac's) and shows it as
+**Recommended: … — Apply**. Only that click sends anything (the game's App ID and those three
+numbers, as the caption under the button says), independent of **Share game statistics**;
+opening the tab sends nothing. Configurations are ranked
 by `(runs well + 0.5 × playable with issues) / all ratings`, then higher launch success and fewer
 early exits; at least two distinct installs are required (details in [Game statistics](privacy-and-updates.md#game-statistics)).
 Recommendations are never automatic: only **Apply** changes the profile.

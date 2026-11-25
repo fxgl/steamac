@@ -59,13 +59,7 @@ struct GamesTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .onAppear {
-            recommendations.reset()
-            for game in games { recommendations.fetch(game.appid) }
-        }
-        .onChange(of: games.map(\.appid)) { _, ids in
-            for id in ids { recommendations.fetch(id) }
-        }
+        .onAppear { recommendations.reset() }
     }
 }
 
@@ -118,7 +112,7 @@ private struct GameProfileRow: View {
             }
             recommendation
         }
-        .onAppear { env = profile.env; recommendations.fetch(appid) }
+        .onAppear { env = profile.env }
         .alert("Allow DXMT?", isPresented: $showSecurity) {
             Button("Allow DXMT") { settings.wmtr = true }
             Button("Cancel", role: .cancel) {}
@@ -137,9 +131,22 @@ private struct GameProfileRow: View {
                 }.disabled(!row.usable)
             }
         case .loading: Text("Recommended: loading…").font(.caption).foregroundStyle(.secondary)
-        default: Text("Recommended: unavailable").font(.caption).foregroundStyle(.secondary)
+        case .unavailable:
+            HStack {
+                Text("Recommended: unavailable").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Try Again") { recommendations.fetch(appid) }.help(Self.lookupDisclosure)
+            }
+        case nil:
+            VStack(alignment: .leading, spacing: 2) {
+                Button("Get Recommendation") { recommendations.fetch(appid) }.help(Self.lookupDisclosure)
+                Text(verbatim: Self.lookupDisclosure)
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
+
+    static let lookupDisclosure = String(localized: "Sends this game's Steam App ID and this Mac's RAM, GPU core and performance core counts to the FX Steam Launcher statistics service. Nothing is sent until you click.")
 }
 
 private struct GameStatsWhatIsSent: View {
