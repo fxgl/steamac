@@ -1,66 +1,96 @@
 // Public compatibility highlights are derived from aggregate reports, never individual sessions.
+// Landing page: the supported games as a ranked, paginated list.
 (function () {
   "use strict";
-  const grid = document.getElementById("supported-games-grid");
+  const L = window.steamacList;
+  const list = document.getElementById("supported-games-grid");
+  const nav = document.getElementById("supported-games-pager");
   const empty = document.getElementById("supported-games-empty");
   const error = document.getElementById("supported-games-error");
   const all = document.getElementById("supported-games-all");
-  const words = {
-    well: ["Runs well", "Работает хорошо", "运行良好"],
-    playable: ["Playable", "Можно играть", "可游玩"],
-    fps: ["median FPS", "медиана FPS", "FPS 中位数"],
-    chips: ["Tested on", "Проверено на", "已测试芯片"],
-    sessions: ["Sessions", "Сеансы", "会话"],
-  };
-  let games = null;
-  function translated(key) {
-    const fragment = document.createDocumentFragment();
-    ["en", "ru", "zh"].forEach((lang, index) => {
-      const span = document.createElement("span");
-      span.lang = lang; span.textContent = words[key][index]; fragment.append(span);
-    });
-    return fragment;
-  }
+  const PER_PAGE = 6, MAX = 30;   // the full list lives on games.html
+  const { text, tr } = L.translator({
+    well: ["Runs well", "Funciona bien", "Работает хорошо", "运行良好"],
+    playable: ["Playable", "Jugable", "Можно играть", "可游玩"],
+    fps: ["median FPS", "FPS mediana", "медиана FPS", "FPS 中位数"],
+    chips: ["Tested on", "Probado en", "Проверено на", "已测试芯片"],
+    sessions: ["sessions", "sesiones", "сеансов", "次会话"],
+    prev: ["Previous page", "Página anterior", "Предыдущая страница", "上一页"],
+    next: ["Next page", "Página siguiente", "Следующая страница", "下一页"],
+  });
+  let games = null, page = 1;
+
   function totals(game) {
-    const ratings = game.ratings;
-    const positive = ratings.well + ratings.issues;
-    const negative = ratings.unplayable + ratings.no_start;
+    const r = game.ratings;
+    const positive = r.well + r.issues, negative = r.unplayable + r.no_start;
     return { positive, negative, total: positive + negative };
   }
-  function render() {
-    if (games === null) return;
-    const supported = games.filter((game) => game.launch_rate > 0 && totals(game).positive >= totals(game).negative)
-      .sort((a, b) => b.sessions - a.sessions || a.appid - b.appid).slice(0, 12);
-    grid.replaceChildren();
-    for (const game of supported) {
-      const ratings = totals(game);
-      const well = ratings.total ? game.ratings.well > ratings.total / 2 : game.launch_rate >= 0.9;
-      const card = document.createElement("a"), name = document.createElement("h4"), badge = document.createElement("span");
-      card.className = "card supported-game"; card.href = window.steamacStats.gamesURL(game.appid);
-      name.textContent = game.game || `App ${game.appid}`;
-      badge.className = `supported-badge${well ? " supported-well" : ""}`; badge.append(translated(well ? "well" : "playable"));
-      const fps = document.createElement("p"), value = document.createElement("strong");
-      value.textContent = game.fps_avg_median === null ? "—" : game.fps_avg_median.toLocaleString(document.documentElement.lang, { maximumFractionDigits: 1 });
-      fps.append(value, " ", translated("fps"));
-      const chips = document.createElement("p");
-      const short = game.chips.slice(0, 3).map((chip) => chip.replace(/^Apple /, "")).join(", ") || "—";
-      chips.append(translated("chips"), `: ${short}${game.chips.length > 3 ? ` +${game.chips.length - 3}` : ""}`);
-      chips.title = game.chips.join(", ");
-      const sessions = document.createElement("p");
-      sessions.append(translated("sessions"), `: ${game.sessions.toLocaleString(document.documentElement.lang)}`);
-      card.append(name, badge, fps, chips, sessions); grid.append(card);
-    }
-    grid.hidden = !supported.length; empty.hidden = Boolean(supported.length); error.hidden = true;
+  function row(game, rank) {
+    const ratings = totals(game);
+    const well = ratings.total ? game.ratings.well > ratings.total / 2 : game.launch_rate >= 0.9;
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.className = "game-row";
+    a.href = window.steamacStats.gamesURL(game.appid);
+
+    const rankEl = document.createElement("span");
+    rankEl.className = "game-rank"; rankEl.textContent = rank;
+
+    const name = document.createElement("span"), title = document.createElement("b"), meta = document.createElement("span");
+    name.className = "game-name"; title.textContent = L.gameName(game); meta.className = "game-meta";
+    const badge = document.createElement("span");
+    badge.className = `supported-badge${well ? " supported-well" : ""}`; badge.append(tr(well ? "well" : "playable"));
+    const chips = document.createElement("span");
+    const short = game.chips.slice(0, 3).map((c) => c.replace(/^Apple /, "")).join(", ") || "—";
+    chips.append(tr("chips"), ` ${short}${game.chips.length > 3 ? ` +${game.chips.length - 3}` : ""}`);
+    chips.title = game.chips.join(", ");
+    meta.append(badge, chips); name.append(title, meta);
+
+    const fps = document.createElement("span"), value = document.createElement("strong"), unit = document.createElement("small");
+    fps.className = "game-fps";
+    value.textContent = L.number(game.fps_avg_median, 1); unit.append(tr("fps")); value.append(unit);
+    const bar = document.createElement("span"), fill = document.createElement("span");
+    bar.className = "fps-bar"; bar.setAttribute("aria-hidden", "true");
+    fill.style.width = `${Math.min(100, ((game.fps_avg_median || 0) / 60) * 100)}%`;
+    bar.append(fill); fps.append(value, bar);
+
+    const sessions = document.createElement("span"), count = document.createElement("b");
+    sessions.className = "game-sessions"; count.textContent = L.number(game.sessions);
+    sessions.append(count, tr("sessions"));
+
+    a.append(rankEl, L.art(game), name, fps, sessions);
+    li.append(a);
+    return li;
   }
-  window.addEventListener("langchange", render);
+  function render(animate) {
+    if (games === null) return;
+    const supported = games.filter((g) => g.launch_rate > 0 && totals(g).positive >= totals(g).negative)
+      .sort((a, b) => b.sessions - a.sessions || a.appid - b.appid).slice(0, MAX);
+    const pages = Math.max(1, Math.ceil(supported.length / PER_PAGE));
+    page = Math.min(Math.max(1, page), pages);
+    const start = (page - 1) * PER_PAGE, shown = supported.slice(start, start + PER_PAGE);
+    list.replaceChildren(...shown.map((g, i) => row(g, start + i + 1)));
+    L.pager(nav, {
+      page, pages, total: supported.length, from: start + 1, to: start + shown.length,
+      labels: { prev: text("prev"), next: text("next") },
+      onChange: (p) => { page = p; render(true); },
+    });
+    list.hidden = !supported.length; empty.hidden = Boolean(supported.length); error.hidden = true;
+    if (animate) L.reveal([...list.querySelectorAll(".game-row")]);
+  }
+  window.addEventListener("langchange", () => render(false));
   (async () => {
     try {
       all.href = window.steamacStats.gamesURL();
       const response = await fetch(`${window.steamacStats.baseURL()}/v1/games`);
       if (!response.ok) throw new Error("Statistics unavailable");
-      games = (await response.json()).games; render();
+      games = (await response.json()).games;
+      render(false);
+      // Animate the first page when it scrolls into view.
+      const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { io.disconnect(); L.reveal([...list.querySelectorAll(".game-row")]); } }, { rootMargin: "0px 0px -10% 0px" });
+      io.observe(list);
     } catch {
-      grid.hidden = true; empty.hidden = true; error.hidden = false;
+      list.hidden = true; nav.hidden = true; empty.hidden = true; error.hidden = false;
     }
   })();
 })();
