@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build everything steamac needs, in dependency order. Each step is idempotent and can be
-# re-run on its own (see README.md). Needs: macOS 15+ on Apple silicon, Xcode, Homebrew,
+# re-run on its own (see manual/building.md). Needs: macOS 15+ on Apple silicon, Xcode, Homebrew,
 # rustup, OrbStack (or another Docker with arm64 + privileged containers).
 #
 #   ./build.sh            host stack, guest kernel, guest Venus Mesa, disk image
