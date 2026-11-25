@@ -139,6 +139,18 @@ class ShareLibraryTests(unittest.TestCase):
         self.assertEqual(values[("libraryfolders", "1", "path")][0], str(library))
         self.assertTrue(changed.endswith('} // retained\n'))
 
+    def test_unterminated_quotes_leave_list_and_marker_alone(self):
+        for bad in [EXISTING + '"', '"libraryfolders" { "0" "/internal" " }']:
+            with self.subTest(text=bad):
+                with self.assertRaises(ValueError):
+                    share.add_library(bad, self.library, self.root)
+                self.write_config(bad)
+                with self.assertRaises(ValueError):
+                    share.register_library(self.root, self.mount)
+                self.assertEqual(self.config.read_text(), bad)
+                self.assertFalse(self.marker.exists())
+                self.assertEqual(list(self.mount.iterdir()), [])
+
     def test_entrypoint_errors_do_not_block_steam(self):
         result = subprocess.run([sys.executable, str(SCRIPT)], env={**os.environ, "STEAMAC_CMDLINE": str(self.mount / "absent")}, capture_output=True)
         self.assertEqual(result.returncode, 0)
