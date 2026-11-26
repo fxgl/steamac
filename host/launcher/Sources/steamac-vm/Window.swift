@@ -75,6 +75,12 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Last reported presentation state; log changes, not every mouse motion / wmtr present.
     private var lastCursorPresentation: (captured: Bool, covered: Bool, hidden: Bool, overlay: Bool)?
     private var relRemainder = (0.0, 0.0)
+    // Captured relative motion is summed and sent at most every relInterval: high-rate mice (3-6k
+    // events/s measured on a swipe) flood Wine's raw input under FEX and stall the game's frames.
+    private var relPending: (Int32, Int32) = (0, 0)
+    private var relLastSent: CFTimeInterval = 0
+    private var relFlushScheduled = false
+    private static let relInterval: CFTimeInterval = 0.004
     /// Auto mode: where the guest cursor is (guest pixels); nil = unknown, re-anchor first.
     private var guestCursor: (Int, Int)?
     private var lastPointerMotion = Date.distantPast
@@ -873,6 +879,7 @@ extension WindowController {
         releaseButtons()
         captured = true
         relRemainder = (0, 0)
+        relPending = (0, 0)
         CGAssociateMouseAndMouseCursorPosition(0)
         NSCursor.hide()
         refreshHostCursor()
@@ -896,6 +903,7 @@ extension WindowController {
     }
 
     private func releaseButtons() {
+        flushRelative()
         for b in tabletButtons { inputs?.tablet.send([(EV.KEY, b, 0)]) }
         for b in mouseButtons { inputs?.mouse.send([(EV.KEY, b, 0)]) }
         tabletButtons.removeAll()
@@ -1051,14 +1059,30 @@ extension WindowController {
     /// Captured: raw relative motion, one count per host point (also with Retina resolution: games
     /// keep their mouse sensitivity; no acceleration in gamescope).
     func moveRelative(dx: Double, dy: Double) {
-        guard let inputs else { return }
+        guard inputs != nil else { return }
         let fx = dx + relRemainder.0
         let fy = dy + relRemainder.1
         let ix = Int32(fx.rounded(.towardZero)), iy = Int32(fy.rounded(.towardZero))
         relRemainder = (fx - Double(ix), fy - Double(iy))
+        relPending = (relPending.0 &+ ix, relPending.1 &+ iy)
+        let wait = relLastSent + Self.relInterval - CACurrentMediaTime()
+        if wait <= 0 { flushRelative(); return }
+        guard !relFlushScheduled else { return }
+        relFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            self?.relFlushScheduled = false
+            self?.flushRelative()
+        }
+    }
+
+    /// Send the summed captured motion now (before buttons and wheel, so clicks land where aimed).
+    func flushRelative() {
+        guard let inputs, relPending != (0, 0) else { return }
         var ev: [(UInt16, UInt16, Int32)] = []
-        if ix != 0 { ev.append((EV.REL, REL.X, ix)) }
-        if iy != 0 { ev.append((EV.REL, REL.Y, iy)) }
+        if relPending.0 != 0 { ev.append((EV.REL, REL.X, relPending.0)) }
+        if relPending.1 != 0 { ev.append((EV.REL, REL.Y, relPending.1)) }
+        relPending = (0, 0)
+        relLastSent = CACurrentMediaTime()
         inputs.mouse.send(ev)
     }
 
@@ -1093,6 +1117,7 @@ extension WindowController {
         if !down && swallowedButtons.remove(b) != nil { return }
         if down { userInput("click") }
         if captured {
+            flushRelative()
             if down ? mouseButtons.insert(b).inserted : mouseButtons.remove(b) != nil {
                 inputs.mouse.send([(EV.KEY, b, down ? 1 : 0)])
             }
@@ -1139,6 +1164,7 @@ extension WindowController {
     /// REL_*_HI_RES plus whole REL_WHEEL/REL_HWHEEL notches.
     func sendWheel(hiResY: Double, hiResX: Double) {
         guard let inputs else { return }
+        flushRelative()
         let vy = hiResY + wheelHiRemainder.0
         let vx = hiResX + wheelHiRemainder.1
         let hy = Int32(vy.rounded(.towardZero)), hx = Int32(vx.rounded(.towardZero))
