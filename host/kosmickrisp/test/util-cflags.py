@@ -6,14 +6,18 @@ Usage: util-cflags.py <mesa build dir> [source path suffix]"""
 import json
 import shlex
 import sys
+from os.path import basename
 
 build = sys.argv[1]
 source = sys.argv[2] if len(sys.argv) > 2 else 'src/util/u_queue.c'
 for entry in json.load(open(build + '/compile_commands.json')):
     if not entry['file'].endswith(source):
         continue
+    command = shlex.split(entry['command'])
+    if basename(command[0]) in ('ccache', 'sccache'):
+        command = command[1:]
     flags, skip = [], False
-    for arg in shlex.split(entry['command'])[1:]:
+    for arg in command[1:]:
         if skip:
             skip = False
         elif arg in ('-o', '-c', '-MF', '-MQ'):
