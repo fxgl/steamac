@@ -10,7 +10,7 @@
  * serializes and deserializes it, and compares every source of every instruction (by def index) and every struct
  * deref's field type with the original. Exit 0 on a faithful round trip.
  *
- * Built by build.sh with the flags Mesa used for nir_serialize.c against the build's static libraries.
+ * Runs in the steamac Meson suite against the driver build's NIR library.
  */
 #include <stdio.h>
 #include <stdlib.h>
