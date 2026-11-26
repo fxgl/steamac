@@ -12,7 +12,7 @@ How I got Overwatch 2 playable on an M5 MacBook Pro (24 GB, macOS 27). This bran
 | `wmtr/src/wmtr_host.m`, `wmtr_client.c` | The bridge between the VM and the Mac. It recovers when a GPU queue gets stuck instead of hanging, keeps graphics compiles from starving compute compiles (utility QoS), and logs slow calls and slow GPU work. |
 | `host/launcher/...` | Batches mouse motion at 250 Hz (the Mac sent up to 6,000 events a second, which froze frames). Logs live FPS every 30 s, logs long frames, and feeds FPS stats for DXMT games. |
 | `guest/fex/overwatch-fex-fixes.patch` | FEX fixes the game needs to start: a CPU flags bit, a deadlock on unreadable pages (FEX-Emu/FEX#6141), and cross-process writes. **Not built automatically, see below.** |
-| `guest/dmi-identity.sh` | Gives the VM a Mac hardware identity (SMBIOS/DMI) for the anti-cheat. Reference only. |
+| `guest/dmi-identity.sh` | An experiment that gives the VM a Mac hardware identity (SMBIOS/DMI). **Not needed:** the VM has no SMBIOS tables and the game runs without it. Kept for reference. |
 | `scripts/overwatch/` | My test and install scripts: `launcher-install.sh`, `game-restart.sh`, `watch.sh`, samplers and probes. |
 
 ## Setup
