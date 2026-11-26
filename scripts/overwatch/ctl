@@ -1,0 +1,6 @@
+#!/bin/bash
+# send control-fifo commands to the launcher, one per argument ("sleep N" pauses)
+F=$(dirname "$0")/ctl.fifo
+for c in "$@"; do
+  case "$c" in sleep\ *) sleep ${c#sleep } ;; *) echo "$c" > "$F" ; sleep 0.3 ;; esac
+done

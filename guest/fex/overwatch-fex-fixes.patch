@@ -1,0 +1,102 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index 1946dc94..d0e60b09 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -201,6 +201,11 @@ uint32_t ContextImpl::ReconstructCompactedEFLAGS(FEXCore::Core::InternalThreadSt
+     case X86State::RFLAG_SF_RAW_LOC:
+     case X86State::RFLAG_OF_RAW_LOC:
+     case X86State::RFLAG_DF_RAW_LOC:
++    // FEX-internal packed NZCV word; its bytes are not EFLAGS bits (leaked OF/V into reserved bit 31).
++    case X86State::RFLAG_NZCV_LOC:
++    case X86State::RFLAG_NZCV_1_LOC:
++    case X86State::RFLAG_NZCV_2_LOC:
++    case X86State::RFLAG_NZCV_3_LOC:
+       // Intentionally do nothing.
+       // These contain multiple bits which can corrupt other members when compacted.
+       break;
+@@ -1005,7 +1010,20 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+       std::span<const uint8_t> GuestCode = {reinterpret_cast<const uint8_t*>(StartAddr), Length};
+       const Frontend::Decoder::DecodedBlockInformation* BlockInfo =
+         NeedsAddGuestCodeRanges ? Thread->FrontendDecoder->GetDecodedBlockInfo() : nullptr;
+-      DiskCache.Store(Thread, Region, GuestRIP, *DiskCacheGuestCodeKey, GuestCode, CompiledCode, Relocations, BlockInfo);
++      // A block whose last instruction ran into an unreadable page must not be stored: copying its guest bytes would fault
++      // while CodeInvalidationMutex is held, and the guest's handler then deadlocks changing that page (FEX-Emu/FEX#6141).
++      bool GuestCodeReadable = true;
++      for (uint64_t Addr = StartAddr, End = StartAddr + Length; Addr < End;) {
++        auto Range = SyscallHandler->QueryGuestExecutableRange(Thread, Addr);
++        if (Range.Size == 0 || Range.Base > Addr) {
++          GuestCodeReadable = false;
++          break;
++        }
++        Addr = Range.Base + Range.Size;
++      }
++      if (GuestCodeReadable) {
++        DiskCache.Store(Thread, Region, GuestRIP, *DiskCacheGuestCodeKey, GuestCode, CompiledCode, Relocations, BlockInfo);
++      }
+     }
+ 
+     if (CodeMapWriter && Region && Region->FileStartVA != 0) {
+diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
+index 94e4ac52..f0859f21 100644
+--- a/FEXCore/Source/Interface/Core/Frontend.cpp
++++ b/FEXCore/Source/Interface/Core/Frontend.cpp
+@@ -1124,6 +1124,11 @@ Decoder::DecodedBlockStatus Decoder::DecodeInstruction(uint64_t PC) {
+     // A decode error can be caused by substituting zero for an inaccessible
+     // instruction byte, so the instruction fetch fault takes priority.
+     if (HitNonExecutableRange) {
++      // Decoding can stop on the zero substituted for an unreadable byte before InstSize is set; use the bytes
++      // actually read so the fault lands on the first unreadable byte, as on hardware (FEX-Emu/FEX#6141).
++      if (!DecodeInst->InstSize && InstructionSize && InstructionSize < MAX_INST_SIZE) {
++        DecodeInst->InstSize = InstructionSize;
++      }
+       return DecodeInst->InstSize ? DecodedBlockStatus::PARTIAL_DECODE_INST : DecodedBlockStatus::NOEXEC_INST;
+     }
+ 
+diff --git a/Source/Tools/LinuxEmulation/LinuxSyscalls/Syscalls/Passthrough.cpp b/Source/Tools/LinuxEmulation/LinuxSyscalls/Syscalls/Passthrough.cpp
+index 11ff1635..404f94c5 100644
+--- a/Source/Tools/LinuxEmulation/LinuxSyscalls/Syscalls/Passthrough.cpp
++++ b/Source/Tools/LinuxEmulation/LinuxSyscalls/Syscalls/Passthrough.cpp
+@@ -479,7 +479,6 @@ namespace x64 {
+     REGISTER_SYSCALL_IMPL_X64(clock_adjtime, SyscallPassthrough2<SYSCALL_DEF(clock_adjtime)>);
+     REGISTER_SYSCALL_IMPL_X64(sendmmsg, SyscallPassthrough4<SYSCALL_DEF(sendmmsg)>);
+     REGISTER_SYSCALL_IMPL_X64(process_vm_readv, SyscallPassthrough6<SYSCALL_DEF(process_vm_readv)>);
+-    REGISTER_SYSCALL_IMPL_X64(process_vm_writev, SyscallPassthrough6<SYSCALL_DEF(process_vm_writev)>);
+     REGISTER_SYSCALL_IMPL_X64(preadv2, SyscallPassthrough6<SYSCALL_DEF(preadv2)>);
+     REGISTER_SYSCALL_IMPL_X64(pwritev2, SyscallPassthrough6<SYSCALL_DEF(pwritev2)>);
+     REGISTER_SYSCALL_IMPL_X64(io_pgetevents, SyscallPassthrough6<SYSCALL_DEF(io_pgetevents)>);
+diff --git a/Source/Tools/LinuxEmulation/LinuxSyscalls/x64/FD.cpp b/Source/Tools/LinuxEmulation/LinuxSyscalls/x64/FD.cpp
+index 91b5a103..5e4b0a89 100644
+--- a/Source/Tools/LinuxEmulation/LinuxSyscalls/x64/FD.cpp
++++ b/Source/Tools/LinuxEmulation/LinuxSyscalls/x64/FD.cpp
+@@ -29,6 +29,31 @@ $end_info$
+ 
+ namespace FEX::HLE::x64 {
+ void RegisterFD(FEX::HLE::SyscallHandler* Handler) {
++  // FEX write-protects host pages it translated code from (SMC tracking), so another process writing guest-writable
++  // memory gets EFAULT where hardware succeeds: wineserver doing NtWriteVirtualMemory for Overwatch's crash-reporter hook.
++  // Retry such a write through /proc/<pid>/mem, which writes through page protection the way ptrace does.
++  // shortcut: the target's FEX doesn't see this write, so code it already translated from the page stays stale;
++  // upgrade to a cross-process invalidation if a program patches code that has already run and then runs it again.
++  REGISTER_SYSCALL_IMPL_X64(process_vm_writev,
++                            [](FEXCore::Core::CpuStateFrame* Frame, pid_t pid, const struct iovec* local_iov, unsigned long liovcnt,
++                               const struct iovec* remote_iov, unsigned long riovcnt, unsigned long flags) -> uint64_t {
++    uint64_t Result = ::process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags);
++    if (Result == -1 && errno == EFAULT && liovcnt == 1 && riovcnt == 1 && flags == 0 && local_iov[0].iov_len == remote_iov[0].iov_len) {
++      char Path[32];
++      snprintf(Path, sizeof(Path), "/proc/%d/mem", pid);
++      int fd = ::open(Path, O_WRONLY | O_CLOEXEC);
++      if (fd != -1) {
++        ssize_t Written = ::pwrite(fd, local_iov[0].iov_base, local_iov[0].iov_len, reinterpret_cast<off_t>(remote_iov[0].iov_base));
++        ::close(fd);
++        if (Written == static_cast<ssize_t>(local_iov[0].iov_len)) {
++          return Written;
++        }
++      }
++      errno = EFAULT;
++    }
++    SYSCALL_ERRNO();
++  });
++
+   REGISTER_SYSCALL_IMPL_X64(
+     select, [](FEXCore::Core::CpuStateFrame* Frame, int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout) -> uint64_t {
+       ///< All FD arrays need to be writable

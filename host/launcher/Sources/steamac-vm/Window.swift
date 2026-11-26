@@ -75,8 +75,19 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Last reported presentation state; log changes, not every mouse motion / wmtr present.
     private var lastCursorPresentation: (captured: Bool, covered: Bool, hidden: Bool, overlay: Bool)?
     private var relRemainder = (0.0, 0.0)
+    // Captured relative motion is summed and sent at most every relInterval: high-rate mice (3-6k
+    // events/s measured on a swipe) flood Wine's raw input under FEX and stall the game's frames.
+    private var relPending: (Int32, Int32) = (0, 0)
+    private var relLastSent: CFTimeInterval = 0
+    private var relFlushScheduled = false
+    private static let relInterval: CFTimeInterval = 0.004
     /// Auto mode: where the guest cursor is (guest pixels); nil = unknown, re-anchor first.
     private var guestCursor: (Int, Int)?
+    /// The focused game's X cursor as the agent reports it (DXMT cursor tracking): shown or hidden
+    /// (mouse-look), and its last position in surface pixels. The agent sends changes only, so the
+    /// last position stays current. nil = not reported for this focus.
+    private var gameCursorShown: Bool?
+    private var gameCursorReport: (Int, Int)?
     private var lastPointerMotion = Date.distantPast
     /// The surface gamescope moves the cursor on, in its pixels, as the agent reports it with
     /// each focus line (nil = not reported: the display).
@@ -401,7 +412,11 @@ final class WindowController: NSObject, NSWindowDelegate {
         progress.onFocus = { [weak self] f in previousFocus?(f); self?.guestFocusChanged(f) }
         progress.onFocusSurface = { [weak self] s in self?.guestSurfaceChanged(s) }
         let previousCursor = progress.onCursorVisible
-        progress.onCursorVisible = { [weak self] v in previousCursor?(v); self?.view.guestCursorVisibility(v) }
+        progress.onCursorVisible = { [weak self] v in
+            previousCursor?(v)
+            self?.gameCursorShown = v
+            self?.view.guestCursorVisibility(v)
+        }
         let previousCursorImage = progress.onCursorImage
         progress.onCursorImage = { [weak self] w, h, xhot, yhot, bgra in
             previousCursorImage?(w, h, xhot, yhot, bgra)
@@ -410,6 +425,10 @@ final class WindowController: NSObject, NSWindowDelegate {
         let previousCursorPosition = progress.onCursorPosition
         progress.onCursorPosition = { [weak self] x, y, w, h in
             previousCursorPosition?(x, y, w, h)
+            if let self {
+                let (sw, sh) = self.pointerMap.surface
+                self.gameCursorReport = (x * sw / w, y * sh / h)
+            }
             self?.view.guestCursorPosition(x: x, y: y, windowWidth: w, windowHeight: h)
         }
         let previousReady = progress.onReady
@@ -726,6 +745,8 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Idle time after which the guest cursor may have been moved by the guest (warps, a game's
     /// smaller surface clamping); the next motion re-anchors.
     static let reanchorAfterIdle: TimeInterval = 1.5
+    /// A pause after which a focused game's reported cursor replaces the estimate (no jump is sent for games).
+    static let gameResyncAfterIdle: TimeInterval = 0.05
 
     private var usesTablet: Bool {
         mouseMode == .tablet
@@ -778,6 +799,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         updateNoPictureGate()
         log("input: guest focus \(f)")
         guestCursor = nil
+        gameCursorShown = nil
+        gameCursorReport = nil
         // Back in Steam / desktop (or a game without auto-capture): give the pointer back.
         if captured && mouseMode == .auto && !clickCaptures { releasePointer() }
         updateTitle()
@@ -873,6 +896,7 @@ extension WindowController {
         releaseButtons()
         captured = true
         relRemainder = (0, 0)
+        relPending = (0, 0)
         CGAssociateMouseAndMouseCursorPosition(0)
         NSCursor.hide()
         refreshHostCursor()
@@ -896,6 +920,7 @@ extension WindowController {
     }
 
     private func releaseButtons() {
+        flushRelative()
         for b in tabletButtons { inputs?.tablet.send([(EV.KEY, b, 0)]) }
         for b in mouseButtons { inputs?.mouse.send([(EV.KEY, b, 0)]) }
         tabletButtons.removeAll()
@@ -1026,12 +1051,31 @@ extension WindowController {
         inputs.tablet.send([(EV.ABS, ABS.X, x), (EV.ABS, ABS.Y, y)])
     }
 
+    /// Auto mode, game focused: where the guest cursor is before mirroring a move. A game may read relative
+    /// motion as mouse-look, so it never gets the anchoring jump (Overwatch looked at the sky after alt-tab or a
+    /// pause): a stale estimate syncs to the cursor the guest reports while the game shows one, an unknown one
+    /// assumes the cursor is under the pointer. Pure policy, also checked by --selftest-pointer.
+    static func gameCursorStart(stale: Bool, current: (Int, Int)?, target: (Int, Int), shown: Bool,
+                                reported: (Int, Int)?) -> (Int, Int) {
+        if stale, shown, let reported { return reported }
+        return current ?? target
+    }
+
     /// Auto mode: steer the guest cursor onto the host pointer with relative motion.
     private func moveEmulated(_ e: NSEvent) {
         guard let inputs else { return }
         let target = guestPoint(e)
         let now = Date()
-        if guestCursor == nil || now.timeIntervalSince(lastPointerMotion) > WindowController.reanchorAfterIdle {
+        let idle = now.timeIntervalSince(lastPointerMotion)
+        let stale = guestCursor == nil || idle > WindowController.reanchorAfterIdle
+        if focusedGame != nil {
+            // Games move their own cursor (Overwatch recentres it after mouse-look): resync whenever motion
+            // resumes, or the estimate keeps the offset and the Mac pointer hits the window edge first.
+            let gameStale = guestCursor == nil || idle > WindowController.gameResyncAfterIdle
+            guestCursor = Self.gameCursorStart(stale: gameStale, current: guestCursor, target: target,
+                                               shown: gameCursorShown == true && view.cursorTracking,
+                                               reported: gameCursorReport)
+        } else if stale {
             let (sw, sh) = pointerMap.surface
             let far = -Int32(4 * (max(sw, scanoutSize.0) + max(sh, scanoutSize.1)))
             inputs.mouse.send([(EV.REL, REL.X, far), (EV.REL, REL.Y, far)])
@@ -1051,14 +1095,30 @@ extension WindowController {
     /// Captured: raw relative motion, one count per host point (also with Retina resolution: games
     /// keep their mouse sensitivity; no acceleration in gamescope).
     func moveRelative(dx: Double, dy: Double) {
-        guard let inputs else { return }
+        guard inputs != nil else { return }
         let fx = dx + relRemainder.0
         let fy = dy + relRemainder.1
         let ix = Int32(fx.rounded(.towardZero)), iy = Int32(fy.rounded(.towardZero))
         relRemainder = (fx - Double(ix), fy - Double(iy))
+        relPending = (relPending.0 &+ ix, relPending.1 &+ iy)
+        let wait = relLastSent + Self.relInterval - CACurrentMediaTime()
+        if wait <= 0 { flushRelative(); return }
+        guard !relFlushScheduled else { return }
+        relFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            self?.relFlushScheduled = false
+            self?.flushRelative()
+        }
+    }
+
+    /// Send the summed captured motion now (before buttons and wheel, so clicks land where aimed).
+    func flushRelative() {
+        guard let inputs, relPending != (0, 0) else { return }
         var ev: [(UInt16, UInt16, Int32)] = []
-        if ix != 0 { ev.append((EV.REL, REL.X, ix)) }
-        if iy != 0 { ev.append((EV.REL, REL.Y, iy)) }
+        if relPending.0 != 0 { ev.append((EV.REL, REL.X, relPending.0)) }
+        if relPending.1 != 0 { ev.append((EV.REL, REL.Y, relPending.1)) }
+        relPending = (0, 0)
+        relLastSent = CACurrentMediaTime()
         inputs.mouse.send(ev)
     }
 
@@ -1092,7 +1152,13 @@ extension WindowController {
         }
         if !down && swallowedButtons.remove(b) != nil { return }
         if down { userInput("click") }
+        // shortcut: diagnostic for the Overwatch cursor offset; drop once the offset is understood.
+        if down, focusedGame != nil {
+            let p = view.convert(e.locationInWindow, from: nil)
+            log("input: game click captured=\(captured) mac=\(Int(p.x)),\(Int(p.y)) est=\(guestCursor.map { "\($0.0),\($0.1)" } ?? "none") \(view.gameClickDiagnostic)")
+        }
         if captured {
+            flushRelative()
             if down ? mouseButtons.insert(b).inserted : mouseButtons.remove(b) != nil {
                 inputs.mouse.send([(EV.KEY, b, down ? 1 : 0)])
             }
@@ -1139,6 +1205,7 @@ extension WindowController {
     /// REL_*_HI_RES plus whole REL_WHEEL/REL_HWHEEL notches.
     func sendWheel(hiResY: Double, hiResX: Double) {
         guard let inputs else { return }
+        flushRelative()
         let vy = hiResY + wheelHiRemainder.0
         let vx = hiResX + wheelHiRemainder.1
         let hy = Int32(vy.rounded(.towardZero)), hx = Int32(vx.rounded(.towardZero))

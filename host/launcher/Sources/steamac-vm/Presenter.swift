@@ -139,6 +139,18 @@ final class VMView: NSView {
     private(set) var cursorTracking = false
     var cursorOverlayVisible: Bool { !cursorLayer.isHidden }
     /// Evaluated only when cursor presentation changes, not on pointer movement or each present.
+    /// Logged with game clicks: where the game cursor was reported and drawn, and how the game layer
+    /// maps onto the view (cursor offset diagnosis).
+    var gameClickDiagnostic: String {
+        let pos = guestCursorPosition.map { "\($0.x),\($0.y)" } ?? "none"
+        let win = guestCursorWindow.map { "\($0.width)x\($0.height)" } ?? "none"
+        let layer = activeGameLayer.map { g in
+            "drawable=\(Int(g.drawableSize.width))x\(Int(g.drawableSize.height)) bounds=\(g.bounds.size)"
+                + " shown=\(g.convert(Renderer.fit(content: g.drawableSize, in: g.bounds), to: metalLayer))"
+        } ?? "no-game-layer"
+        return "reported=\(pos) window=\(win) visible=\(guestCursorVisible) drawn=\(cursorLayer.isHidden ? "hidden" : "\(cursorLayer.frame)") \(layer)"
+    }
+
     var cursorOverlayDiagnostic: String {
         guard let glyph = guestCursorGlyph, let window = guestCursorWindow else {
             return "tracking=\(cursorTracking) image=none frame-pt=\(cursorLayer.frame)"

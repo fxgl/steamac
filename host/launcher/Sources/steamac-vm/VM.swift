@@ -161,6 +161,8 @@ final class VM {
             setenv("STEAMAC_WMTR", "1", 1)
             setenv("STEAMAC_WMTR_LIB", lib, 1)
             setenv("WMTR_PRESENT", "overlay", 1)
+            // DXMT frames bypass scanout 0; without this, game stats have no FPS for DXMT games.
+            WmtrFrameFeed.start()
             log("gpu: wmtr context type offered (experimental), executor \(lib)")
         } else {
             unsetenv("STEAMAC_WMTR")

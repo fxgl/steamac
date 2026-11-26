@@ -224,11 +224,26 @@ final class FrameMeter: @unchecked Sendable {
     private var lock = os_unfair_lock()
     private var histogram = FrameHistogram()
     private var last: CFTimeInterval = 0
+    // DXMT (wmtr) games present on their own Metal layer, not through scanout 0, so their frames are
+    // counted apart; scanout keeps flushing the Steam UI underneath at its own rate.
+    private var wmtrHistogram = FrameHistogram()
+    private var wmtrLast: CFTimeInterval = 0
+    // Rolling 30 s window of DXMT frames, logged live so a session can be watched while it runs.
+    private var windowHistogram = FrameHistogram()
+    private var windowStart: CFTimeInterval = 0
+    private var windowMaxMs = 0.0
+    private static let clock: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f }()
 
     /// GPU worker thread: the guest flushed scanout 0.
     static func flushed() {
         guard active.load(ordering: .relaxed) else { return }
         shared.record(CACurrentMediaTime())
+    }
+
+    /// wmtr frame reader: a DXMT frame finished presenting at `seconds` (mach uptime, CACurrentMediaTime's clock).
+    static func wmtrPresented(at seconds: CFTimeInterval) {
+        guard active.load(ordering: .relaxed) else { return }
+        shared.recordWmtr(seconds)
     }
 
     private func record(_ now: CFTimeInterval) {
@@ -238,16 +253,101 @@ final class FrameMeter: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
     }
 
+    private func recordWmtr(_ now: CFTimeInterval) {
+        os_unfair_lock_lock(&lock)
+        var line: String?
+        var long: String?
+        if wmtrLast > 0, now > wmtrLast {
+            let ms = (now - wmtrLast) * 1000
+            wmtrHistogram.add(ms: ms)
+            windowHistogram.add(ms: ms)
+            windowMaxMs = max(windowMaxMs, ms)
+            // Long frames with their wall-clock time, to line them up with other logs (pauses over 2 s are menus/loads).
+            if ms > 150, ms < 2000 { long = String(format: "game frames: long frame %.0f ms ending at %@", ms, FrameMeter.clock.string(from: Date())) }
+        }
+        wmtrLast = now
+        if windowStart == 0 { windowStart = now }
+        if now - windowStart >= 30 {
+            if let f = windowHistogram.fps {
+                line = String(format: "game frames: %.0f s %.1f FPS avg, p50 %.1f, 1%% low %.1f, hitches>50ms %d, longest %.0f ms",
+                              now - windowStart, f.avg, f.p50, f.low1, windowHistogram.hitches, windowMaxMs)
+            }
+            windowHistogram = FrameHistogram()
+            windowStart = now
+            windowMaxMs = 0
+        }
+        os_unfair_lock_unlock(&lock)
+        if let long { log(long) }
+        if let line { log(line) }
+    }
+
     /// Main thread: start / stop counting; returns what was counted since the last call (the
-    /// interval across a stop and the next start is never counted).
+    /// interval across a stop and the next start is never counted). A span with enough DXMT frames
+    /// reports those; otherwise the scanout flushes.
     func set(active on: Bool) -> FrameHistogram {
         FrameMeter.active.store(on, ordering: .relaxed)
         os_unfair_lock_lock(&lock)
         defer { os_unfair_lock_unlock(&lock) }
-        let taken = histogram
+        let taken = wmtrHistogram.intervals >= FrameHistogram.minIntervals ? wmtrHistogram : histogram
         histogram = FrameHistogram()
+        wmtrHistogram = FrameHistogram()
+        windowHistogram = FrameHistogram()
+        windowStart = 0
+        windowMaxMs = 0
         last = 0
+        wmtrLast = 0
         return taken
+    }
+}
+
+/// Reads wmtr's per-frame export (WMTR_FRAMES, one `t_ns,...` line per presented DXMT frame) from a
+/// FIFO this process owns and feeds FrameMeter. Not started when WMTR_FRAMES is already set (a
+/// developer's own capture file wins).
+enum WmtrFrameFeed {
+    private static var source: DispatchSourceRead?
+    private static var pending = Data()
+
+    static func start() {
+        guard source == nil, getenv("WMTR_FRAMES") == nil else { return }
+        let path = NSTemporaryDirectory() + "steamac-wmtr-frames-\(getpid())"
+        unlink(path)
+        guard mkfifo(path, 0o600) == 0 else { return }
+        // Read end first and non-blocking, so wmtr's fopen(path, "a") never waits for a reader.
+        let fd = open(path, O_RDONLY | O_NONBLOCK)
+        guard fd >= 0 else { unlink(path); return }
+        // A write end held here keeps the FIFO from reporting EOF between wmtr clients.
+        let keep = open(path, O_WRONLY | O_NONBLOCK)
+        let s = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue(label: "wmtr-frames", qos: .userInitiated))
+        s.setEventHandler {
+            var buf = [UInt8](repeating: 0, count: 16384)
+            while true {
+                let n = read(fd, &buf, buf.count)
+                if n <= 0 { break }
+                pending.append(contentsOf: buf[0..<n])
+            }
+            while let nl = pending.firstIndex(of: UInt8(ascii: "\n")) {
+                let line = pending[pending.startIndex..<nl]
+                pending.removeSubrange(pending.startIndex...nl)
+                if let t = WmtrFrameFeed.timestamp(line) { FrameMeter.wmtrPresented(at: t) }
+            }
+        }
+        s.setCancelHandler { close(fd); if keep >= 0 { close(keep) }; unlink(path) }
+        s.resume()
+        source = s
+        setenv("WMTR_FRAMES", path, 1)
+    }
+
+    /// Seconds from a `t_ns,0,0,0,0,0` line (wmtr writes one per completed present); nil for anything else.
+    static func timestamp<S: Sequence>(_ line: S) -> CFTimeInterval? where S.Element == UInt8 {
+        var ns: UInt64 = 0
+        var digits = 0
+        for c in line {
+            if c == UInt8(ascii: ",") { break }
+            guard c >= 48, c <= 57 else { return nil }
+            ns = ns &* 10 &+ UInt64(c - 48)
+            digits += 1
+        }
+        return digits > 0 ? CFTimeInterval(ns) / 1e9 : nil
     }
 }
 
