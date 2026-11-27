@@ -127,7 +127,15 @@ final class HIDPassthrough {
 
         /// Only on the main thread (HIDPassthrough keeps devices there): its reports are
         /// delivered on the main run loop, which this unschedules before the buffer goes.
+        /// IOHIDDevice keeps input and removal callbacks in sets keyed by context, and neither
+        /// close nor unschedule empties them; the retained ref of a generic controller is opened
+        /// again with a new Device after a GameController handoff, so a stale entry would call
+        /// back into this freed object (STEAMAC-CV: crash loading `owner` at watch's input
+        /// callback). A nil callback with the same context removes the entry.
         deinit {
+            let ctx = Unmanaged.passUnretained(self).toOpaque()
+            IOHIDDeviceRegisterInputReportCallback(ref, inputBuffer, maxInput, nil, ctx)
+            IOHIDDeviceRegisterRemovalCallback(ref, nil, ctx)
             IOHIDDeviceUnscheduleFromRunLoop(ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
             if let openOptions { IOHIDDeviceClose(ref, openOptions) }
             inputBuffer.deallocate()
