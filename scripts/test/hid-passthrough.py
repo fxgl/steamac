@@ -62,6 +62,11 @@ if "static func usbStandIn(" in gamepad:
     flags += ["-D", "HAS_USB_STANDIN"]
 if "func updateSeize(" in production:
     flags += ["-D", "HAS_SEIZE"]
+if "enum StandInWake" in gamepad:
+    routing.append(declaration(gamepad, "enum", "StandInWake"))
+    flags += ["-D", "HAS_STANDIN_WAKE"]
+if "func stopGuest()" in production:
+    flags += ["-D", "HAS_SEIZE_REVIEW"]
 with tempfile.TemporaryDirectory(prefix="steamac-hid-test-") as temporary:
     directory = Path(temporary)
     source = directory / "main.swift"

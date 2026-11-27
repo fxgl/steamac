@@ -328,8 +328,9 @@ private final class PadSlot {
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
     /// whether a button went down; true = keep it from the guest (a press may wake it).
     var intercept: ((_ buttonPressed: Bool) -> Bool)?
-    /// The guest's service said `hello` (GamepadBridge: the player can get a controller).
-    var onHello: (() -> Void)?
+    /// `hello` or `caps hid`; true only when this port first advertises HID capability.
+    var onServiceChange: ((_ firstHIDReady: Bool) -> Void)?
+    private var advertisedHID = false
     /// Whether a DualSense may be passed through now (GamepadBridge).
     var passthroughAllowed: () -> Bool = { true }
     /// The Steam Controller or generic HID assigned to this player by GamepadBridge.
@@ -399,11 +400,13 @@ private final class PadSlot {
             guestPad = nil
             guestHID = nil
             rumble.set(strong: 0, weak: 0)
-            onHello?()
+            onServiceChange?(false)
             reconcile()
         } else if w == ["caps", "hid"] {
             hidCapable = true
-            onHello?()
+            let firstHIDReady = !advertisedHID
+            advertisedHID = true
+            onServiceChange?(firstHIDReady)
             reconcile()
         } else if w.count == 3, w[0] == "rumble", let strong = UInt16(w[1]), let weak = UInt16(w[2]) {
             if let remote {
@@ -656,13 +659,45 @@ enum SteamControllerRouting {
         productCategory == "Steam Controller" && vendorName == "Steam Controller Puck"
     }
 
-    /// Every live Puck slot is a controller that GameController publishes too (all slots can
-    /// share one publication). GameController cannot say which publication belongs to which
-    /// slot, so that many publications (in connection order) give way to the HID devices; a
-    /// publication beyond the live slots is a controller that is quiet right now and stays an
-    /// ordinary pad.
-    static func suppressedPuckPublications(_ publications: [Int], liveSlots: Int) -> [Int] {
-        Array(publications.prefix(max(0, liveSlots)))
+    /// Suppress a publication only after its raw slot reserves a player. GC has no slot
+    /// identity; pair in connection order, keeping a player's existing assignment if possible.
+    static func puckHandoffs(devices: [UInt64], publications: [Int], players: [Int?], available: [Int],
+                             previous: [UInt64: Int], selectedSingle: Int?,
+                             newlyReady: Int? = nil) -> (raw: [UInt64: Int], suppressed: [Int]) {
+        var raw: [UInt64: Int] = [:]
+        var suppressed: [Int] = []
+        // Retain eligible owners before a newly live slot can take their players.
+        for (i, device) in devices.enumerated() {
+            let publication = i < publications.count ? publications[i] : nil
+            if let player = previous[device], available.contains(player),
+               players[player] == nil || players[player] == publication {
+                raw[device] = player
+            }
+        }
+        for (i, device) in devices.enumerated() {
+            let publication = i < publications.count ? publications[i] : nil
+            func free(_ player: Int) -> Bool {
+                available.contains(player) && !raw.values.contains(player)
+            }
+            if raw[device] == nil {
+                let current = publication.flatMap { players.firstIndex(of: $0) }
+                let selected = publication != nil && publication == selectedSingle && free(0)
+                raw[device] = current.flatMap { free($0) ? $0 : nil } ?? (selected ? 0 : nil)
+                    ?? available.first { players[$0] == nil && free($0) }
+            }
+            if let publication, raw[device] != nil {
+                suppressed.append(publication)
+            }
+        }
+        // Pad services can announce HID out of order at boot. Fill the newly ready lower
+        // player once, but don't move sticky players on later disconnects/service restarts.
+        if let player = newlyReady, available.contains(player), players[player] == nil,
+           !raw.values.contains(player),
+           let existing = raw.lazy.filter({ $0.value > player && previous[$0.key] == $0.value })
+               .min(by: { $0.value < $1.value }) {
+            raw[existing.key] = player
+        }
+        return (raw, suppressed)
     }
 
     /// BLE reservations stay sticky. Generic reservations stay sticky only while their player
@@ -686,13 +721,44 @@ enum SteamControllerRouting {
             checks += 1
             if !ok { failures.append("Steam Controller routing: \(name)") }
         }
-        check(suppressedPuckPublications([3, 5], liveSlots: 1) == [3], "one live slot replaces one publication")
-        check(suppressedPuckPublications([3], liveSlots: 2) == [3], "more live slots than publications")
-        check(suppressedPuckPublications([3, 5], liveSlots: 2) == [3, 5], "every live slot replaces its publication")
-        check(suppressedPuckPublications([3, 5], liveSlots: 0).isEmpty, "no live slot keeps every publication")
-        check(suppressedPuckPublications([], liveSlots: 1).isEmpty, "no publication, nothing to replace")
-        check(rawPlayers(previous: [:], devices: [10, 11], available: [0, 1, 2]) == [10: 0, 11: 1],
-              "two live Puck slots take two players")
+        let beforePublication = puckHandoffs(devices: [10], publications: [], players: [2], available: [0],
+                                             previous: [:], selectedSingle: nil)
+        check(beforePublication.raw.isEmpty, "HID-first Puck does not evict the only player before publication")
+        let single = puckHandoffs(devices: [10], publications: [3], players: [2], available: [0],
+                                  previous: beforePublication.raw, selectedSingle: 3)
+        check(single.raw == [10: 0] && single.suppressed == [3], "selected late Puck takes the only player")
+        let multiple = puckHandoffs(devices: [10], publications: [3], players: [2, nil, nil], available: [0, 1, 2],
+                                    previous: [:], selectedSingle: nil)
+        check(multiple.raw == [10: 1] && multiple.suppressed == [3], "late Puck takes the first free additional player")
+        let blocked = puckHandoffs(devices: [10], publications: [3], players: [2], available: [0],
+                                   previous: [:], selectedSingle: nil)
+        check(blocked.raw.isEmpty && blocked.suppressed.isEmpty, "full player keeps the publication eligible")
+        let legacy = puckHandoffs(devices: [10], publications: [3], players: [3], available: [],
+                                  previous: [10: 0], selectedSingle: 3)
+        check(legacy.raw.isEmpty && legacy.suppressed.isEmpty, "no HID-capable player keeps the ordinary pad")
+        let occupied = puckHandoffs(devices: [10, 11], publications: [3, 5], players: [3, nil], available: [0, 1],
+                                    previous: [:], selectedSingle: nil)
+        check(occupied.raw == [10: 0, 11: 1] && occupied.suppressed == [3, 5],
+              "two live slots reserve their stand-in's player and a free player")
+        let quiet = puckHandoffs(devices: [10], publications: [3, 5], players: [nil, 5], available: [0, 1],
+                                 previous: [:], selectedSingle: nil)
+        check(quiet.raw == [10: 0] && quiet.suppressed == [3], "keep publications beyond live players")
+        let unpaired = puckHandoffs(devices: [10, 11], publications: [], players: [nil, nil], available: [0, 1],
+                                    previous: [10: 1], selectedSingle: nil)
+        check(unpaired.raw == [10: 1, 11: 0] && unpaired.suppressed.isEmpty,
+              "keep raw reservations without a GameController publication")
+        let reactivated = puckHandoffs(devices: [10, 11], publications: [], players: [nil, nil], available: [0, 1],
+                                       previous: [11: 0], selectedSingle: nil)
+        check(reactivated.raw == [10: 1, 11: 0], "newly live Puck slot cannot displace an existing reservation")
+        let early = puckHandoffs(devices: [10], publications: [3], players: [3, nil, nil], available: [2],
+                                  previous: [:], selectedSingle: nil)
+        check(early.raw == [10: 2], "Puck can use the first pad service to announce HID")
+        let lower = puckHandoffs(devices: [10], publications: [3], players: [nil, nil, nil], available: [0, 2],
+                                  previous: early.raw, selectedSingle: nil, newlyReady: 0)
+        check(lower.raw == [10: 0] && lower.suppressed == [3], "Puck moves to newly HID-ready player 1 at boot")
+        let lowerOccupied = puckHandoffs(devices: [10], publications: [3], players: [2, nil, nil], available: [0, 2],
+                                          previous: early.raw, selectedSingle: nil, newlyReady: 0)
+        check(lowerOccupied.raw == early.raw, "late HID capability does not displace another controller")
         check(isPuckPublication(vendorName: "Steam Controller Puck", productCategory: "Steam Controller"),
               "Puck publication recognized")
         check(!isPuckPublication(vendorName: "Steam Controller", productCategory: "Steam Controller"),
@@ -756,6 +822,24 @@ enum SteamControllerRouting {
         if let current { return available.contains(current) ? current : nil }
         if let reserved, available.contains(reserved) { return reserved }
         return available.first
+    }
+}
+
+/// A suppressed GameController stand-in (Puck publication, USB 1302) while the VM is paused: the
+/// same physical buttons that wake through PadSlot's Xbox mapping, but no guest pad; only a down
+/// edge is forwarded, not sticks, D-pad, triggers or releases.
+enum StandInWake {
+    static func observe(_ pad: GCExtendedGamepad, onPress: (() -> Void)?) {
+        let handler: GCControllerButtonValueChangedHandler? = onPress.map { wake in
+            { _, _, pressed in if pressed { wake() } }
+        }
+        pad.buttonHome?.preferredSystemGestureState = .disabled
+        pad.buttonOptions?.preferredSystemGestureState = .disabled
+        pad.buttonMenu.preferredSystemGestureState = .disabled
+        for button in [pad.buttonA, pad.buttonB, pad.buttonX, pad.buttonY, pad.leftShoulder, pad.rightShoulder,
+                       pad.buttonHome, pad.buttonOptions, pad.buttonMenu, pad.leftThumbstickButton, pad.rightThumbstickButton] {
+            button?.pressedChangedHandler = handler
+        }
     }
 }
 
@@ -891,8 +975,7 @@ enum GenericHIDRouting {
 /// own (`fx.pad2`, …) once the guest's service of that port said `hello`: a guest layer without
 /// those services keeps the one pad, driven as before. A player keeps their controller until it
 /// disconnects (the others do not move up), and a reconnected controller takes the first free
-/// player. A Steam Controller on a free usable player is passed through the same way (Puck slot
-/// → that player's GameController controller when unambiguous; Bluetooth LE → sticky free player).
+/// player. Steam Controllers passed through as uhid devices keep their own raw reservations.
 final class GamepadBridge {
     /// Players at most: one PadPort each.
     static let maxPads = 4
@@ -904,9 +987,11 @@ final class GamepadBridge {
     private let settings: LauncherSettings
     private let typeOverride: LauncherSettings.PadType?
     private let hid: HIDPassthrough
-    /// BLE/USB and generic HID devices share sticky reservations.
+    /// BLE/USB, live Puck slots and generic HID devices share raw reservations.
     private var rawPlayers: [UInt64: Int] = [:]
     private var usbStandInDevice: UInt64?
+    /// GameController publications whose HID device owns the player (Puck slots, USB stand-in).
+    private var suppressedStandIns: [GCController] = []
     private var localPlayersBeforeStream: (controllers: [GCController?], raw: [UInt64: Int])?
     private var remotePads: [UInt16: RemotePad] = [:]
     private var remotePlayers: [UInt16: Int] = [:]
@@ -1058,12 +1143,9 @@ final class GamepadBridge {
         "\(c.vendorName ?? "?")|\(c.productCategory)"
     }
 
-    /// The Steam Controller as GameController shows it: the Puck is "Steam Controller Puck
-    /// (Steam Controller)" (all its slots are one GameController controller); a controller on
-    /// Bluetooth LE is not shown at all. GameController does not expose HID vendor/product, so
-    /// it is matched by vendorName / productCategory.
-    static func isSteamController(_ c: GCController) -> Bool {
-        c.vendorName == "Steam Controller Puck" || c.productCategory == "Steam Controller"
+    private func setStandInWake(_ controller: GCController, enabled: Bool) {
+        guard let pad = controller.extendedGamepad else { return }
+        StandInWake.observe(pad, onPress: enabled ? { [weak self] in _ = self?.intercept?(true) } : nil)
     }
 
     static func displayName(of c: GCController) -> String {
@@ -1134,15 +1216,16 @@ final class GamepadBridge {
             })
         }
         for s in slots {
-            s.onHello = { [weak self] in self?.assignControllers() }
+            s.onServiceChange = { [weak self, index = s.index] firstHIDReady in
+                self?.assignControllers(newlyHIDReady: firstHIDReady ? index : nil)
+            }
             s.start()
         }
         // The HID device could be another player's DualSense: none is passed through then.
         slots[0].passthroughAllowed = { [weak self] in
             !(self?.slots.dropFirst().contains { $0.controller?.extendedGamepad is GCDualSenseGamepad } ?? false)
         }
-        // Each player's raw controller: whatever `rawPlayers` reserved for it (USB, BLE, a live
-        // Puck slot, or a generic device).
+        // Each player's raw controller comes from its raw reservation.
         for s in slots {
             let playerIndex = s.index
             s.rawControllerDevice = { [weak self] in self?.assignedRawDevice(for: playerIndex) }
@@ -1161,8 +1244,14 @@ final class GamepadBridge {
 
     /// The VM was paused (suspend, guest sleep) / runs again.
     func vmPaused(_ paused: Bool) {
-        hid.vmPaused = paused
+        guard paused != hid.vmPaused else { return }
         for s in slots { s.vmPaused(paused) }
+        for controller in suppressedStandIns { setStandInWake(controller, enabled: paused) }
+        hid.vmPaused = paused
+    }
+
+    func guestStopping() {
+        hid.stopGuest()
     }
 
     /// Player `i` can have a controller: player 1 always (before the guest runs too: a button
@@ -1191,7 +1280,7 @@ final class GamepadBridge {
         let devices = hid.devices.filter {
             if $0.generic { return matchesGenericControllers }
             guard matchesValveControllers, HIDPassthrough.isSteamController($0) else { return false }
-            if $0.puckSlot != nil { return HIDPassthrough.isLiveSteamController($0) }
+            if $0.puckSlot != nil { return rawPlayers[$0.registryID] != nil && HIDPassthrough.isLiveSteamController($0) }
             if HIDPassthrough.isUSBSteamController($0), hasUSBPublication {
                 return usbStandInDevice == $0.registryID
             }
@@ -1221,7 +1310,7 @@ final class GamepadBridge {
     /// the first connected (the chosen one is not connected: fall back to it as well). Several:
     /// everybody keeps theirs while it is connected, the chosen one is player 1 when it is there,
     /// and free players get the remaining controllers in connection order.
-    private func assignControllers() {
+    private func assignControllers(newlyHIDReady: Int? = nil) {
         let connected = GamepadBridge.connected
         var candidates = connected
         // Moonlight controllers come first: the remote player is the one using SteamOS during a
@@ -1240,6 +1329,7 @@ final class GamepadBridge {
             }
         }
         usbStandInDevice = nil
+        var usbStandIn: GCController?
         let usbDevices = hid.devices.filter(HIDPassthrough.isUSBSteamController).map(\.registryID)
         let usbPublications = connected.indices.filter {
             SteamControllerRouting.isUSBStandIn(vendorName: connected[$0].vendorName,
@@ -1261,24 +1351,38 @@ final class GamepadBridge {
                 for slot in slots where slot.controller === standIn { slot.setController(nil) }
                 rawPlayers[match.device] = player
                 usbStandInDevice = match.device
+                usbStandIn = standIn
                 candidates.removeAll { $0 === standIn }
             }
         }
-        // A live Puck slot reaches SteamOS through HID: GameController must not feed an Xbox
-        // stand-in for the same controller. Free those players before any reservation is made,
-        // otherwise the HID device would be offered player 2 while player 1 ends up empty.
-        let livePuckSlots = matchesValveControllers && settings.virtualPad
-            ? hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }.count : 0
-        let hidCapablePlayers = slots.indices.filter { usable($0) && slots[$0].hidCapable && slots[$0].remote == nil }.count
+        let singlePlayer = !slots.indices.dropFirst().contains(where: usable)
+        let puckDevices = matchesValveControllers && settings.virtualPad
+            ? hid.devices.filter { $0.puckSlot != nil && HIDPassthrough.isLiveSteamController($0) }.map(\.registryID) : []
         let puckPublications = connected.indices.filter {
             SteamControllerRouting.isPuckPublication(vendorName: connected[$0].vendorName,
                                                      productCategory: connected[$0].productCategory)
         }
-        for i in SteamControllerRouting.suppressedPuckPublications(
-            puckPublications, liveSlots: min(livePuckSlots, hidCapablePlayers)) {
-            let publication = connected[i]
-            for slot in slots where slot.controller === publication { slot.setController(nil) }
-            candidates.removeAll { $0 === publication }
+        let occupants = slots.map { slot in connected.firstIndex { $0 === slot.controller } }
+        let activeNonPuck = hid.devices.filter { $0.puckSlot == nil }.map(\.registryID)
+        let availableForPuck = slots.indices.filter { i in
+            usable(i) && slots[i].hidCapable && slots[i].remote == nil
+                && !rawPlayers.contains { $0.value == i && activeNonPuck.contains($0.key) }
+        }
+        let handoffs = SteamControllerRouting.puckHandoffs(devices: puckDevices, publications: puckPublications,
+            players: occupants, available: availableForPuck, previous: rawPlayers,
+            selectedSingle: singlePlayer ? puckPublications.first { GamepadBridge.identifier(of: connected[$0]) == settings.controllerID } : nil,
+            newlyReady: newlyHIDReady)
+        let suppressed = handoffs.suppressed.map { connected[$0] } + (usbStandIn.map { [$0] } ?? [])
+        if hid.vmPaused {
+            for controller in suppressedStandIns where !suppressed.contains(where: { $0 === controller }) {
+                setStandInWake(controller, enabled: false)
+            }
+        }
+        for id in puckDevices { rawPlayers[id] = handoffs.raw[id] }
+        for player in handoffs.raw.values { slots[player].setController(nil) }
+        for controller in suppressed {
+            for slot in slots where slot.controller === controller { slot.setController(nil) }
+            candidates.removeAll { $0 === controller }
         }
         updateRawPlayers()
         let genericDevices = hid.devices.filter(\.generic).map(\.registryID)
@@ -1289,7 +1393,7 @@ final class GamepadBridge {
         let chosen = settings.controllerID.isEmpty ? nil
             : candidates.first { GamepadBridge.identifier(of: $0) == settings.controllerID }
         var next = [GCController?](repeating: nil, count: slots.count)
-        if !slots.indices.dropFirst().contains(where: usable) {
+        if singlePlayer {
             if available(0) { next[0] = chosen ?? candidates.first }
         } else {
             for (i, s) in slots.enumerated() where usable(i) && available(i) {
@@ -1310,6 +1414,12 @@ final class GamepadBridge {
             s.setController(nil)
         }
         for (i, s) in slots.enumerated() { s.setController(next[i]) }
+        if hid.vmPaused {
+            for controller in suppressed where !suppressedStandIns.contains(where: { $0 === controller }) {
+                setStandInWake(controller, enabled: true)
+            }
+        }
+        suppressedStandIns = suppressed
         // Preserve raw HID reservations while filling free players, then route every HID kind.
         reconcileAll()
         let players = Dictionary(uniqueKeysWithValues: slots.compactMap { s in s.controller.map { (ObjectIdentifier($0), s.index + 1) } })

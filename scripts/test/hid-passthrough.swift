@@ -45,6 +45,8 @@ final class TestHIDDevice: NSObject {
     /// Every IOHIDDeviceOpen's options, in order; `seizeResult` is what an exclusive open returns.
     var openOptionLog: [IOOptionBits] = []
     var seizeResult = kIOReturnSuccess
+    var failSharedOpens = 0
+    var onOperation: ((String) -> Void)?
     var lastOpenOptions: IOOptionBits { openOptionLog.last ?? 0 }
     var usagePage: UInt32 = 1
     var usages: Set<UInt32> = [5]
@@ -159,6 +161,7 @@ func IOHIDManagerClose(_ manager: IOHIDManager, _ options: IOOptionBits) -> IORe
 func IOHIDRequestAccess(_ type: IOHIDRequestType) -> Bool { permissionRequests += 1; return false }
 func IOHIDCheckAccess(_ type: IOHIDRequestType) -> IOHIDAccessType { kIOHIDAccessTypeDenied }
 func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
+    device.onOperation?("open")
     device.openCalls += 1
     device.openOptionLog.append(options)
     guard device.live else { return kIOReturnNoDevice }
@@ -166,11 +169,16 @@ func IOHIDDeviceOpen(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn
     if options == IOOptionBits(kIOHIDOptionsTypeSeizeDevice), device.seizeResult != kIOReturnSuccess {
         return device.seizeResult
     }
+    if options == IOOptionBits(kIOHIDOptionsTypeNone), device.failSharedOpens > 0 {
+        device.failSharedOpens -= 1
+        return kIOReturnBusy
+    }
     device.isOpen = true
     return kIOReturnSuccess
 }
 @discardableResult
 func IOHIDDeviceClose(_ device: IOHIDDevice, _ options: IOOptionBits) -> IOReturn {
+    device.onOperation?("close")
     device.closeCalls += 1
     device.isOpen = false
     // Worst case for the production code: IOKit drops the run loop schedule and the input
@@ -210,6 +218,7 @@ func IOHIDDeviceRegisterInputReportCallback(_ device: IOHIDDevice, _ report: Uns
 }
 func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafeMutablePointer<UInt8>, _ size: UnsafeMutablePointer<CFIndex>) -> IOReturn {
+    device.onOperation?("get")
     device.getRequests.append((type, id, size.pointee))
     guard device.live && device.isOpen else { return kIOReturnNotOpen }
     let valveBLE = (device.properties[kIOHIDVendorIDKey] as? Int) == 0x28de
@@ -223,6 +232,7 @@ func IOHIDDeviceGetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: 
 }
 func IOHIDDeviceSetReport(_ device: IOHIDDevice, _ type: IOHIDReportType, _ id: CFIndex,
                          _ report: UnsafePointer<UInt8>, _ size: CFIndex) -> IOReturn {
+    device.onOperation?("set")
     device.setRequests.append((type, id, Array(UnsafeBufferPointer(start: report, count: size))))
     return device.live && device.isOpen ? kIOReturnSuccess : kIOReturnNotOpen
 }
@@ -716,6 +726,19 @@ extension HIDPassthrough {
               "stand-in ownership requires physical USB 1302, never BLE or Puck's guest identity")
         check(SteamControllerRouting.selfCheck().isEmpty, "scoped stand-in suppression and stable player handoff")
         #endif
+        #if HAS_STANDIN_WAKE
+        let wakePad = GameController.GCController.withExtendedGamepad().extendedGamepad!
+        var wakes = 0
+        StandInWake.observe(wakePad) { wakes += 1 }
+        wakePad.buttonA.pressedChangedHandler?(wakePad.buttonA, 0, false)
+        check(wakes == 0 && wakePad.leftTrigger.pressedChangedHandler == nil
+              && wakePad.dpad.up.pressedChangedHandler == nil,
+              "suppressed stand-in releases, triggers and D-pad do not wake the guest")
+        wakePad.buttonA.pressedChangedHandler?(wakePad.buttonA, 1, true)
+        check(wakes == 1, "a suppressed stand-in (Puck or USB) can wake a sleeping guest via GameController")
+        StandInWake.observe(wakePad, onPress: nil)
+        check(wakePad.buttonA.pressedChangedHandler == nil, "discard wake handler when no longer suspended")
+        #endif
         #if HAS_HID_DIAGNOSTICS
         diagnosticInventory = [usbWired]
         let usbInventory = hid.diagnosticLines().joined(separator: "\n")
@@ -773,6 +796,8 @@ extension HIDPassthrough {
         settle()
         check(seizeUSB.lastOpenOptions == shared, "a released Steam Controller goes back to the shared open")
         let refused = TestHIDDevice(id: 74, valve: true, product: 0x1302)
+        refused.properties[kIOHIDPrimaryUsagePageKey] = 1
+        refused.properties[kIOHIDPrimaryUsageKey] = 6
         refused.seizeResult = kIOReturnNotPrivileged
         seizeHID.manager!.emitMatch(refused)
         let refusedDevice = seizeHID.devices.last!
@@ -788,6 +813,63 @@ extension HIDPassthrough {
         check(refused.openOptionLog == [shared, seize, shared], "a refused seize is not retried on every pause")
         check(seizeHID.diagnosticLines().joined(separator: "\n").contains("exclusive"),
               "diagnostics show the exclusive open")
+        #if HAS_SEIZE_REVIEW
+        let state = seizeHID.diagnosticLines()
+        check(state.contains { $0.hasPrefix("HID 28de:1304 ") && $0.contains("exclusive, Puck slot=2") }
+              && state.contains { $0.hasPrefix("HID 28de:1302 ") && $0.contains("registry=74, forwarding, shared") },
+              "pad state displays physical Puck ID and the actual per-device open mode")
+        check(loggedLines.contains { $0.hasPrefix("hid passthrough: 28de:1304 ")
+                                     && $0.contains("opened exclusively (passing through; Puck slot 2)") }
+              && loggedLines.contains { $0.hasPrefix("hid passthrough: 28de:1302 ")
+                                        && $0.contains("opened shared (VM paused)") }
+              && loggedLines.contains { $0.hasPrefix("hid passthrough: 28de:1302 ")
+                                        && $0.contains("cannot be opened exclusively (IOReturn 0xe00002c1, primary=1/6)") },
+              "transitions log physical identity, reason, and raw IOReturn and primary usage on refusal")
+
+        seizeHID.activate(seizeDevices[0], owner: seizeOwner) { _ in seizedInputs += 1 }
+        settle()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var operations: [String] = []
+        seizeUSB.onOperation = { operation in
+            lock.lock()
+            operations.append(operation)
+            lock.unlock()
+            if operation == "get" {
+                entered.signal()
+                _ = release.wait(timeout: .now() + 2)
+            }
+        }
+        var getPassed = false, setPassed = false
+        seizeHID.getReport(seizeDevices[0], type: .feature, id: 1) {
+            getPassed = (try? $0.get())?.first == 1
+        }
+        precondition(entered.wait(timeout: .now() + 2) == .success)
+        seizeHID.setReport(seizeDevices[0], type: .feature, data: [1, 3]) { setPassed = $0 == kIOReturnSuccess }
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(20)) { release.signal() }
+        seizeUSB.failSharedOpens = 1
+        seizeHID.vmPaused = true
+        settle()
+        seizeUSB.onOperation = nil
+        check(operations == ["get", "set", "close", "open", "open"] && getPassed && setPassed,
+              "pause drains in-flight GET and queued SET before the close/reopen")
+        check(seizeUSB.isOpen && seizeUSB.lastOpenOptions == shared, "transient failed reopen is retried as shared")
+        seizeUSB.emit([0x42, 1])
+        check(seizedInputs == 4, "input callback is restored after a successful retry")
+        seizeHID.vmPaused = false
+        seizeUSB.failSharedOpens = 2
+        var changes = 0
+        seizeHID.onChange = { changes += 1 }
+        seizeHID.stopGuest()
+        check(!seizeUSB.isOpen && !seizeHID.devices.contains { $0 === seizeDevices[0] } && changes == 1,
+              "persistent reopen failure removes the unusable HID device and notifies the bridge")
+        check(seizePuck.lastOpenOptions == shared
+              && loggedLines.contains { $0.contains("opened shared (guest stopping; Puck slot 2)") },
+              "guest shutdown/reboot releases exclusive devices before process exit")
+        seizeHID.vmPaused = true
+        seizeHID.vmPaused = false
+        check(seizePuck.lastOpenOptions == shared, "late resume cannot reacquire HID while the guest stops")
+        #endif
         #endif
         #if HAS_INPUT_MONITORING_WARNING
         let deniedUSBHID = HIDPassthrough()

@@ -114,25 +114,31 @@ DualSense on player 1) becomes the next free player instead of being dropped:
   GameController made feature report 1 (Steam's command channel) STALL, and Steam's retries cut
   Desktop Mode input every 1–2 s. While held, the controller's mouse and keyboard (lizard mode)
   and its GameController input are unavailable on the Mac, and other apps get an exclusive-access
-  error. A paused VM (suspended or asleep), a controller not passed through, or a refusal from
-  macOS (logged) leaves it shared. Like Bluetooth, it does not wake a sleeping guest while
-  passed through (HID input is dropped while the VM is paused);
+  error. A paused or stopping VM, a controller not passed through, or a refusal from
+  macOS (logged) leaves it shared. HID input is dropped while the VM is paused, but the pause
+  releases the exclusive open, so a button press wakes a sleeping guest through its GameController
+  stand-in (without creating an Xbox pad in SteamOS);
 - through its Puck (`28de:1304`): interfaces 2–5 of the Puck are its controller slots, with the
   controller's own report descriptor. SDL and Steam take the Puck's controllers only by USB interface
   number, which a uhid device does not have, so the slot that carries controller state goes to
   SteamOS as a wired Steam Controller (`28de:1302`, USB bus); a slot without controller state for
   2 s is removed again (controller off, moved to another slot or to Bluetooth), and the Puck's
-  GameController pad, if there is one, is an ordinary pad again. In **Desktop Mode** the grace is 30 s and all input
-  reports except wireless status keep the slot alive, including lizard-mode keyboard/mouse and
-  battery reports. This keeps Valve passthrough stable during desktop use, including after
-  Options wakes the controller. Wireless status never extends either timeout, and a Disconnect
-  status removes the slot immediately in both modes. Switching to Desktop Mode does not revive
-  a slot already expired under the 2 s Gaming Mode timeout. Every live slot reserves a player like
-  a Bluetooth controller. To avoid duplicate Xbox 360 pads, as many GameController publications as
-  there are live slots are left out, in connection order (GameController cannot say which belongs
-  to which slot); the rest stay ordinary pads. A passed-through slot is opened exclusively like a
-  USB controller (see above), and shared again while the VM is paused. It cannot wake a sleeping
-  guest because HID input is dropped while the VM is paused.
+  GameController pad, if there is one, is an ordinary pad again. In **Desktop Mode**, the grace is
+  30 s and all input reports except wireless status keep the slot alive, including lizard-mode
+  keyboard/mouse and battery reports. This keeps Valve passthrough stable during desktop use,
+  including after Options wakes the controller. Wireless status never extends either timeout,
+  and a Disconnect status removes the slot immediately in both modes. Switching to Desktop Mode
+  does not revive a slot already expired under the 2 s Gaming Mode timeout. Each live slot can
+  reserve a player as a Bluetooth controller does. To avoid duplicate Xbox 360 pads, the launcher pairs slots and
+  GameController publications in connection order (GameController does not expose the matching
+  slots), and suppresses each publication only if its HID slot gets a player. A passed-through
+  slot is opened exclusively like a USB controller and shared again while the VM is paused.
+  A button press can still wake a sleeping guest if macOS publishes the Puck controller through
+  GameController; the wake handler does not create an Xbox pad in SteamOS.
+
+The launcher releases exclusive opens when SteamOS announces shutdown or reboot. If only the
+guest's pad service stops unexpectedly, macOS cannot see the guest-side port close, so a device
+may stay exclusive until the service says `hello` again, the VM pauses, or the VM stops.
 
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
@@ -146,6 +152,8 @@ macOS returns a Bluetooth LE Steam Controller's 64-byte feature report 1 (Steam'
 sizes; a USB DualSense gets exactly the descriptor's sizes (its firmware report 32 timed out with the
 headroom in 1.9.9, STEAMAC-84). A disconnected controller is removed by the device reference the launcher
 holds, so reconnecting it over USB or Bluetooth passes through the new device.
+Updating a passed-through Steam Controller's firmware from Steam in SteamOS does not complete (seen
+over the Puck and over USB). Update it with Steam on the Mac while the VM is not running.
 
 **Several controllers.** With Settings → Controller → **Additional controllers** (on by default,
 applies now) further connected controllers are players 2–4, each with a gamepad of its own in

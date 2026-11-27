@@ -95,12 +95,13 @@ final class HIDPassthrough {
         /// per-input allocation. Only read on the main thread, like the callback itself.
         fileprivate var lastInputLength = 0
         fileprivate var lastInputTime: TimeInterval = 0
-        /// Open with SeizeDevice right now (`HIDPassthrough.updateSeize`).
-        fileprivate var seized = false
+        /// Actual current open options; nil if the reopen failed and this device is being dropped.
+        fileprivate var openOptions: IOOptionBits? = IOOptionBits(kIOHIDOptionsTypeNone)
         /// IOKit refused the exclusive open: this connection stays shared.
         fileprivate var seizeRefused = false
-        fileprivate var openOptions: IOOptionBits {
-            IOOptionBits(seized ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone)
+        fileprivate var seized: Bool { openOptions == IOOptionBits(kIOHIDOptionsTypeSeizeDevice) }
+        fileprivate var hostID: String {
+            String(format: "%04x:%04x", identity.vendor, puckSlot == nil ? Int(identity.product) : HIDPassthrough.puck.product)
         }
 
         var live: Bool {
@@ -128,7 +129,7 @@ final class HIDPassthrough {
         /// delivered on the main run loop, which this unschedules before the buffer goes.
         deinit {
             IOHIDDeviceUnscheduleFromRunLoop(ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(ref, openOptions)
+            if let openOptions { IOHIDDeviceClose(ref, openOptions) }
             inputBuffer.deallocate()
         }
     }
@@ -546,7 +547,7 @@ final class HIDPassthrough {
         var lines = ["HID routing: generic=\(matchGenericControllers), Valve=\(matchSteamControllers), desktopFocus=\(desktopFocus)"]
         for d in devices {
             let route = d.onInput == nil ? "not forwarding" : "forwarding"
-            var line = String(format: "HID %04x:%04x", d.identity.vendor, d.identity.product)
+            var line = "HID \(d.hostID)"
                 + " \(d.identity.name), registry=\(d.registryID), \(route), \(d.seized ? "exclusive" : "shared")"
             if let slot = d.puckSlot {
                 let age = d.lastState.map { String(format: "%.3fs", now - $0) } ?? "none"
@@ -740,7 +741,15 @@ final class HIDPassthrough {
     /// controllers go back to the shared open and GameController sees them as it does without
     /// passthrough. Exclusive again when the VM runs.
     var vmPaused = false {
-        didSet { if vmPaused != oldValue { for d in devices { updateSeize(d) } } }
+        didSet { if vmPaused != oldValue { updateSeize() } }
+    }
+
+    private var guestStopping = false
+
+    /// BootProgress has observed a guest shutdown/reboot; do not acquire again on this VM.
+    func stopGuest() {
+        guestStopping = true
+        updateSeize()
     }
 
     private var seizeUpdatePending = false
@@ -754,7 +763,7 @@ final class HIDPassthrough {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.seizeUpdatePending = false
-            for d in self.devices { self.updateSeize(d) }
+            self.updateSeize()
         }
     }
 
@@ -765,26 +774,57 @@ final class HIDPassthrough {
         !d.generic && d.identity.bus == busUSB && isSteamController(d)
     }
 
-    /// Exclusive only while the device is passed through and the VM runs. Reopening drops the
-    /// callbacks IOKit holds for the old open, so `watch` registers them again.
-    private func updateSeize(_ d: Device) {
-        let want = HIDPassthrough.seizable(d) && d.onInput != nil && !vmPaused && !d.seizeRefused
-        guard want != d.seized else { return }
-        IOHIDDeviceClose(d.ref, d.openOptions)
-        d.seized = want
-        var result = IOHIDDeviceOpen(d.ref, d.openOptions)
-        if result != kIOReturnSuccess && want {
-            d.seized = false
-            d.seizeRefused = true
-            log("hid passthrough: \(d.identity.name) cannot be opened exclusively (\(HIDPassthrough.describe(result))); it stays shared")
-            result = IOHIDDeviceOpen(d.ref, d.openOptions)
+    private func updateSeize() {
+        var dropped = false
+        for d in devices where HIDPassthrough.seizable(d) {
+            guard let oldOptions = d.openOptions else { continue }
+            let want = d.onInput != nil && !vmPaused && !guestStopping && !d.seizeRefused
+            guard want != d.seized else { continue }
+            let shared = IOOptionBits(kIOHIDOptionsTypeNone)
+            let exclusive = IOOptionBits(kIOHIDOptionsTypeSeizeDevice)
+            let ref = d.ref
+            let tag = "hid passthrough: \(d.hostID) \(d.identity.name)"
+            let slot = d.puckSlot.map { "; Puck slot \($0)" } ?? ""
+            var reason = guestStopping ? "guest stopping" : vmPaused ? "VM paused" : want ? "passing through" : "not passed through"
+
+            // No GET/SET can land between close and open. Keep the device and its callbacks on
+            // the main run loop; report completions dispatch there asynchronously, never sync.
+            let reopened: IOOptionBits? = io.sync {
+                IOHIDDeviceClose(ref, oldOptions)
+                if want {
+                    let result = IOHIDDeviceOpen(ref, exclusive)
+                    if result == kIOReturnSuccess { return exclusive }
+                    d.seizeRefused = true
+                    reason = "exclusive open refused"
+                    let page = (IOHIDDeviceGetProperty(ref, kIOHIDPrimaryUsagePageKey as CFString) as? NSNumber)?.stringValue ?? "?"
+                    let usage = (IOHIDDeviceGetProperty(ref, kIOHIDPrimaryUsageKey as CFString) as? NSNumber)?.stringValue ?? "?"
+                    log(tag + String(format: " cannot be opened exclusively (IOReturn 0x%08x, primary=%@/%@%@)",
+                                     UInt32(bitPattern: result), page, usage, slot))
+                }
+                var result = IOHIDDeviceOpen(ref, shared)
+                if result != kIOReturnSuccess {
+                    log("\(tag) did not reopen (\(HIDPassthrough.describe(result))\(slot)); retrying shared open")
+                    result = IOHIDDeviceOpen(ref, shared)
+                }
+                if result == kIOReturnSuccess { return shared }
+                log("\(tag) did not reopen after retry (\(HIDPassthrough.describe(result))\(slot)); dropping device")
+                return nil
+            }
+            d.openOptions = reopened
+            if reopened != nil {
+                watch(d)
+                log("\(tag) opened \(d.seized ? "exclusively" : "shared") (\(reason)\(slot))")
+            } else {
+                d.onInput = nil
+                d.inputOwner = nil
+                devices.removeAll { $0 === d }
+                dropped = true
+            }
         }
-        guard result == kIOReturnSuccess else {
-            log("hid passthrough: \(d.identity.name) did not reopen: \(HIDPassthrough.describe(result))")
-            return
+        if dropped {
+            if !devices.contains(where: { $0.puckSlot != nil }) { stopPuckTimer() }
+            onChange?()
         }
-        watch(d)
-        log("hid passthrough: \(d.identity.name) opened \(d.seized ? "exclusively" : "shared")")
     }
 
     enum ReportType: String {

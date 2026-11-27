@@ -428,6 +428,7 @@ do {
                     inputs: inputs, netSocket: Supervisor.netSocket)
     lifecycle.vm = vm
     let gamepad = padPorts.isEmpty ? nil : GamepadBridge(ports: padPorts, settings: settings, typeOverride: options.padType)
+    progress.onShutdown = { [weak gamepad] _ in gamepad?.guestStopping() }
     let sound = SoundControl()
     if vm.hasSound {
         sound.attach(ctx: vm.ctx, settings: settings)
