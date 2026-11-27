@@ -1266,6 +1266,7 @@ operation (“… failed: Too many open files (RLIMIT_NOFILE 256)”).
 Checks without a VM: `host/kosmickrisp/build.sh` runs `host/moltenvk/probe` and the repros
 (`REPRO_DRIVER=kosmickrisp host/moltenvk/repro/run.sh <dylib>`, through the Khronos loader, test
 only) on the staged driver; `host/virglrenderer/build.sh` runs `venus_check` with each installed driver.
+For pipeline creation bugs, see [capturing and replaying a pipeline with Fossilize](host/kosmickrisp/FOSSILIZE.md).
 
 ## Signing in
 
