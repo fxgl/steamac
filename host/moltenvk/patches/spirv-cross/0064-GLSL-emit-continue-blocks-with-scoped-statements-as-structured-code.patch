@@ -1,0 +1,53 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] GLSL: emit continue blocks with scoped statements as structured code
+
+STEAMAC-B6/B7/B8/B9 (1.9.13 and 1.9.15, M1, macOS 15.3.1, appids 5401090 and
+5037200): MoltenVK shader library compile failed, "expected ')'", at
+`for (uint _135 = 0u; _135 < 8u; ..., if ((... in bounds ...)), {,
+_18[_156].write(...), }, _135++)`. dxil-spirv places the per-iteration
+image writes in the loop's continue construct; with robustImageAccess2 MSL
+guards each OpImageWrite with its own `if (...) { ... }` scope, and
+CompilerGLSL::emit_continue_block captures the continue block's statements
+and comma-joins them into the for-loop increment, scopes included.
+
+When a captured continue-block statement opens or closes a scope, mark the
+continue block complex and recompile, so the loop takes the existing
+structured form (for (;;) with the continue block inline), as do-while loops
+already do when their continue block has side effects. Robustness guards
+are kept; branchless continue blocks keep the for-loop form.
+
+Regression: host/moltenvk/repro/sentry-b6-continue.sh <spirv-cross>: a valid
+SPIR-V loop writing texel i in its continue block reproduces `expected ')'`
+with robustImageAccess2 before; after, MSL 2.4 and 3.0 compile with and
+without robustness and the GPU writes texels 0-7 = 0-7, 8-15 untouched.
+sentry-msl.sh's reconstructed shaders still pass.
+
+Generated-by: LLM
+---
+diff --git a/spirv_glsl.cpp b/spirv_glsl.cpp
+index c7343a0..2d9399c 100644
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -17863,6 +17863,21 @@ string CompilerGLSL::emit_continue_block(uint32_t continue_block, bool follow_tr
+ 	// Restore old pointer.
+ 	redirect_statement = old;
+ 
++	// steamac: statements the backend synthesizes with their own scope (MSL robustImageAccess2
++	// guards an image write as `if (in bounds) { write }`; atomic CAS loops) cannot be
++	// comma-joined into a for-loop increment: STEAMAC-B6/B7/B8/B9 emitted
++	// `for (...; ...; x, if (...), {, write, }, i++)` and Metal reported `expected ')'`.
++	// Emit the continue block as structured code on the next pass instead.
++	for (auto &s : statements)
++	{
++		if (s == "{" || (!s.empty() && s.front() == '}'))
++		{
++			get<SPIRBlock>(continue_block).complex_continue = true;
++			force_recompile();
++			break;
++		}
++	}
++
+ 	// Somewhat ugly, strip off the last ';' since we use ',' instead.
+ 	// Ideally, we should select this behavior in statement().
+ 	for (auto &s : statements)

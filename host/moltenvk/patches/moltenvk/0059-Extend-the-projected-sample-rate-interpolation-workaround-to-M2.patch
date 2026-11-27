@@ -1,0 +1,39 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] Extend the projected sample-rate interpolation workaround to M2
+
+STEAMAC-CA (1.9.15, Apple M2 Max Mac14,6, macOS 27.2.1, 2 events): render
+pipeline compile failed (Error code 2): "Undefined symbols:
+llvm.agx2.sample.itrproj.1xf, referenced from: main0". That is the M1
+failure of STEAMAC-8J, which 0051/0053 avoid with pull-model interpolation
+at get_sample_position(gl_SampleID), but only on Apple7 without Apple8. The
+captured four-sample pair (float3 v1 [[sample_perspective]] with projected
+sampling) reproduces the undefined symbol on an M1 Max and links with the
+workaround enabled; the reporting M2 Max is Apple8.
+
+Enable the workaround on Apple7 and Apple8 GPUs (M1, M2), not Apple9 and
+later, for which no failure was reported. Interpolation positions and
+arithmetic are preserved, as on M1; the option is serialized as before.
+
+Verified on M1 only (no M2 here): sentry-8j-projected.sh still passes.
+
+Generated-by: LLM
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -2347,11 +2347,12 @@
+ 		if (mtlFeats.needsSampleDrefLodArrayWorkaround) {
+ 			shaderConfig.options.mslOptions.sample_dref_lod_array_as_grad = true;
+ 		}
+-		// AGXMetalG13X (M1) cannot link projected sampling of sample-rate varyings.
++		// AGXMetalG13X (M1) and AGXMetalG14X (M2, STEAMAC-CA on an M2 Max) cannot link projected
++		// sampling of sample-rate varyings (undefined llvm.agx2.sample.itrproj.1xf).
+ 		// Preserve interpolation/arithmetic, but avoid the broken itrproj fusion.
+ 		const auto& gpuCaps = getPhysicalDevice()->getMTLDeviceCapabilities();
+ 		shaderConfig.options.mslOptions.sample_rate_interpolation_as_offset =
+-			gpuCaps.supportsApple7 && !gpuCaps.supportsApple8 && mtlFeats.mslVersion >= 20300;
++			gpuCaps.supportsApple7 && !gpuCaps.supportsApple9 && mtlFeats.mslVersion >= 20300;
+ 		shaderConfig.options.mslOptions.for_mesh_pipeline = false;
+ 		if (_isRasterizing && pCreateInfo->pMultisampleState) {		// Must ignore allowed bad pMultisampleState pointer if rasterization disabled
+ #if MVK_USE_METAL_PRIVATE_API

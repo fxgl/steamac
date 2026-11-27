@@ -1,0 +1,84 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] Make device residency sets resident per command buffer
+
+STEAMAC-3/D8/D9 (1.9.15, M4, macOS 15.7.3, appid 1043240): SIGABRT
+`_addResidencySets:387: failed assertion` in -[IOGPUMetalCommandQueue
+addResidencySet:] <- MVKQueue::initMTLCommandQueue <- MVKDevice::initQueues
+<- vkCreateDevice. Metal allows 32 residency sets per MTLCommandQueue.
+MoltenVK caches its MTLCommandQueues per physical device (they are scarce),
+shares them between all VkDevices, and added each VkDevice's residency set
+to the shared queue, so the 33rd VkDevice alive at once aborted the process.
+
+Attach the device's residency set to each Metal command buffer MVKQueue
+creates (useResidencySet:, macOS 15) instead of to the shared queue; remove
+the queue add/remove path. Every command buffer that encodes device work is
+created by MVKQueue::getMTLCommandBuffer; the device's deferred-release
+fence buffers encode nothing.
+
+Regression: REPRO_CASE=queue-residency host/moltenvk/repro/run.sh <libdir>:
+40 VkDevices alive on one physical device each fill and read back their own
+buffer, then half are replaced and all submit again. The 1.9.15 MoltenVK
+aborts creating device 33 ("command queue residency set limit of 32
+exceeded"); with this patch all pass.
+
+Generated-by: LLM
+---
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+@@ -1026,18 +1026,18 @@
+ 	}
+ #endif
+ 
+-	void addResidencySet(id<MTLCommandQueue> queue) {
++	/**
++	 * Makes this device's residency set resident for the command buffer. Metal allows only
++	 * 32 residency sets per MTLCommandQueue, and MTLCommandQueues are cached per physical device
++	 * and shared by every VkDevice, so adding each device's set to the queue aborted the process
++	 * at the 33rd live VkDevice (STEAMAC-3/D8/D9: _addResidencySets failed assertion).
++	 */
++	void useResidencySet(id<MTLCommandBuffer> mtlCmdBuff) {
+ #if MVK_XCODE_16
+-		if (_residencySet) [queue addResidencySet:_residencySet];
++		if (_residencySet && mtlCmdBuff) [mtlCmdBuff useResidencySet:_residencySet];
+ #endif
+ 	}
+ 
+-	void removeResidencySet(id<MTLCommandQueue> queue) {
+-#if MVK_XCODE_16
+-		if (_residencySet) [queue removeResidencySet:_residencySet];
+-#endif
+-	}
+-
+ 	bool hasResidencySet() {
+ #if MVK_XCODE_16
+ 		return _residencySet != nil;
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+@@ -174,6 +174,8 @@
+ 	}
+ 	mtlCmdBuff = [_mtlQueue commandBufferWithDescriptor: mtlCmdBuffDesc];
+ 	[mtlCmdBuffDesc release];														// temp release
++	// The device's allocations, per command buffer: the queue is shared by every VkDevice (STEAMAC-3)
++	_device->useResidencySet(mtlCmdBuff);
+ 
+ 	addPerformanceInterval(getPerformanceStats().queue.retrieveMTLCommandBuffer, startTime);
+ 	NSString* mtlCmdBuffLabel = getMTLCommandBufferLabel(cmdUse);
+@@ -332,7 +334,6 @@
+ // Retrieves and initializes the Metal command queue and Xcode GPU capture scopes
+ void MVKQueue::initMTLCommandQueue() {
+ 	_mtlQueue = _queueFamily->getMTLCommandQueue(_index);	// not retained (cached in queue family)
+-	_device->addResidencySet(_mtlQueue);
+ 
+ 	_submissionCaptureScope = new MVKGPUCaptureScope(this);
+ 	if (_queueFamily->getIndex() == getMVKConfig().defaultGPUCaptureScopeQueueFamilyIndex &&
+@@ -346,7 +347,6 @@
+ MVKQueue::~MVKQueue() {
+ 	destroyExecQueue();
+ 	_submissionCaptureScope->destroy();
+-	_device->removeResidencySet(_mtlQueue);
+ 
+ 	[_mtlCmdBuffLabelBeginCommandBuffer release];
+ 	[_mtlCmdBuffLabelQueueSubmit release];

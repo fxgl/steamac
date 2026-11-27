@@ -1,0 +1,50 @@
+; STEAMAC-B6/B7/B8/B9: a storage-image write in a loop's continue block, as dxil-spirv emits
+; (dispatch loops writing each iteration's texel in the continue construct). With
+; robustImageAccess2 SPIRV-Cross guards the write with `if (in bounds) { write }`, which its
+; for-loop emission comma-joined into the for(...; ...; increment) header: Metal reported
+; `expected ')'`. The body is empty; the continue block writes texel (i, 0) = i and
+; increments i, for i < 8.
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main"
+               OpExecutionMode %main LocalSize 1 1 1
+               OpDecorate %img DescriptorSet 0
+               OpDecorate %img Binding 0
+               OpDecorate %img NonReadable
+       %void = OpTypeVoid
+     %fnvoid = OpTypeFunction %void
+       %uint = OpTypeInt 32 0
+        %int = OpTypeInt 32 1
+      %float = OpTypeFloat 32
+       %bool = OpTypeBool
+     %v2int = OpTypeVector %int 2
+    %v4float = OpTypeVector %float 4
+      %image = OpTypeImage %float 2D 0 0 0 2 R32f
+%ptr_image = OpTypePointer UniformConstant %image
+        %img = OpVariable %ptr_image UniformConstant
+      %int_0 = OpConstant %int 0
+      %int_1 = OpConstant %int 1
+      %int_8 = OpConstant %int 8
+       %main = OpFunction %void None %fnvoid
+      %entry = OpLabel
+               OpBranch %header
+     %header = OpLabel
+          %i = OpPhi %int %int_0 %entry %next %continue
+               OpLoopMerge %merge %continue None
+               OpBranch %cond
+       %cond = OpLabel
+       %less = OpSLessThan %bool %i %int_8
+               OpBranchConditional %less %body %merge
+       %body = OpLabel
+               OpBranch %continue
+   %continue = OpLabel
+     %loaded = OpLoad %image %img
+      %coord = OpCompositeConstruct %v2int %i %int_0
+     %valuef = OpConvertSToF %float %i
+      %value = OpCompositeConstruct %v4float %valuef %valuef %valuef %valuef
+               OpImageWrite %loaded %coord %value
+       %next = OpIAdd %int %i %int_1
+               OpBranch %header
+      %merge = OpLabel
+               OpReturn
+               OpFunctionEnd

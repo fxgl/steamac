@@ -160,6 +160,20 @@
 #   exact. sentry-87-components.sh checks plain/block float2+float2 and float3+float
 #   beside linked widths, pixels, equal-width controls and serialized cache reuse.
 #   The patch-series hash invalidates old MSL caches; no cache schema changes.
+#   MoltenVK 0058 (STEAMAC-3/D8/D9): Metal allows 32 residency sets per MTLCommandQueue,
+#   and MoltenVK's cached queues are shared by every VkDevice: adding each device's set
+#   to the queue aborted at the 33rd live VkDevice (_addResidencySets assertion). Use
+#   the set per command buffer (useResidencySet:). REPRO_CASE=queue-residency: 40 live
+#   devices fill/read back their own buffers, half are replaced; 1.9.15 aborts at 33.
+#   MoltenVK 0059 (STEAMAC-CA, M2 Max): undefined llvm.agx2.sample.itrproj.1xf, the M1
+#   failure 0051/0053 avoid with pull-model sample-rate interpolation, enabled only on
+#   Apple7-without-Apple8. Enable it for Apple7/Apple8 (M1, M2), not Apple9+ (no
+#   reports). Verified on M1 only: the captured pair links with the workaround.
+#   SPIRV-Cross 0064 (STEAMAC-B6/B7/B8/B9, dxil-spirv continue-construct image writes):
+#   robustImageAccess2 guards OpImageWrite with its own if-scope, which the for-loop
+#   emitter comma-joined into the increment (`expected ')'`). A continue block whose
+#   statements open a scope is now emitted structured (for (;;), continue inline).
+#   sentry-b6-continue.sh reproduces the error from valid SPIR-V and checks GPU writes.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -455,6 +469,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         (STEAMAC-AG/G; 4x64 BC1 AGX assertion and 300x3 RGBA8 pitch regressions)"
 	echo "  0057 = steamac: retain GPU encoder/signpost/shader-log evidence at errors-only logging"
 	echo "         and give opt-in capture instructions (STEAMAC-AG/G diagnostics, no hang fix)"
+	echo "  0058 = steamac: device residency sets per command buffer, not per shared queue (STEAMAC-3/D8/D9: 32-set queue limit)"
+	echo "  0059 = steamac: projected sample-rate interpolation workaround on M2 too (STEAMAC-CA)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"
@@ -571,6 +587,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         with each location's binding/offset/format (STEAMAC-AV, half2[2])"
 	echo "  0063 = steamac: preserve vertex/fragment component suffixes with sparse width-link maps"
 	echo "         (STEAMAC-87/BB; 1.9.14 duplicate locnN regression, pixels/cache round trip)"
+	echo "  0064 = steamac: continue blocks with scoped statements (robust image-write guards) emitted as structured loops"
+	echo "         (STEAMAC-B6/B7/B8/B9 'expected )' in for-loop increments)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"
