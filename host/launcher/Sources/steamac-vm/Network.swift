@@ -124,12 +124,89 @@ final class Gvproxy {
         return "gvproxy forward API exit: \(p.terminationStatus)\n" + text + "\n"
     }
 
-    static func attach(ctx: UInt32, socket: String) throws {
-        var mac = Gvproxy.guestMAC
-        let r = socket.withCString { path in
-            krun_add_net_unixgram(ctx, path, -1, &mac, STEAMAC_COMPAT_NET_FEATURES, STEAMAC_NET_FLAG_VFKIT)
+    /// The VM's end of gvproxy's vfkit socket cannot be created: the volume holding the run
+    /// directory is full. An expected host condition, refused before the VM starts (STEAMAC-82:
+    /// libkrun's own bind failed with ENOSPC at virtio-net activation and panicked).
+    struct NoSpace: LocalizedError, CustomStringConvertible {
+        let path: String
+        var description: String {
+            "Cannot create the VM's network socket \(path): no space left on the Mac's startup disk. Free some space on the startup disk, then start FX Steam Launcher again."
         }
-        if r < 0 { throw KrunError(call: "krun_add_net_unixgram", code: r) }
+        var errorDescription: String? {
+            String(localized: "Cannot create the VM's network socket \(path): no space left on the Mac's startup disk. Free some space on the startup disk, then start FX Steam Launcher again.")
+        }
+    }
+
+    /// libkrun's frame and receive buffer sizes for unixgram backends (devices/src/virtio/net/
+    /// unixgram.rs on macOS: SO_SNDBUF is the maximum frame, MAX_BUFFER_SIZE - VNET_HDR_LEN).
+    static let socketSendBuffer: Int32 = 65562 - 12
+    static let socketReceiveBuffer: Int32 = 7 * 1024 * 1024
+
+    /// Connects the VM's end before the VM starts and hands libkrun the descriptor: libkrun would
+    /// otherwise bind and connect only when the guest activates virtio-net, and turn any failure
+    /// there (no space for the socket, gvproxy gone) into a Rust panic (STEAMAC-82). The local
+    /// socket lives next to gvproxy's, in the run directory removed on exit.
+    static func attach(ctx: UInt32, socket: String) throws {
+        let fd = try connect(peer: socket, local: (socket as NSString).deletingLastPathComponent + "/vm-net-\(getpid()).sock")
+        var mac = Gvproxy.guestMAC
+        // libkrun owns the descriptor from here (it closes it with the device).
+        let r = krun_add_net_unixgram(ctx, nil, fd, &mac, STEAMAC_COMPAT_NET_FEATURES, 0)
+        if r < 0 {
+            close(fd)
+            throw KrunError(call: "krun_add_net_unixgram", code: r)
+        }
+    }
+
+    /// A unixgram socket bound at `local`, connected to gvproxy's vfkit socket `peer`, after the
+    /// vfkit handshake, with libkrun's buffer sizes.
+    static func connect(peer: String, local: String) throws -> Int32 {
+        let fd = Darwin.socket(AF_UNIX, SOCK_DGRAM, 0)
+        guard fd >= 0 else { throw OptionError("network: socket: \(String(cString: strerror(errno)))") }
+        var ok = false
+        defer { if !ok { close(fd) } }
+        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
+        func address(_ path: String) throws -> sockaddr_un {
+            var a = sockaddr_un()
+            a.sun_family = sa_family_t(AF_UNIX)
+            let bytes = Array(path.utf8)
+            guard bytes.count < MemoryLayout.size(ofValue: a.sun_path) else { throw OptionError("network: socket path too long: \(path)") }
+            withUnsafeMutableBytes(of: &a.sun_path) { $0.copyBytes(from: bytes) }
+            a.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+            return a
+        }
+        var localAddress = try address(local)
+        unlink(local)
+        let bound = withUnsafePointer(to: &localAddress) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard bound == 0 else {
+            let error = errno
+            if error == ENOSPC { throw NoSpace(path: local) }
+            throw OptionError("network: bind \(local): \(String(cString: strerror(error)))")
+        }
+        var peerAddress = try address(peer)
+        let connected = withUnsafePointer(to: &peerAddress) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard connected == 0 else {
+            let error = errno
+            // gvproxy created the socket and has since exited or removed it: its log says why.
+            let tail = ((try? String(contentsOfFile: (peer as NSString).deletingLastPathComponent + "/gvproxy.log", encoding: .utf8)) ?? "")
+                .split(separator: "\n").suffix(5).joined(separator: "\n  ")
+            throw OptionError("network: connect to gvproxy \(peer): \(String(cString: strerror(error)))"
+                + (tail.isEmpty ? " (no gvproxy log)" : "; gvproxy log:\n  \(tail)"))
+        }
+        let magic: [UInt8] = Array("VFKT".utf8)
+        guard Darwin.send(fd, magic, magic.count, 0) == magic.count else {
+            throw OptionError("network: vfkit handshake with \(peer): \(String(cString: strerror(errno)))")
+        }
+        var send = socketSendBuffer, receive = socketReceiveBuffer
+        if setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send, socklen_t(MemoryLayout<Int32>.size)) != 0
+            || setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive, socklen_t(MemoryLayout<Int32>.size)) != 0 {
+            log("network: socket buffer sizes not applied: \(String(cString: strerror(errno)))")
+        }
+        ok = true
+        return fd
     }
 
     /// Stop gvproxy and wait until it is gone (its ssh port is free again afterwards).

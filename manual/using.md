@@ -27,7 +27,11 @@ installer is rejected when chosen, and a saved disk that is not one is refused b
 (STEAMAC-7Y/7Z). If the guest's initramfs fails anyway (`steamac-init: FATAL …`), the window shows the
 failure instead of staying at 3%. A disk the launcher may not open or lock (permissions, removable-volume
 access) is explained with Finder → Get Info → Sharing & Permissions and Privacy & Security, and logged,
-not sent as a crash report (STEAMAC-15). In this
+not sent as a crash report (STEAMAC-15); so is an input/output error from the disk's drive (reconnect it,
+run Disk Utility First Aid, keep the image; STEAMAC-15). The VM's end of gvproxy's network socket is
+connected (with the vfkit handshake) before the VM starts, so a full startup disk is refused with an
+explanation and a gvproxy that has exited is a startup error with its log, instead of a libkrun panic when
+the guest enables virtio-net (STEAMAC-82). In this
 mode, the guest console and launcher log are written to
 `~/Library/Logs/es.fxgam.steamac/steamac-vm.log`; SIGUSR1 frame dumps go there too. `./run.sh`
 and `work/out/steamac-vm` work as before (window settings also apply to them unless overridden by

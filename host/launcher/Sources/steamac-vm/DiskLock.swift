@@ -29,8 +29,22 @@ enum DiskLock {
         }
     }
 
+    /// The disk's volume returned an I/O error before the VM started: a disconnected or failing
+    /// drive, or a damaged file system, not a launcher crash (STEAMAC-15: flock EIO on an external
+    /// volume). The image is kept; locking is never skipped.
+    struct Unavailable: LocalizedError, CustomStringConvertible {
+        let path: String
+        var description: String {
+            "Cannot read the SteamOS disk \(path): its drive returned an input/output error. Check that the drive is connected (reconnect it if needed) and run First Aid on its volume in Disk Utility, then try again. Do not delete the disk image."
+        }
+        var errorDescription: String? {
+            String(localized: "Cannot read the SteamOS disk \(path): its drive returned an input/output error. Check that the drive is connected (reconnect it if needed) and run First Aid on its volume in Disk Utility, then try again. Do not delete the disk image.")
+        }
+    }
+
     static func failure(path: String, code: Int32, locking: Bool) -> Error {
         if code == EACCES || code == EPERM { return AccessDenied(path: path) }
+        if code == EIO { return Unavailable(path: path) }
         if locking && code == EWOULDBLOCK { return InUse(path: path) }
         return OptionError("\(locking ? "cannot lock " : "")\(path): \(String(cString: strerror(code)))")
     }

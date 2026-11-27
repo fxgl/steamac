@@ -18,7 +18,7 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 从访达启动（无参数）用包内的内核、initramfs 与层，SteamOS 磁盘取自 设置 → 高级 → 磁盘映像。默认：
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`；否则用仓库的
 `work/out/steamos.img`（包旁边或构建处）。无磁盘时，首次启动窗口提供**新建磁盘…**（见[无需 Docker 创建 SteamOS 磁盘](building.md#无需-docker-创建-steamos-磁盘)）或**使用已有磁盘…**
-（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。磁盘必须是带本布局分区的 SteamOS 原始 GPT 磁盘：选择 Steam Deck 恢复压缩包或 macOS 版 Steam 安装器时会被拒绝，已保存但不合格的磁盘在启动前即被拒绝（STEAMAC-7Y/7Z）。若客户机 initramfs 仍然失败（`steamac-init: FATAL …`），窗口显示错误而不是停在 3%。启动器无法打开或锁定的磁盘（权限、可移除卷访问）会提示检查 Finder → 显示简介 → 共享与权限以及隐私与安全性，并只记日志，不作为崩溃报告发送（STEAMAC-15）。此模式客户机控制台与启动器日志写入
+（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。磁盘必须是带本布局分区的 SteamOS 原始 GPT 磁盘：选择 Steam Deck 恢复压缩包或 macOS 版 Steam 安装器时会被拒绝，已保存但不合格的磁盘在启动前即被拒绝（STEAMAC-7Y/7Z）。若客户机 initramfs 仍然失败（`steamac-init: FATAL …`），窗口显示错误而不是停在 3%。启动器无法打开或锁定的磁盘（权限、可移除卷访问）会提示检查 Finder → 显示简介 → 共享与权限以及隐私与安全性，并只记日志，不作为崩溃报告发送（STEAMAC-15）；磁盘所在驱动器报告输入/输出错误时同样处理（重新连接、在“磁盘工具”中运行“急救”、保留映像；STEAMAC-15）。虚拟机一端的 gvproxy 网络套接字在虚拟机启动前即连接（并完成 vfkit 握手）：启动磁盘已满时给出说明并拒绝启动，gvproxy 已退出时报告附带其日志的启动错误，而不是在客户机启用 virtio-net 时让 libkrun 崩溃（STEAMAC-82）。释放 HID 设备时一并注销其输入与移除回调：IOHIDDevice 关闭后仍保留它们，而交给 GameController 又交回的普通控制器会经同一引用再次打开（STEAMAC-CV）。若写入磁盘前整个目标文件夹消失，会给出说明且不发送到 Sentry（STEAMAC-CR）。此模式客户机控制台与启动器日志写入
 `~/Library/Logs/es.fxgam.steamac/steamac-vm.log`；SIGUSR1 帧转储亦然。`./run.sh`
 与 `work/out/steamac-vm` 照常用（除非被标志覆盖，窗口设置对它们同样有效）。
 

@@ -153,10 +153,50 @@ enum ProvisionSelfTest {
                       "disk permission refusal has recovery guidance: errno \(code), locking \(locking) (STEAMAC-15)")
             }
         }
+        for locking in [false, true] {
+            let error = DiskLock.failure(path: "/Volumes/Storage/steamos.img", code: EIO, locking: locking)
+            check(error is DiskLock.Unavailable && "\(error)".contains("First Aid") && "\(error)".contains("Do not delete")
+                  && !error.localizedDescription.isEmpty,
+                  "disk I/O error is an explained startup refusal: locking \(locking) (STEAMAC-15)")
+        }
         check(DiskLock.failure(path: "disk", code: EWOULDBLOCK, locking: true) is DiskLock.InUse
-              && DiskLock.failure(path: "disk", code: EIO, locking: true) is OptionError
+              && DiskLock.failure(path: "disk", code: ENOMEM, locking: true) is OptionError
               && !CrashReporting.unexpectedExit(status: CrashReporting.startupRejectedStatus, runDir: NSTemporaryDirectory()),
-              "only expected disk refusals are log-only; I/O errors remain errors")
+              "only expected disk refusals are log-only; other errors remain errors")
+        attempt("vfkit socket connected before the VM starts (STEAMAC-82)") {
+            let dir = NSTemporaryDirectory() + "steamac-net-\(getpid())"
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let peer = dir + "/net.sock"
+            // gvproxy's end: a bound datagram socket that receives the handshake.
+            let server = socket(AF_UNIX, SOCK_DGRAM, 0)
+            defer { close(server) }
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(peer.utf8)) }
+            let bound = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            }
+            guard bound == 0 else { throw OptionError("bind fixture: \(String(cString: strerror(errno)))") }
+            let fd = try Gvproxy.connect(peer: peer, local: dir + "/vm.sock")
+            defer { close(fd) }
+            var magic = [UInt8](repeating: 0, count: 8)
+            let n = recv(server, &magic, magic.count, MSG_DONTWAIT)
+            var size: Int32 = 0, length = socklen_t(MemoryLayout<Int32>.size)
+            getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, &length)
+            check(n == 4 && Array(magic.prefix(4)) == Array("VFKT".utf8) && size == Gvproxy.socketSendBuffer,
+                  "the VM end sends the vfkit handshake with libkrun's frame size before libkrun gets it")
+            unlink(peer)
+            do {
+                close(try Gvproxy.connect(peer: peer, local: dir + "/vm2.sock"))
+                check(false, "connecting to a removed gvproxy socket must fail")
+            } catch {
+                check(error is OptionError && "\(error)".contains("connect to gvproxy") && "\(error)".contains("gvproxy log"),
+                      "gvproxy gone before the VM starts is a startup error with its log, not a libkrun panic")
+            }
+            check(!(Gvproxy.NoSpace(path: "/tmp/x").description.isEmpty) && "\(Gvproxy.NoSpace(path: "/tmp/x"))".contains("Free some space"),
+                  "no space for the network socket has guidance")
+        }
         attempt("real disk permission refusal") {
             let path = NSTemporaryDirectory() + "steamac-permission-\(getpid())"
             FileManager.default.createFile(atPath: path, contents: Data([0]))
@@ -435,6 +475,28 @@ enum ProvisionSelfTest {
             } catch {
                 check(DiskCreationFilesystem.rejection(error) != nil && CrashReporting.diskCreationReport(error) == nil,
                       "removed cache/drive while extracting the index is explained and log-only")
+            }
+        }
+        attempt("destination folder gone before the disk write (STEAMAC-CR)") {
+            let fm = FileManager.default
+            let dir = NSTemporaryDirectory() + "steamac-removed-destination-\(UUID().uuidString)"
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let rootfs = dir + "/steamos.img.rootfs-tmp"
+            do {
+                try DiskCreator.requireRootfs(rootfs, size: 4096)
+                check(false, "a missing rootfs must fail")
+            } catch {
+                check(!(error is DiskCreationFilesystem.Rejection) && CrashReporting.diskCreationReport(error) != nil,
+                      "missing rootfs in a folder that is still there stays reportable")
+            }
+            try fm.removeItem(atPath: dir)
+            do {
+                try DiskCreator.requireRootfs(rootfs, size: 4096)
+                check(false, "a rootfs in a removed folder must fail")
+            } catch {
+                check(error is DiskCreationFilesystem.Rejection && "\(error)".contains("destination folder is no longer available")
+                      && CrashReporting.diskCreationReport(error) == nil,
+                      "removed destination folder is explained and log-only: \(error)")
             }
         }
         check(DiskCreator.cacheRenameCollision(output: ["Error: failed to store in local cache: rename /cache/.tmp-cacnk.1 /cache/chunk.cacnk: file exists"])

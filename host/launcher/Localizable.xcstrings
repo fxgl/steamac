@@ -1313,6 +1313,22 @@
         }
       }
     },
+    "Cannot create the VM's network socket %@: no space left on the Mac's startup disk. Free some space on the startup disk, then start FX Steam Launcher again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать сетевой сокет ВМ %@: на загрузочном диске Mac не осталось места. Освободите место на загрузочном диске и снова запустите FX Steam Launcher."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建虚拟机的网络套接字 %@：Mac 启动磁盘已没有剩余空间。请释放启动磁盘空间，然后重新启动 FX Steam Launcher。"
+          }
+        }
+      }
+    },
     "Cannot create the report folder: %@" : {
       "localizations" : {
         "ru" : {
@@ -1347,6 +1363,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法打开或锁定 SteamOS 磁盘 %@：权限不足。请在 Finder >“显示简介”中确认您对文件及其所在宗卷具有读写权限。在“系统设置”>“隐私与安全性”中允许 FX Steam Launcher 访问可移动宗卷（必要时授予完全磁盘访问权限），然后重试。您也可以将磁盘移到可写的本地文件夹，再在设置中重新选择。"
+          }
+        }
+      }
+    },
+    "Cannot read the SteamOS disk %@: its drive returned an input/output error. Check that the drive is connected (reconnect it if needed) and run First Aid on its volume in Disk Utility, then try again. Do not delete the disk image." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать диск SteamOS %@: накопитель сообщил об ошибке ввода-вывода. Проверьте, что накопитель подключён (при необходимости переподключите его), выполните «Первую помощь» для его тома в Дисковой утилите и повторите попытку. Не удаляйте образ диска."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取 SteamOS 磁盘 %@：其所在驱动器报告了输入/输出错误。请检查驱动器是否已连接（必要时重新连接），并在“磁盘工具”中对其宗卷运行“急救”，然后重试。请勿删除磁盘映像。"
           }
         }
       }

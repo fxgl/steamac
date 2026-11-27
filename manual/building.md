@@ -272,7 +272,8 @@ folder occupies whole clusters (128 KiB on a 2 TB drive), about 28 GB in all. Th
 reconstructing the rootfs, and on exFAT deletes the chunk cache before allocating the disk when the volume would otherwise
 be too full (`--keep-cache` keeps it and needs room for both).
 Expected location failures (an existing destination, busy cache, read-only volume, missing write permission,
-full volume, disconnected drive, a destination or cache folder that disappears during creation, or
+full volume, disconnected drive, a destination or cache folder that disappears during creation (including
+the whole destination folder vanishing before the disk is written, STEAMAC-CR), or
 filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
 connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries,

@@ -679,6 +679,14 @@ do {
     log("error: \(error)")
     MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", error.localizedDescription) }
     exit(CrashReporting.startupRejectedStatus)
+} catch let error as DiskLock.Unavailable {
+    log("error: \(error)")
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", error.localizedDescription) }
+    exit(CrashReporting.startupRejectedStatus)
+} catch let error as Gvproxy.NoSpace {
+    log("error: \(error)")
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", error.localizedDescription) }
+    exit(CrashReporting.startupRejectedStatus)
 } catch {
     fatal("\(error)")
 }

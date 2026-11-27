@@ -151,7 +151,10 @@ macOS returns a Bluetooth LE Steam Controller's 64-byte feature report 1 (Steam'
 65 bytes, so only that controller's Bluetooth GET_REPORT buffers have headroom over the descriptor's
 sizes; a USB DualSense gets exactly the descriptor's sizes (its firmware report 32 timed out with the
 headroom in 1.9.9, STEAMAC-84). A disconnected controller is removed by the device reference the launcher
-holds, so reconnecting it over USB or Bluetooth passes through the new device.
+holds, so reconnecting it over USB or Bluetooth passes through the new device. Releasing a device also
+unregisters its input and removal callbacks: IOHIDDevice keeps them across close, and a generic controller
+handed to GameController and back is reopened through the same reference (STEAMAC-CV: a freed wrapper's
+callback crashed the VM).
 Updating a passed-through Steam Controller's firmware from Steam in SteamOS does not complete (seen
 over the Puck and over USB). Update it with Steam on the Mac while the VM is not running.
 

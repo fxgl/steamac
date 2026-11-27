@@ -359,7 +359,19 @@ final class DiskCreator {
         guard stat(path, &st) == 0 else {
             let error = errno
             if error != ENOENT { throw OptionError("\(path): \(String(cString: strerror(error)))") }
-            log("create-disk: missing reconstructed rootfs: \(DiskCreationFilesystem.fileDiagnostic(path)); parent: \(DiskCreationFilesystem.diagnostic(directory: (path as NSString).deletingLastPathComponent))")
+            let parent = (path as NSString).deletingLastPathComponent
+            log("create-disk: missing reconstructed rootfs: \(DiskCreationFilesystem.fileDiagnostic(path)); parent: \(DiskCreationFilesystem.diagnostic(directory: parent))")
+            // The whole destination folder is gone (drive disconnected or unmounted, folder moved):
+            // an expected filesystem condition, not a launcher defect (STEAMAC-CR). A missing file
+            // in a folder that is still there stays reportable.
+            var fs = statfs()
+            if statfs(parent, &fs) != 0 {
+                let parentError = errno
+                if let rejection = DiskCreationFilesystem.rejection(
+                    errno: parentError, detail: "\(parent): destination folder is no longer available: \(String(cString: strerror(parentError)))") {
+                    throw rejection
+                }
+            }
             throw OptionError("\(path): reconstructed SteamOS file is unavailable: \(String(cString: strerror(error))). Check that the drive is connected and no other program is moving or deleting its files, then try again",
                 localized: String(localized: "\(path): reconstructed SteamOS file is unavailable. Check that the drive is connected and no other program is moving or deleting its files, then try again"))
         }
