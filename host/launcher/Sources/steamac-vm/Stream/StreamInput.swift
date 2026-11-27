@@ -115,8 +115,8 @@ final class StreamInput {
                 let n = UInt16(b[8])
                 var pad = pads[n] ?? GamepadBridge.RemotePad(number: n)
                 pad.capabilities = u16(10)
-                // GameStream collapses PS4 and PS5 into LI_CTYPE_PS without a reliable model ID.
-                // Treat that family as DualSense so PS5 clients keep their PlayStation identity.
+                // Moonlight uses LI_CTYPE_PS for PS3, PS4 and PS5 without a reliable model ID.
+                // Prefer PS5 identity and glyphs for the whole family, not a button-mask heuristic.
                 pad.kind = b[9] == 2 ? .dualSense : .xbox360
                 pad.supportedButtons = u32(12)
                 pads[n] = pad
@@ -296,8 +296,11 @@ final class StreamInput {
               && has(.mouse, EV.REL, REL.HWHEEL, -1), "high-resolution vertical/horizontal wheel")
         input.handle(packet(0x17, Array("Az!?".utf8)))
         check(has(.keyboard, EV.KEY, KEY.Z, 1) && has(.keyboard, EV.KEY, KEY.SLASH, 1), "ASCII text")
-        input.handle(packet(0x55000004, [2, 2] + le(3) + [0xff, 0xff, 0xff, 0xff]))
-        check(remote[2]?.kind == .dualShock4 && remote[2]?.capabilities == 3, "controller arrival")
+        input.handle(packet(0x55000004, [2, 2] + le(3) + [0xff, 0xff, 0x10, 0]))
+        check(remote[2]?.kind == .dualSense && remote[2]?.capabilities == 3
+              && remote[2]?.supportedButtons == 0x10ffff, "PlayStation controller arrival without MISC")
+        input.handle(packet(0x55000004, [2, 2] + le(3) + [0xff, 0xff, 0x30, 0]))
+        check(remote[2]?.kind == .dualSense, "PlayStation controller arrival with MISC")
         let stateBody = le(0x1a) + le(2) + le(4) + le(0x14) + le(0x5405) + [128, 255]
             + le(32767) + le(32767) + le(0x8000) + le(0x8000) + le(0x9c) + le(0) + le(0x55)
         input.handle(packet(0x0c, stateBody))
