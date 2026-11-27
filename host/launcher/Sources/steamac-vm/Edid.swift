@@ -8,7 +8,7 @@ import CoreGraphics
 /// with Retina resolution (`pixelScale` guest pixels per point) the guest gets a denser display of
 /// the same physical size and scales its UI up to match. The same mm per guest pixel is reused
 /// whenever the window is resized (the guest display follows the window), so the DPI stays
-/// constant for the whole session.
+/// constant for the whole session unless a side hits the EDID physical-size limit.
 enum EdidSize {
     struct Result {
         let widthMM: Int
@@ -20,8 +20,14 @@ enum EdidSize {
 
         /// Physical size for a guest display of `w`x`h` pixels at this session's DPI.
         func millimetres(_ w: Int, _ h: Int) -> (Int, Int) {
-            (Int((Double(w) * mmPerUnitX).rounded()), Int((Double(h) * mmPerUnitY).rounded()))
+            (EdidSize.boundedMillimetres(Double(w) * mmPerUnitX),
+             EdidSize.boundedMillimetres(Double(h) * mmPerUnitY))
         }
+    }
+
+    private static func boundedMillimetres(_ mm: Double) -> Int {
+        // The base EDID detailed timing has 12-bit physical sizes, even with DisplayID.
+        min(4095, Int(mm.rounded()))
     }
 
     static func resolve(_ o: Options) -> Result {
@@ -31,7 +37,7 @@ enum EdidSize {
         let w = o.displayWidth, h = o.displayHeight
         let (gw, gh) = o.guestSize
         func perPixel(_ mmX: Double, _ mmY: Double, _ source: String) -> Result {
-            Result(widthMM: Int(mmX.rounded()), heightMM: Int(mmY.rounded()),
+            Result(widthMM: boundedMillimetres(mmX), heightMM: boundedMillimetres(mmY),
                    mmPerUnitX: mmX / Double(gw), mmPerUnitY: mmY / Double(gh), source: source)
         }
         if let (wmm, hmm) = o.displayMM {
@@ -57,7 +63,8 @@ enum EdidSize {
             return perPixel(at96.0, at96.1, "96 dpi (host screen \"\(name)\" reports no usable size)")
         }
         let content = WindowController.initialContentSize(width: w, height: h, screen: screen)
-        return Result(widthMM: Int((content.width * mmPerPtX).rounded()), heightMM: Int((content.height * mmPerPtY).rounded()),
+        return Result(widthMM: boundedMillimetres(content.width * mmPerPtX),
+                      heightMM: boundedMillimetres(content.height * mmPerPtY),
                       mmPerUnitX: mmPerPtX * Double(w) / Double(gw), mmPerUnitY: mmPerPtY * Double(h) / Double(gh),
                       source: "host screen \"\(name)\", \(String(format: "%.3f", (mmPerPtX + mmPerPtY) / 2)) mm/pt,"
                         + " window \(Int(content.width))x\(Int(content.height)) pt")

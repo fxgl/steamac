@@ -242,8 +242,8 @@ final class VM {
         t.start()
     }
 
-    /// Ask the guest to switch its display to `width`x`height` px at the boot DPI (any thread;
-    /// libkrun regenerates the EDID and sends a display-change notification). No-op if unchanged.
+    /// Ask the guest to switch to `width`x`height` px at the boot DPI, up to the EDID physical
+    /// size limit (any thread; libkrun regenerates the EDID and notifies the guest).
     func resizeDisplay(width: Int, height: Int) {
         let (wmm, hmm) = edid.millimetres(width, height)
         guard (width, height, wmm, hmm) != displaySize else { return }
@@ -253,7 +253,7 @@ final class VM {
             return
         }
         displaySize = (width, height, wmm, hmm)
-        log("display: resized to \(width)x\(height) px (\(wmm)×\(hmm) mm, same DPI)")
+        log("display: resized to \(width)x\(height) px (\(wmm)×\(hmm) mm)")
     }
 
     /// Press the guest power key (gpio-keys, KEY_RESTART in libkrun 1.19.6's FDT; systemd-logind

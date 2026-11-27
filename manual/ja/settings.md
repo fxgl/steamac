@@ -24,6 +24,14 @@
 | Games | **Share game statistics** (同意するまでオフ、[ゲーム統計](privacy-and-updates.md#ゲーム統計)を参照)、既知のゲームとセッションが記録されたゲーム: ゲームごとのプロファイル (グラフィックス、Vulkan ドライバー、起動オプション。後述)、セッション、プレイ時間、前回のセッションの FPS / 1% low / ゲームのメモリ / Vulkan ドライバー、任意の評価 (Runs well / Playable with issues / Starts, but unplayable / Does not start)、ゲームごとの **Share** スイッチ | プロファイルによっては Steam または VM の再起動が必要です (後述) |
 | Advanced | — | vCPU (`--cpus`)、RAM (`--mem`)、SSH の有効/無効 + ポート (`--ssh-port`、`--no-ssh`) と生成されたパスワード、ネットワーク (`--no-net`)、ディスクイメージ (`--disk`)、Create New Disk…、Steam クライアント (`--steam-client`、[Steam クライアント](using.md#steam-クライアント)を参照)、Vulkan ドライバー (`--vulkan-driver`、[Vulkan ドライバー](vulkan-drivers.md#vulkan-ドライバー)を参照)、Allow DXMT (D3D11 on the Mac's Metal)、実験的機能 (`--wmtr-lib`、`--no-wmtr`、[Vulkan ドライバー](vulkan-drivers.md#vulkan-ドライバー)を参照)、共有フォルダー + SteamOS 内のマウントポイント + Steam ライブラリとしての使用 (`--share`、`--share-mount`、`--no-share`、`--share-library`、`--no-share-library`、[共有フォルダー](clipboard-and-shared-folder.md#共有フォルダー)を参照) |
 
+**Retina resolution** をオンにすると、フルスクリーンのゲストで 5K や 6K のディスプレイの
+ネイティブ解像度をそのまま使えます。標準の Retina スケーリングでは、たとえば Studio Display は
+5120 × 2880、Pro Display XDR は 6016 × 3384 になり、従来の長辺 4094 px の制限はなくなります。
+すでにこの設定をオンにしていた場合は、GPU の負荷が増えることがあります。
+
+Gamescope はリフレッシュレートにかかわらず [4096 × 2160 だけをブロックする](https://github.com/ValveSoftware/gamescope/blob/a962a4dc136369708657605f87057ba3f9991fda/src/Backends/DRMBackend.cpp#L1008-L1026)ため、
+この解像度を指定すると SteamOS のゲームモードでは代わりに 4095 × 2159 が使われます。
+
 **VM の RAM とグラフィックスは Mac のメモリを共有します。** VM の RAM を自動にした場合は物理 RAM の半分
 (4–16 GiB) です。ランチャーは起動のたびに、macOS、他のアプリ、ドライバーのオーバーヘッド用に、少なくとも 3 GiB またはホスト RAM の 4 分の 1 を
 確保します。残りが GPU の予算 (256 MiB–16 GiB、

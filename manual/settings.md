@@ -24,6 +24,14 @@ over saved values, but only for that launch: the field displays “overridden by
 | Games | **Share game statistics** (off until you agree, see [Game statistics](privacy-and-updates.md#game-statistics)); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
 | Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see [Steam client](using.md#steam-client)), Vulkan driver (`--vulkan-driver`, see [Vulkan drivers](vulkan-drivers.md#vulkan-drivers)), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see [Vulkan drivers](vulkan-drivers.md#vulkan-drivers)), shared folder + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-library`, `--no-share-library`, see [Shared folder](clipboard-and-shared-folder.md#shared-folder)) |
 
+With **Retina resolution** on, a fullscreen guest can use the full native resolution of 5K and
+6K displays (for example, 5120 × 2880 on Studio Display or 6016 × 3384 on Pro Display XDR at
+their default Retina scaling), rather than being limited to 4094 px on the long side. This can
+increase GPU load if you already had Retina resolution enabled.
+
+Gamescope [blocks exactly 4096 × 2160](https://github.com/ValveSoftware/gamescope/blob/a962a4dc136369708657605f87057ba3f9991fda/src/Backends/DRMBackend.cpp#L1008-L1026)
+at any refresh rate, so SteamOS Gaming Mode uses the 4095 × 2159 fallback for that size.
+
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
 for macOS, other apps and driver overhead; the remainder is the GPU budget (256 MiB–16 GiB,

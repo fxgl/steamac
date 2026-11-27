@@ -21,6 +21,13 @@
 | 游戏 | **共享游戏统计**（同意前关闭，见[游戏统计](privacy-and-updates.md#游戏统计)）；已知游戏及已记录会话的游戏：单独配置（图形、Vulkan 驱动、启动选项，见下文）、会话数、游玩时间、上次会话的 FPS / 1% low / 游戏内存 / Vulkan 驱动、可选的个人评价（运行良好 / 可玩但有问题 / 能启动但无法游玩 / 无法启动）与每款游戏的**共享**开关 | 配置可能需要重启 Steam 或虚拟机（见下文） |
 | 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见[Steam 客户端](using.md#steam-客户端)）、Vulkan 驱动（`--vulkan-driver`，见[Vulkan 驱动](vulkan-drivers.md#vulkan-驱动)）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见[Vulkan 驱动](vulkan-drivers.md#vulkan-驱动)）、共享文件夹 + SteamOS 中的挂载点 + 用作 Steam 库（`--share`、`--share-mount`、`--no-share`、`--share-library`、`--no-share-library`，见[共享文件夹](clipboard-and-shared-folder.md#共享文件夹)） |
 
+开启 **Retina 分辨率** 后，客户机全屏时可使用 5K 和 6K 显示器的完整原生分辨率（默认 Retina
+缩放下，Studio Display 为 5120 × 2880，Pro Display XDR 为 6016 × 3384），长边不再受原先的
+4094 px 限制。如果之前已开启此选项，GPU 负载可能会上升。
+
+Gamescope 在任何刷新率下都[屏蔽 4096 × 2160 这一特定分辨率](https://github.com/ValveSoftware/gamescope/blob/a962a4dc136369708657605f87057ba3f9991fda/src/Backends/DRMBackend.cpp#L1008-L1026)，
+因此 SteamOS 游戏模式在请求该分辨率时会使用 4095 × 2159 作为备用模式。
+
 **虚拟机内存与图形共享 Mac 的内存。** 自动分配的虚拟机内存为物理内存的一半（4–16 GiB）。
 每次启动还会为 macOS、其他应用和驱动开销预留至少 3 GiB 或宿主内存的四分之一，
 剩余部分作为 GPU 预算（256 MiB–16 GiB，向下取整到 256 MiB）。

@@ -128,6 +128,15 @@ enum SettingsSelfTest {
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck() + PadPort.coalesceSelfCheck()
             + sharedLibrarySelfCheck()
+        var lowDPI = Options()
+        lowDPI.dpi = 50
+        lowDPI.displayWidth = 8192
+        lowDPI.displayHeight = 1600
+        let edid = EdidSize.resolve(lowDPI)
+        if (edid.widthMM, edid.heightMM) != (4095, 813)
+            || edid.millimetres(8000, 8192) != (4064, 4095) {
+            failures.append("50 DPI: EDID must clamp each side to 4095 mm at boot and on resize")
+        }
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType
         context.needsInputMonitoring = true

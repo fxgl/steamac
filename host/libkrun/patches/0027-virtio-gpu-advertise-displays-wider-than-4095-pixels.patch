@@ -10,16 +10,24 @@ side above 4095 pixels cannot be described there. Wide displays such as
 size would have been truncated.
 
 Add the DisplayID 1.3 Type I timing from patch 0020 when a side is above
-4095 as well. Its sizes are 16 bits. The base DTD gets the largest mode
-with the same aspect ratio that fits, so legacy readers still get a
-usable mode at the requested refresh rate. Linux sorts preferred modes
-by area, so the full-size DisplayID mode comes first.
+4095. Its 16-bit dimensions hold the full-size preferred mode. Keep
+the largest same-aspect mode that fits in the base DTD for legacy
+readers. Linux also marks the first EDID 1.4 DTD preferred and
+virtio-gpu accepts preferred modes within 16 px on each axis, so a
+nearby fallback can remain visible. Gamescope skips exactly 4096x2160
+at any refresh rate, so for that request it can pick the 4095x2159
+base timing even though the connector lists the full mode.
+
+See Linux drm_edid.c (add_detailed_modes, drm_mode_displayid_detailed),
+virtgpu_display.c (virtio_gpu_conn_mode_valid), and Gamescope's
+DRMBackend.cpp (g_badModes, find_mode):
+https://github.com/ValveSoftware/gamescope/blob/a962a4dc136369708657605f87057ba3f9991fda/src/Backends/DRMBackend.cpp#L1008-L1026
 
 Raise the resize limit to 8192 pixels, the Linux virtio-gpu mode limit
 (XRES_MAX, YRES_MAX). Physical sizes stay at 4095 mm, which the base
 DTD still holds.
 
-Applies after patches 0001-0025 to libkrun v1.19.6 (227b2de6).
+Applies after patches 0001-0026 to libkrun v1.19.6 (227b2de6).
 ---
  include/libkrun.h                     |  4 +-
  src/devices/src/virtio/gpu/display.rs | 45 ++++++++++++----
