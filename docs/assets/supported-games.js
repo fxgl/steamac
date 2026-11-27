@@ -14,10 +14,13 @@
     playable: ["Playable", "Jugable", "Можно играть", "可游玩"],
     fps: ["median FPS", "FPS mediana", "медиана FPS", "FPS 中位数"],
     chips: ["Tested on", "Probado en", "Проверено на", "已测试芯片"],
+    session: ["session", "sesión", "сеанс", "次会话"],
     sessions: ["sessions", "sesiones", "сеансов", "次会话"],
     prev: ["Previous page", "Página anterior", "Предыдущая страница", "上一页"],
     next: ["Next page", "Página siguiente", "Следующая страница", "下一页"],
   });
+  const ruPlural = new Intl.PluralRules("ru");
+  const ruSessions = { one: "сеанс", few: "сеанса", many: "сеансов", other: "сеанса" };
   let games = null, page = 1;
 
   function totals(game) {
@@ -56,7 +59,9 @@
 
     const sessions = document.createElement("span"), count = document.createElement("b");
     sessions.className = "game-sessions"; count.textContent = L.number(game.sessions);
-    sessions.append(count, tr("sessions"));
+    const unitLabel = tr(game.sessions === 1 ? "session" : "sessions");
+    unitLabel.querySelector('[lang="ru"]').textContent = ruSessions[ruPlural.select(game.sessions)];
+    sessions.append(count, unitLabel);
 
     a.append(rankEl, L.art(game), name, fps, sessions);
     li.append(a);

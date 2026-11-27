@@ -9,7 +9,6 @@
 <meta name="color-scheme" content="dark">
 <link rel="icon" type="image/png" href="media/icon.png">
 <link rel="preload" href="assets/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/fonts/funnel-display-latin-300-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
 <script>
   (function () {
@@ -23,7 +22,6 @@
     document.documentElement.classList.add("js");
   })();
 </script>
-<script src="assets/vendor/anime-4.5.0.umd.min.js" defer></script>
 <script src="assets/stats-api.js" defer></script>
 <script src="assets/list.js" defer></script>
 <script src="assets/games.js" defer></script>
@@ -34,7 +32,7 @@
 <header class="nav">
   <div class="nav-inner">
     <a class="brand" href="index.html" aria-label="FX Steam Launcher"><img class="brand-mark" src="media/icon.png" alt="" width="28" height="28"><span class="brand-name">FX Steam Launcher</span></a>
-    <nav class="nav-links" aria-label="Sections"><a href="index.html"><span lang="en">Home</span><span lang="es">Inicio</span><span lang="ru">Главная</span><span lang="zh">首页</span></a><a href="index.html#get"><span lang="en">Download</span><span lang="es">Descargar</span><span lang="ru">Скачать</span><span lang="zh">下载</span></a><a href="https://github.com/fxgl/steamac" class="gh" aria-label="GitHub, stars"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>GitHub</span><span class="gh-stars"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .67.42l1.88 3.8 4.2.61a.75.75 0 0 1 .41 1.28l-3.04 2.96.72 4.18a.75.75 0 0 1-1.09.79L8 12.31l-3.75 1.98a.75.75 0 0 1-1.09-.8l.72-4.17L.84 6.36a.75.75 0 0 1 .41-1.28l4.2-.61L7.33.67A.75.75 0 0 1 8 .25Z"/></svg><span data-stars>3.2k</span></span></a></nav>
+    <nav class="nav-links" aria-label="Sections"><a href="index.html"><span lang="en">Home</span><span lang="es">Inicio</span><span lang="ru">Главная</span><span lang="zh">首页</span></a><a href="index.html#get"><span lang="en">Download</span><span lang="es">Descargar</span><span lang="ru">Скачать</span><span lang="zh">下载</span></a><a href="https://github.com/fxgl/steamac" class="gh"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.58.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>GitHub</span></a></nav>
     <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-set-lang="en">EN</button><button type="button" data-set-lang="es">ES</button><button type="button" data-set-lang="ru">RU</button><button type="button" data-set-lang="zh">ZH</button></div>
   </div>
 </header>
@@ -48,7 +46,7 @@
       <dl class="stats-totals" id="totals" aria-live="polite">
         <div><dt><span lang="en">Games</span><span lang="es">Juegos</span><span lang="ru">Игры</span><span lang="zh">游戏</span></dt><dd data-total="games">—</dd></div>
         <div><dt data-label="sessions"></dt><dd data-total="sessions">—</dd></div>
-        <div><dt data-label="installs"></dt><dd data-total="installs">—</dd></div>
+        <div><dt data-label="installs_reported"></dt><dd data-total="installs">—</dd></div>
         <div><dt data-label="play_hours"></dt><dd data-total="play_hours">—</dd></div>
       </dl>
       <details class="about">
@@ -83,7 +81,7 @@
     <form id="my-mac" class="my-mac panel" hidden>
       <fieldset>
         <legend><span lang="en">My Mac</span><span lang="es">Mi Mac</span><span lang="ru">Мой Mac</span><span lang="zh">我的 Mac</span></legend>
-        <label class="switch"><input id="my-mac-enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span><span lang="en">Only Macs no better than mine</span><span lang="es">Solo Macs no mejores que el mío</span><span lang="ru">Только Mac не лучше моего</span><span lang="zh">只看不优于我的 Mac</span></span></label>
+        <label class="switch"><input id="my-mac-enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span><span lang="en">Only Macs no better than mine</span><span lang="es">Solo Macs no mejores que el mío</span><span lang="ru">Только Mac не мощнее моего</span><span lang="zh">只看不优于我的 Mac</span></span></label>
         <div class="my-mac-fields">
           <label><span><span lang="en">GPU cores</span><span lang="es">Núcleos de GPU</span><span lang="ru">Ядра GPU</span><span lang="zh">GPU 核心数</span></span><input id="my-gpu" type="number" min="1" max="4096" step="1" inputmode="numeric"></label>
           <label><span><span lang="en">RAM (GB)</span><span lang="es">RAM (GB)</span><span lang="ru">ОЗУ (ГБ)</span><span lang="zh">内存（GB）</span></span><input id="my-ram" type="number" min="1" max="4096" step="1" inputmode="numeric"></label>
@@ -107,11 +105,10 @@
     </section>
   </div>
 
-  <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
-  <aside id="detail" class="drawer" hidden aria-labelledby="detail-title" role="dialog" aria-modal="true">
+  <dialog id="detail" class="drawer" aria-labelledby="detail-title">
     <div class="drawer-art" id="detail-art"></div>
     <div class="drawer-body">
-      <button type="button" class="drawer-close" id="detail-close"><span class="visually-hidden"><span lang="en">Close</span><span lang="es">Cerrar</span><span lang="ru">Закрыть</span><span lang="zh">关闭</span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <button type="button" class="drawer-close" id="detail-close" autofocus><span class="visually-hidden"><span lang="en">Close</span><span lang="es">Cerrar</span><span lang="ru">Закрыть</span><span lang="zh">关闭</span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <a class="drawer-back" href="#"><span lang="en">← All games</span><span lang="es">← Todos los juegos</span><span lang="ru">← Все игры</span><span lang="zh">← 所有游戏</span></a>
       <h2 id="detail-title"></h2>
       <div id="detail-status" class="stats-status" role="status" aria-live="polite"></div>
@@ -121,12 +118,12 @@
         <h3><span lang="en">Recommended profile</span><span lang="es">Perfil recomendado</span><span lang="ru">Рекомендуемый профиль</span><span lang="zh">推荐配置</span></h3>
         <div id="recommended-profile" class="profile"></div>
         <p class="note"><span lang="en">Based on the same My Mac limits: (runs well + half of playable with issues) / all ratings, then launch success and fewer early exits. Requires at least two players. Unknown graphics paths cannot be recommended. Recommendations are not applied automatically.</span><span lang="es">Con los mismos límites de Mi Mac: (funciona bien + la mitad de jugable con problemas) / todas las valoraciones, y después éxito de lanzamiento y menos salidas tempranas. Requiere al menos dos jugadores. Los caminos gráficos desconocidos no se pueden recomendar. Las recomendaciones no se aplican automáticamente.</span><span lang="ru">С теми же ограничениями «Моего Mac»: (работает хорошо + половина оценок «есть проблемы») / все оценки, затем успешные запуски и меньше ранних выходов. Нужно минимум два игрока. Неизвестный графический путь не рекомендуется. Рекомендации не применяются автоматически.</span><span lang="zh">使用相同的「我的 Mac」限制：(运行良好 + 可玩但有问题的一半) / 全部评分，再比较启动成功率和较少的提前退出。至少需要两位玩家。不推荐未知图形路径，不会自动应用推荐配置。</span></p>
-        <h3><span lang="en">Mac configurations</span><span lang="es">Configuraciones de Mac</span><span lang="ru">Конфигурации Mac</span><span lang="zh">Mac 配置</span></h3>
+        <h3 id="configs-title"><span lang="en">Mac configurations</span><span lang="es">Configuraciones de Mac</span><span lang="ru">Конфигурации Mac</span><span lang="zh">Mac 配置</span></h3>
         <p class="note"><span lang="en">Early exit: a launched game that ended normally in under 60 seconds. This is not necessarily a crash. Memory is the median session peak, in MiB. Ratings count players, not sessions.</span><span lang="es">Salida temprana: un juego lanzado que terminó con normalidad en menos de 60 segundos. No es necesariamente un cuelgue. La memoria es la mediana del pico por sesión, en MiB. Las valoraciones cuentan jugadores, no sesiones.</span><span lang="ru">Ранний выход: запущенная игра завершилась обычным выходом менее чем за 60 секунд. Это не обязательно сбой. Память — медиана пиков за сеанс, МиБ. Оценки считаются по игрокам, а не сеансам.</span><span lang="zh">提前退出：已启动的游戏在 60 秒内正常结束，并不一定是崩溃。内存为会话峰值的中位数，单位 MiB。评分按玩家统计，而非会话数。</span></p>
-        <div class="stats-scroll"><table class="stats-table" id="configs-table"><thead></thead><tbody></tbody></table></div>
+        <div class="stats-scroll" role="region" aria-labelledby="configs-title" tabindex="0"><table class="stats-table" id="configs-table"><thead></thead><tbody></tbody></table></div>
       </div>
     </div>
-  </aside>
+  </dialog>
   <noscript><div class="wrap"><p>JavaScript is required to load the public statistics API.</p></div></noscript>
 </main>
 </body>

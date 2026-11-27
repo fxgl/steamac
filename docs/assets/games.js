@@ -6,11 +6,13 @@
   const L = window.steamacList;
   const $ = (id) => document.getElementById(id);
   const PER_PAGE = 20;
+  const drawer = $("detail");
   const { text, tr: translated } = L.translator({
     game: ["Game", "Juego", "Игра", "游戏"], sessions: ["Sessions", "Sesiones", "Сеансы", "会话"], installs: ["Installs", "Instalaciones", "Установки", "安装数"],
+    installs_reported: ["Reported game installs", "Instalaciones de juegos registradas", "Установки игр по отчётам", "上报的游戏安装数"],
     launch_rate: ["Launch rate", "Tasa de arranque", "Запуски", "启动率"], fps_avg_median: ["Median FPS", "FPS mediana", "Медиана FPS", "FPS 中位数"],
     chips: ["Tested on", "Probado en", "Проверено на", "已测试芯片"],
-    play_hours: ["Play hours", "Horas de juego", "Часы игры", "游戏小时"], last_seen: ["Last seen", "Última vez", "Последний сеанс", "最近日期"],
+    play_hours: ["Play hours", "Horas de juego", "Часы игры", "游戏小时"], last_seen: ["Last seen", "Última actividad", "Последняя активность", "最近活动"],
     ratings: ["Player ratings", "Valoraciones", "Оценки игроков", "玩家评分"], well: ["Runs well", "Funciona bien", "Работает хорошо", "运行良好"],
     issues: ["Playable with issues", "Jugable con problemas", "Есть проблемы", "可玩但有问题"], unplayable: ["Unplayable", "Injugable", "Неиграбельно", "无法游玩"], no_start: ["Does not start", "No arranca", "Не запускается", "无法启动"],
     all: ["All", "Todos", "Все", "全部"], unrated: ["Not rated yet", "Sin valorar", "Нет оценок", "暂无评分"],
@@ -144,7 +146,6 @@
       const form = $("my-mac"), open = form.hidden;
       form.hidden = !open;
       $("my-mac-button").setAttribute("aria-expanded", String(open));
-      if (open && window.anime) window.anime.animate(form, { opacity: [0, 1], y: [-8, 0], duration: 350, ease: "out(3)" });
     });
   }
 
@@ -156,15 +157,22 @@
   }
 
   // ---------- Totals ----------
+  let totals;
+  function updateTotals() {
+    totals = { games: games.length, sessions: 0, installs: 0, play_hours: 0 };
+    for (const game of games) {
+      totals.sessions += game.sessions || 0;
+      totals.installs += game.installs || 0;
+      totals.play_hours += game.play_hours || 0;
+    }
+    renderTotals();
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      $("totals").animate([{ opacity: .7 }, { opacity: 1 }], { duration: 250, easing: "ease-out" });
+    }
+  }
   function renderTotals() {
-    const sums = { games: games.length, sessions: 0, installs: 0, play_hours: 0 };
-    for (const g of games) { sums.sessions += g.sessions || 0; sums.installs += g.installs || 0; sums.play_hours += g.play_hours || 0; }
     document.querySelectorAll("[data-total]").forEach((dd) => {
-      const target = Math.round(sums[dd.dataset.total]);
-      if (window.anime && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        const o = { v: 0 };
-        window.anime.animate(o, { v: target, duration: 1400, ease: "out(4)", onUpdate: () => { dd.textContent = number(Math.round(o.v)); } });
-      } else dd.textContent = number(target);
+      dd.textContent = number(Math.round(totals[dd.dataset.total]));
     });
   }
   function renderTotalLabels() {
@@ -183,12 +191,19 @@
       : (b[sort] ?? -1) - (a[sort] ?? -1) || a.appid - b.appid);
     return list;
   }
-  function gameRow(game) {
+  function gameRow(game, dateFormat) {
     const li = document.createElement("li");
     const a = el("a", "game-row stats-row"); a.href = `#${game.appid}`;
     const name = el("span", "game-name"), meta = el("span", "game-meta");
     name.append(el("b", "", gameName(game)));
     meta.append(el("span", "game-appid", String(game.appid)), chipList(game.chips));
+    if (game.last_seen) {
+      const time = el("time", "", dateFormat.format(new Date(game.last_seen)));
+      time.dateTime = game.last_seen;
+      const seen = el("span");
+      seen.append(translated("last_seen"), ": ", time);
+      meta.append(seen);
+    }
     name.append(meta);
     const fps = el("span", "game-fps"), value = el("strong", "", number(game.fps_avg_median, 1)), unit = el("small");
     unit.append(translated("fps_avg_median")); value.append(unit);
@@ -204,24 +219,24 @@
     li.append(a);
     return li;
   }
-  function renderList(animate) {
+  function renderList() {
     if (!generated) return;
     const list = filtered();
     const pages = Math.max(1, Math.ceil(list.length / PER_PAGE));
     page = Math.min(Math.max(1, page), pages);
     const start = (page - 1) * PER_PAGE, shown = list.slice(start, start + PER_PAGE);
-    $("games-list").replaceChildren(...shown.map(gameRow));
+    const dateFormat = new Intl.DateTimeFormat(root.lang, { dateStyle: "medium", timeZone: "UTC" });
+    $("games-list").replaceChildren(...shown.map((game) => gameRow(game, dateFormat)));
     $("games-list").hidden = !list.length;
     L.pager($("games-pager"), {
       page, pages, total: list.length, from: start + 1, to: start + shown.length,
       labels: { prev: text("prev"), next: text("next") },
-      onChange: (p) => { page = p; renderList(true); $("toolbar").scrollIntoView({ block: "start" }); },
+      onChange: (p) => { page = p; renderList(); $("toolbar").scrollIntoView({ block: "start" }); },
     });
     if (list.length) $("list-status").hidden = true;
     else status("list-status", games.length ? "no_match" : filterQuery() ? "filtered_empty" : "empty");
     $("updated").textContent = generated ? `${text("updated")}: ${new Date(generated).toLocaleString(root.lang)}` : "";
     renderFilters();
-    if (animate) L.reveal([...$("games-list").querySelectorAll(".game-row")]);
   }
   function renderFilters() {
     const box = $("rating-filter");
@@ -232,7 +247,7 @@
       b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-checked", String(filter === key));
       if (key !== "all") b.append(el("i", `rating-dot rating-${key}`));
       b.append(translated(key), el("span", "chip-count", number(counts[key] || 0)));
-      b.addEventListener("click", () => { filter = key; page = 1; renderList(true); });
+      b.addEventListener("click", () => { filter = key; page = 1; renderList(); });
       return b;
     }));
   }
@@ -252,20 +267,20 @@
   // ---------- Detail drawer ----------
   let lastFocus = null;
   function openDrawer() {
-    if (!$("detail").hidden) return;
+    if (drawer.open) return;
     lastFocus = document.activeElement;
-    $("detail").hidden = false; $("detail-backdrop").hidden = false;
-    document.body.classList.add("drawer-open");
-    if (window.anime && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      window.anime.animate($("detail"), { x: ["100%", "0%"], duration: 500, ease: "out(4)" });
-      window.anime.animate($("detail-backdrop"), { opacity: [0, 1], duration: 300 });
+    if (lastFocus === document.body) {
+      lastFocus = $("games-list").querySelector(`a[href="${CSS.escape(location.hash)}"]`);
     }
-    $("detail-close").focus({ preventScroll: true });
+    document.body.classList.add("drawer-open");
+    drawer.showModal();
   }
   function closeDrawer() {
-    $("detail").hidden = true; $("detail-backdrop").hidden = true;
+    if (!drawer.open) return;
+    drawer.close();
     document.body.classList.remove("drawer-open");
-    if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
+    (lastFocus?.isConnected ? lastFocus : $("search")).focus({ preventScroll: true });
+    lastFocus = null;
   }
   function leaveDetail() {
     if (!location.hash) return closeDrawer();
@@ -318,15 +333,21 @@
   }
   async function route() {
     const request = ++detailRequest, hash = location.hash.slice(1);
-    detailData = null; $("detail-content").hidden = true;
+    detailData = null;
     if (!hash) { closeDrawer(); return; }
-    openDrawer();
+    if ($("detail-status").contains(document.activeElement) || $("detail-content").contains(document.activeElement)) {
+      $("detail-close").focus({ preventScroll: true });
+    }
+    $("detail-content").hidden = true;
     $("detail-art").replaceChildren();
     $("detail-title").textContent = /^\d+$/.test(hash) ? `Steam · ${hash}` : "Steam";
-    if (!/^[1-9]\d*$/.test(hash) || Number(hash) > 4294967295) { status("detail-status", "missing"); return; }
+    if (!/^[1-9]\d*$/.test(hash) || Number(hash) > 4294967295) {
+      status("detail-status", "missing"); openDrawer(); return;
+    }
     const known = games.find((g) => String(g.appid) === hash);
     if (known) { $("detail-title").textContent = gameName(known); $("detail-art").replaceChildren(L.art(known)); }
     status("detail-status", "loading");
+    openDrawer();
     try {
       const data = await fetchJSON(`/v1/games/${hash}`);
       if (request !== detailRequest) return;
@@ -344,7 +365,7 @@
       const data = await fetchJSON("/v1/games");
       if (request !== listRequest) return;
       games = data.games; generated = data.generated;
-      renderTotals(); renderList(true);
+      updateTotals(); renderList();
     } catch { if (request === listRequest) status("list-status", "error", load); }
   }
 
@@ -356,33 +377,36 @@
   }));
   window.addEventListener("langchange", () => {
     renderControls(); renderHardwareSummary();
-    if (generated) { renderList(false); document.querySelectorAll("[data-total]").forEach((dd) => { dd.textContent = number(Number(dd.textContent.replace(/\D/g, ""))); }); }
+    if (generated) { renderList(); renderTotals(); }
     renderDetail();
   });
   let searchTimer = 0;
-  $("search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page = 1; renderList(true); }, 120); });
-  $("sort").addEventListener("change", () => { page = 1; renderList(true); });
+  $("search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page = 1; renderList(); }, 120); });
+  $("sort").addEventListener("change", () => { page = 1; renderList(); });
   window.addEventListener("hashchange", () => route());
   $("detail-close").addEventListener("click", leaveDetail);
-  $("detail-backdrop").addEventListener("click", leaveDetail);
+  drawer.addEventListener("cancel", (e) => { e.preventDefault(); leaveDetail(); });
+  drawer.addEventListener("click", (e) => {
+    if (e.target === drawer && e.clientX < drawer.getBoundingClientRect().left) leaveDetail();
+  });
+  drawer.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const stops = [...drawer.querySelectorAll("a[href], button:not(:disabled), [tabindex='0']")]
+      .filter((el) => el.getClientRects().length);
+    const [first] = stops, last = stops.at(-1);
+    if (e.shiftKey ? document.activeElement === first : document.activeElement === last) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    }
+  });
   document.querySelector(".drawer-back").addEventListener("click", (e) => { e.preventDefault(); leaveDetail(); });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("detail").hidden) { e.preventDefault(); leaveDetail(); return; }
+    if (drawer.open) return;
     if (e.key === "/" && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) { e.preventDefault(); $("search").focus(); }
   });
   const nav = document.querySelector(".nav");
   const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
   window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
-
-  // ---------- GitHub stars in the nav ----------
-  fetch("https://api.github.com/repos/fxgl/steamac", { headers: { Accept: "application/vnd.github+json" } })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((repo) => {
-      if (!repo || typeof repo.stargazers_count !== "number") return;
-      const n = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(repo.stargazers_count);
-      document.querySelectorAll("[data-stars]").forEach((el) => { el.textContent = n; });
-    })
-    .catch(() => {});
 
   initMyMac(); renderControls(); load(); route();
 })();

@@ -3,9 +3,7 @@
 (function () {
   "use strict";
 
-  const REPO = "fxgl/steamac";
   const root = document.documentElement;
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   // ---------- Language ----------
   function setLang(lang) {
@@ -17,24 +15,17 @@
   document.querySelectorAll("[data-set-lang]").forEach((b) =>
     b.addEventListener("click", () => setLang(b.dataset.setLang)));
 
-  // ---------- Latest release: direct asset link + version, else the releases page stays ----------
-  fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((rel) => {
-      if (!rel) return;
-      const asset = (rel.assets || []).find((a) => /\.(dmg|zip)$/i.test(a.name));
-      document.querySelectorAll("[data-dl]").forEach((a) => { if (asset) a.href = asset.browser_download_url; });
-      document.querySelectorAll("[data-ver]").forEach((s) => { s.textContent = rel.tag_name || ""; });
-    })
-    .catch(() => {});
-
-  // ---------- GitHub stars in the nav ----------
-  fetch("https://api.github.com/repos/fxgl/steamac", { headers: { Accept: "application/vnd.github+json" } })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((repo) => {
-      if (!repo || typeof repo.stargazers_count !== "number") return;
-      const n = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(repo.stargazers_count);
-      document.querySelectorAll("[data-stars]").forEach((el) => { el.textContent = n; });
+  // ---------- Latest release from the same-origin Sparkle feed ----------
+  fetch("appcast.xml")
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((xml) => {
+      if (!xml) return;
+      const release = new DOMParser().parseFromString(xml, "application/xml").querySelector("channel > item");
+      const asset = release?.querySelector(":scope > enclosure")?.getAttribute("url");
+      if (!asset) return;
+      const version = release.querySelector("title")?.textContent;
+      document.querySelectorAll("[data-dl]").forEach((a) => { a.href = asset; });
+      document.querySelectorAll("[data-ver]").forEach((s) => { s.textContent = version || ""; });
     })
     .catch(() => {});
 
@@ -43,21 +34,6 @@
   const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
-
-  // ---------- Hero video: respect reduced motion, pause while off screen ----------
-  const heroVideo = document.querySelector(".hero-video");
-  if (heroVideo) {
-    if (reduced.matches) {
-      heroVideo.removeAttribute("autoplay");
-      heroVideo.pause();
-      heroVideo.controls = true;
-    } else if ("IntersectionObserver" in window) {
-      new IntersectionObserver(([entry]) => {
-        if (entry.isIntersecting) heroVideo.play().catch(() => {});
-        else heroVideo.pause();
-      }, { threshold: 0.15 }).observe(heroVideo);
-    }
-  }
 
   // ---------- Layer map: highlight the layer being read ----------
   const mapLinks = [...document.querySelectorAll(".stack-map [data-layer]")];
@@ -129,7 +105,7 @@
   const toggle = document.querySelector(".news-toggle");
   if (news && toggle && news.children.length > 3) {
     const more = toggle.innerHTML;
-    const less = '<span lang="en">Show fewer changes</span><span lang="ru">Свернуть</span><span lang="zh">收起</span>';
+    const less = '<span lang="en">Show fewer changes</span><span lang="es">Ver menos cambios</span><span lang="ru">Свернуть</span><span lang="zh">收起</span>';
     news.classList.add("collapsed");
     toggle.hidden = false;
     toggle.addEventListener("click", () => {

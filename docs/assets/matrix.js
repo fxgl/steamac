@@ -14,7 +14,7 @@
   const screen = fig.querySelector(".matrix-screen");
 
   let w = 0, h = 0, dpr = 1, cell = 8, cols = 0, rows = 0;
-  let mode = "pixels", visible = true, raf = 0, last = 0, started = 0;
+  let mode = "pixels", onScreen = !("IntersectionObserver" in window), raf = 0, last = 0, started = 0;
   let lens = null, lensR = 0, lensTarget = 0;
   let peak = 0.35;   // running brightness peak for contrast stretch: the recording is mostly dark
 
@@ -92,11 +92,22 @@
 
   function loop(now) {
     raf = 0;
-    if (!visible || mode !== "pixels") return;
-    if (now - last >= 33) { last = now; frame(now); }   // ~30 fps is plenty for the recording
+    if (!onScreen || document.hidden || mode !== "pixels") return;
+    if (!last || now - last >= 33) { last = now; frame(now); }   // ~30 fps is plenty for the recording
     if (!reduced || lensR > 0.5 || Math.abs(lensTarget - lensR) > 0.5) raf = requestAnimationFrame(loop);
   }
-  const kick = () => { if (!raf && visible && mode === "pixels") raf = requestAnimationFrame(loop); };
+  const kick = () => {
+    if (!raf && onScreen && !document.hidden && mode === "pixels") raf = requestAnimationFrame(loop);
+  };
+  function updatePlayback() {
+    if (onScreen && !document.hidden) {
+      if (!reduced) video.play().catch(() => {});
+      kick();
+    } else {
+      video.pause();
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    }
+  }
 
   function setMode(next) {
     mode = next;
@@ -114,19 +125,20 @@
   });
   screen.addEventListener("pointerleave", () => { lensTarget = 0; kick(); });
 
-  if (reduced) { video.pause(); video.removeAttribute("autoplay"); }
+  if (reduced) { video.removeAttribute("autoplay"); video.controls = true; }
   video.addEventListener("loadeddata", kick);
   video.addEventListener("seeked", kick);
   if ("IntersectionObserver" in window) {
     new IntersectionObserver(([e]) => {
-      visible = e.isIntersecting;
-      if (visible) { if (!reduced) video.play().catch(() => {}); kick(); } else video.pause();
+      onScreen = e.isIntersecting;
+      updatePlayback();
     }, { threshold: 0.05 }).observe(fig);
   }
-  document.addEventListener("visibilitychange", () => { visible = !document.hidden; kick(); });
+  document.addEventListener("visibilitychange", updatePlayback);
   new ResizeObserver(() => { resize(); kick(); }).observe(screen);
 
-  resize();
   started = performance.now();
   setMode("pixels");
+  if (reduced) video.pause();
+  updatePlayback();
 })();

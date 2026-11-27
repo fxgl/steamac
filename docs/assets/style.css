@@ -35,6 +35,9 @@
   --display: "Funnel Display", "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
+:root:lang(ru) { --display: var(--sans); }
+:root:lang(zh) { --display: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+
 /* ---------- Base ---------- */
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-h) + 16px); }
@@ -61,7 +64,7 @@ code { font-family: var(--mono); font-size: .88em; background: var(--bg3); borde
 [data-lang="ru"] body [lang]:not([lang="ru"]),
 [data-lang="zh"] body [lang]:not([lang="zh"]) { display: none !important; }
 
-/* Display type: light and tight. Cyrillic and CJK fall back to Geist / the system font. */
+/* Display type: choose a family for the whole heading rather than falling back glyph by glyph. */
 .hero h1, .section-head h2, .stats-hero h1, .drawer h2, .speedup, .stats-totals dd, .facts b, .layer h3, .quote blockquote p {
   font-family: var(--display); font-weight: 300; letter-spacing: -.035em;
 }
@@ -96,8 +99,6 @@ code { font-family: var(--mono); font-size: .88em; background: var(--bg3); borde
 .nav-links a:hover { color: var(--text); background: var(--bg3); }
 .gh { display: inline-flex; align-items: center; gap: 8px; }
 .gh > svg { width: 16px; height: 16px; fill: currentColor; }
-.gh-stars { display: inline-flex; align-items: center; gap: 4px; padding-left: 8px; border-left: 1px solid var(--line2); font: 12px/1 var(--mono); color: var(--text2); }
-.gh-stars svg { width: 12px; height: 12px; fill: currentColor; }
 .lang-switch { display: flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
 .lang-switch button { font: 500 12px/1 var(--mono); color: var(--muted); background: none; border: 0; padding: 8px 9px; cursor: pointer; }
 .lang-switch button + button { border-left: 1px solid var(--line2); }
@@ -413,7 +414,7 @@ pre .c { color: var(--muted); }
 .search svg { position: absolute; left: 14px; width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; pointer-events: none; }
 .search input { width: 100%; height: 44px; padding: 0 44px 0 40px; border-radius: 8px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); font: 15px var(--sans); transition: border-color .15s; }
 .search input::placeholder { color: var(--muted); }
-.search input:focus { outline: none; border-color: var(--text2); }
+.search input:focus { border-color: var(--text2); }
 .search kbd { position: absolute; right: 12px; font: 12px/1 var(--mono); color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 3px 6px; }
 .search input:focus + kbd { display: none; }
 .sort { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
@@ -452,8 +453,8 @@ pre .c { color: var(--muted); }
 .rating-count { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rating-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
 
-.drawer-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .7); }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; width: min(760px, 100vw); background: var(--bg); border-left: 1px solid var(--line2); overflow-y: auto; overscroll-behavior: contain; }
+.drawer::backdrop { background: rgba(0, 0, 0, .7); }
+.drawer { position: fixed; inset: 0 0 0 auto; margin: 0; padding: 0; width: min(760px, 100vw); max-width: none; height: 100%; max-height: none; background: var(--bg); color: var(--text); border: 0; border-left: 1px solid var(--line2); overflow-y: auto; overscroll-behavior: contain; }
 body.drawer-open { overflow: hidden; }
 .drawer-art .game-art { width: 100%; height: 200px; aspect-ratio: auto; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-size: 32px; }
 .drawer-body { position: relative; padding: 24px clamp(20px, 4vw, 40px) 48px; }
@@ -481,8 +482,14 @@ body.drawer-open { overflow: hidden; }
 .stats-table tbody tr:last-child td { border-bottom: 0; }
 .stats-table .rating { min-width: 130px; }
 
-/* Scroll reveals: hidden only while motion.js is active, see the <head> script. */
-.motion [data-reveal], .motion [data-reveal-group] > *, .motion .hero-copy > *, .motion .matrix { opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .my-mac:not([hidden]) { animation: form-in .35s ease-out; }
+  .drawer[open] { animation: drawer-in .5s cubic-bezier(.16, 1, .3, 1); }
+  .drawer[open]::backdrop { animation: backdrop-in .3s ease-out; }
+  @keyframes form-in { from { opacity: 0; transform: translateY(-8px); } }
+  @keyframes drawer-in { from { transform: translateX(100%); } }
+  @keyframes backdrop-in { from { opacity: 0; } }
+}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1080px) {
@@ -526,7 +533,9 @@ body.drawer-open { overflow: hidden; }
   .stats-row .game-art { width: 80px; }
   .toolbar-inner { flex-wrap: wrap; }
   .search { flex-basis: 100%; }
-  .sort { flex: 1; } .sort span { display: none; } .sort select { width: 100%; }
+  .sort { flex: 1; }
+  .sort > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .sort select { width: 100%; }
   .stats-totals, .detail-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats-totals div:nth-child(3), .tile:nth-child(3) { border-left: 0; }
   .stats-totals div:nth-child(n + 3), .tile:nth-child(n + 3) { border-top: 1px solid var(--line2); }

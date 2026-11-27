@@ -24,6 +24,15 @@ MIT (LICENSES/MIT.txt) - derived from Valve Corporation's deckard-steamvr-sessio
   guest/layer/usr/share/deckard/mesavars.sh
   Copyright (c) Valve Corporation; changes Copyright 2026 FX GAMES FZ LLC
 
+MIT (LICENSES/MIT.txt) - anime.js, vendored for the website:
+  docs/assets/vendor/anime-4.5.0.umd.min.js
+  Copyright (c) 2025 Julian Garnier (docs/assets/vendor/anime-LICENSE.md)
+
+OFL-1.1 (LICENSES/OFL-1.1.txt) - website fonts in docs/assets/fonts/:
+  Geist and Geist Mono: Copyright (c) 2023 Vercel, in collaboration with basement.studio
+    (OFL-Geist.txt)
+  Funnel Display: Copyright 2023 The Funnel Project Authors (OFL-FunnelDisplay.txt)
+
 LGPL-2.1-or-later (LICENSES/LGPL-2.1-only.txt) - DXMT (github.com/3Shain/dxmt,
 Copyright Feifan He for CodeWeavers): winemetal_unix.c, airconv and DXBCParser compiled into
 libwmtr_host.dylib, and the guest layer's /usr/lib/steamac/dxmt/x86_64-windows/

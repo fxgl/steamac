@@ -24,16 +24,19 @@ per-game profiles. What is collected is listed in
 
 ## Translate
 
-The project is maintained in English, Russian and Simplified Chinese:
+The launcher, README and manual are maintained in English, Russian and Simplified Chinese:
 
 - the launcher: `host/launcher/Localizable.xcstrings` and `InfoPlist.xcstrings`;
 - the README (`README.md`, `README.ru.md`, `README.zh.md`) and the manual (`manual/`, `manual/ru/`,
-  `manual/zh/`), which keep the same files and sections in every language;
-- the website (`docs/`), where every string carries one `<span lang>` per language.
+  `manual/zh/`), which keep the same files and sections in every language.
 
 The Japanese (`ja`) README (`README.ja.md`) and manual (`manual/ja/`) are maintained by the community on a best-effort basis.
 
-If you change text in one language and cannot translate it, say so in the pull request.
+The website (`docs/`) is maintained in English, Russian, Simplified Chinese and Spanish
+(`en`, `ru`, `zh`, `es`). Include a `<span lang>` for each language in every translated label
+and in every news item, and keep dynamic JavaScript labels in all four languages too.
+
+If you change text outside the website in one language and cannot translate it, say so in the pull request.
 
 ## Build and run
 

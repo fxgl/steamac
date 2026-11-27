@@ -3,10 +3,9 @@
 (function () {
   "use strict";
 
-  const root = document.documentElement;
   const A = window.anime;
-  if (!A || !root.classList.contains("motion")) { root.classList.remove("motion"); return; }
-  const { animate, stagger, splitText, utils } = A;
+  if (!A || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const { animate, stagger, utils } = A;
 
   const api = {};
   window.steamacMotion = api;
@@ -27,45 +26,18 @@
     new IntersectionObserver(([e]) => (e.isIntersecting ? on() : off()), { threshold: 0.2 }).observe(el);
   }
 
-  // ---------- Hero: copy rises in, headline by character, then the window tilts up flat ----------
+  // ---------- Hero: gentle movement without hiding the copy or waiting for this script ----------
   const heroCopy = document.querySelector(".hero-copy");
+  if (heroCopy) animate([...heroCopy.children], { y: [8, 0], duration: 650, delay: stagger(35), ease: "out(3)" });
   const heroShot = document.querySelector(".matrix");
-  if (heroCopy) {
-    const h1 = heroCopy.querySelector("h1");
-    const current = h1.querySelector(`[lang="${root.dataset.lang}"]`) || h1;
-    const parts = [...heroCopy.children].filter((el) => el !== h1);
-    utils.set(h1, { opacity: 1 });
-    let chars = [];
-    try { chars = splitText(current, { chars: true }).chars; } catch (e) { chars = []; }
-    if (chars.length) {
-      utils.set(chars, { opacity: 0 });
-      animate(chars, {
-        opacity: [0, 1],
-        y: ["0.45em", "0em"],
-        rotate: [6, 0],
-        duration: 900,
-        delay: stagger(28, { start: 120 }),
-        ease: "out(4)",
-      });
-    } else {
-      animate(h1, { opacity: [0, 1], y: [24, 0], duration: 800, ease: "out(4)" });
-    }
-    animate(parts, {
-      opacity: [0, 1],
-      y: [18, 0],
-      duration: 800,
-      delay: (el, i) => (i === 0 ? 0 : 450 + i * 90),
-      ease: "out(3)",
-    });
-  }
-  if (heroShot) animate(heroShot, { opacity: [0, 1], y: [24, 0], duration: 1000, delay: 300, ease: "out(4)" });
+  if (heroShot) animate(heroShot, { y: [12, 0], duration: 850, ease: "out(4)" });
 
   // ---------- Scroll reveals ----------
   document.querySelectorAll("[data-reveal]").forEach((el) =>
-    onceVisible(el, () => animate(el, { opacity: [0, 1], y: [28, 0], duration: 900, ease: "out(4)" })));
+    onceVisible(el, () => animate(el, { opacity: [.8, 1], y: [18, 0], duration: 700, ease: "out(4)" })));
   document.querySelectorAll("[data-reveal-group]").forEach((group) =>
     onceVisible(group, () => animate([...group.children], {
-      opacity: [0, 1], y: [28, 0], duration: 800, delay: stagger(80), ease: "out(4)",
+      opacity: [.8, 1], y: [18, 0], duration: 650, delay: stagger(60), ease: "out(4)",
     })));
 
   // ---------- Isometric stack: drop in, then the layer being read lifts out ----------

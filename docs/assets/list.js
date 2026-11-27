@@ -35,6 +35,7 @@
       // In the DOM from the start so lazy loading works; the initials stay underneath until it loads.
       const img = document.createElement("img");
       img.alt = ""; img.loading = "lazy"; img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
       img.width = 460; img.height = 215;
       img.onload = () => img.classList.add("loaded");
       img.onerror = () => img.remove();
