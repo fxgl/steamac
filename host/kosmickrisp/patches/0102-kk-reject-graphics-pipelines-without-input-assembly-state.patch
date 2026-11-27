@@ -1,0 +1,75 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] kk: reject graphics pipelines without input assembly state (mesh)
+
+STEAMAC-CG/CH (1.9.15, M4 Pro, Final Fantasy VII Rebirth 2909400): SIGSEGV
+at kk_gather_program+724 (ldrb w0, [x8], x8 = state->ia = NULL) <-
+kk_compile_shaders+672 under vkCreateGraphicsPipelines, right after
+"kk: mesh shader uses set 1 binding 1 that the pipeline layout does not
+provide". KosmicKrisp exposes no mesh or task shading, but 0092 accepts a
+mesh stage in place of a vertex shader, and mesh pipelines have no input
+assembly state, which gather_graphics_pipeline_create_info (and the VS key
+and lowering) read for the topology.
+
+kk_compile_shaders rejects graphics pipelines with mesh or task stages, or
+without input assembly state, before any IA use: it logs the stages and
+fails creation with VK_ERROR_INVALID_SHADER_NV. No topology is invented.
+
+Regression: REPRO_CASE=sentry-cg-mesh: a mesh + fragment pipeline faults the
+1.9.15 driver at kk_gather_program+724 <- kk_compile_shaders+672, the
+reported frames; with this patch its creation fails cleanly.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index f031971..227392a 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -2871,6 +2871,36 @@ kk_check_color_attachment_formats(struct kk_device *dev,
+    return VK_SUCCESS;
+ }
+ 
++/* KosmicKrisp has no mesh or task shading (VK_EXT_mesh_shader is not
++ * exposed), and its graphics programs take the topology from the input
++ * assembly state, which mesh pipelines do not have. Common pipeline
++ * creation (0092) accepts a mesh stage in place of a vertex shader, so a mesh
++ * pipeline reached kk_gather_program with state->ia NULL (STEAMAC-CG/CH,
++ * Final Fantasy VII Rebirth: SIGSEGV reading ia->primitive_topology). Fail
++ * its creation instead. */
++static VkResult
++kk_check_graphics_stages(struct kk_device *dev, uint32_t shader_count,
++                         const struct vk_shader_compile_info *infos,
++                         const struct vk_graphics_pipeline_state *state)
++{
++   if (shader_count == 0 || infos[0].nir->info.stage == MESA_SHADER_COMPUTE)
++      return VK_SUCCESS;
++   uint32_t stages = 0u;
++   for (uint32_t i = 0u; i < shader_count; ++i)
++      stages |= BITFIELD_BIT(infos[i].nir->info.stage);
++   const bool unsupported =
++      stages & (BITFIELD_BIT(MESA_SHADER_MESH) | BITFIELD_BIT(MESA_SHADER_TASK));
++   if (!unsupported && state != NULL && state->ia != NULL)
++      return VK_SUCCESS;
++   mesa_loge("kk: graphics pipeline rejected: stages 0x%x (%s%s), input assembly "
++             "state %s",
++             stages, (stages & BITFIELD_BIT(MESA_SHADER_MESH)) ? "mesh " : "",
++             (stages & BITFIELD_BIT(MESA_SHADER_TASK)) ? "task " : "",
++             state == NULL ? "unknown (no pipeline state)"
++                           : state->ia == NULL ? "absent" : "present");
++   return vk_error(dev, VK_ERROR_INVALID_SHADER_NV);
++}
++
+ static VkResult
+ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+                    struct vk_shader_compile_info *infos,
+@@ -2881,7 +2911,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+ {
+    struct kk_device *dev = container_of(device, struct kk_device, vk);
+    struct kk_physical_device *pdev = kk_device_physical(dev);
+-   VkResult checked = kk_check_color_attachment_formats(dev, state);
++   VkResult checked = kk_check_graphics_stages(dev, shader_count, infos, state);
++   if (checked == VK_SUCCESS)
++      checked = kk_check_color_attachment_formats(dev, state);
+    if (checked != VK_SUCCESS) {
+       for (uint32_t i = 0u; i < shader_count; ++i)
+          ralloc_free(infos[i].nir);

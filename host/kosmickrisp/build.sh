@@ -466,6 +466,20 @@
 #              libmalloc-cleared view; DOOM 2016). Diagnostic only, recording is unchanged.
 #              Repro: REPRO_CASE=sentry-bj; a destroyed framebuffer view faults at the reported
 #              frames and offsets on 1.9.14 and is named first after; a live view logs nothing.
+#   0101       steamac: a graphics pipeline whose color attachment format the driver does not
+#              advertise as COLOR_ATTACHMENT fails creation, logged, instead of Metal's process
+#              abort "MTLPixelFormatBC6H_RGBUfloat is not color renderable" (STEAMAC-BN/D5 on
+#              1.9.15, Hunt: Showdown). Repro: REPRO_CASE=sentry-bn-bc6h aborts 1.9.15; after,
+#              creation fails and an RGBA8 control draws 16 green pixels.
+#   0102       steamac: graphics pipelines with mesh/task stages or without input assembly state
+#              fail creation (no mesh shading is exposed; 0092 accepts a mesh stage in place of a
+#              vertex shader) instead of reading a NULL state->ia in kk_gather_program
+#              (STEAMAC-CG/CH, Final Fantasy VII Rebirth). Repro: REPRO_CASE=sentry-cg-mesh faults
+#              1.9.15 at the reported kk_gather_program+724 <- kk_compile_shaders+672.
+#   0103       steamac: occlusion pools keep their heap indices in host memory for every CPU path
+#              and log (once per pool) and restore a GPU-visible entry something overwrote
+#              (STEAMAC-7C/7D: kk_ResetQueryPool read index 0xc4d80000 after a GPU address fault,
+#              AC Valhalla). Containment and diagnostics; the stray writer is not identified.
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -703,6 +717,9 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0098 = steamac: rejected image views log real format features, external memory and block compatibility (STEAMAC-G)"
 	echo "  0099 = steamac: render pipelines whose vertex function does not resolve fail, logged, instead of aborting (STEAMAC-BN/BP)"
 	echo "  0100 = steamac: render pass begin names attachments whose image view was destroyed (STEAMAC-BJ/BK)"
+	echo "  0101 = steamac: pipelines with non-renderable color attachment formats fail, logged, instead of Metal aborting (STEAMAC-BN/D5)"
+	echo "  0102 = steamac: mesh/task pipelines and pipelines without input assembly state fail, logged (STEAMAC-CG/CH)"
+	echo "  0103 = steamac: occlusion query indices from a host copy; overwritten GPU-visible entries logged and restored (STEAMAC-7C/7D)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

@@ -228,6 +228,14 @@
 # sentry-bn-entrypoint.m (KosmicKrisp only, REPRO_CASE=sentry-bn; STEAMAC-BN/BP): the driver's
 # mtl_new_render_pipeline with a missing, fragment-stage or absent vertex function must return NULL instead of
 # Metal's `vertexFunction must not be nil` abort; a valid pair draws 16 green pixels.
+# sentry-bn-bc6h.c (KosmicKrisp only, REPRO_CASE=sentry-bn-bc6h; STEAMAC-BN/D5 on 1.9.15): a graphics pipeline with a
+# BC6H_UFLOAT color attachment (never advertised as COLOR_ATTACHMENT) must fail creation instead of aborting in
+# Metal's "not color renderable" descriptor validation; an RGBA8 control draws 16 green pixels.
+# sentry-cg-mesh.c (KosmicKrisp only, REPRO_CASE=sentry-cg-mesh; STEAMAC-CG/CH): a mesh + fragment pipeline, which has no
+# input assembly state, must fail creation on a driver without mesh shading instead of faulting kk_gather_program.
+# queue_residency.c (REPRO_CASE=queue-residency; STEAMAC-3/D8/D9): 40 VkDevices alive at once on one physical
+# device each fill and read back their own buffer, then half are replaced; MoltenVK aborted at the 33rd
+# (32 residency sets per shared MTLCommandQueue).
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -362,6 +370,22 @@ if [ "${REPRO_CASE:-}" = sentry-bn ]; then
 	done
 	exit
 fi
+if [ "${REPRO_CASE:-}" = sentry-bn-bc6h ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-bn-bc6h requires KosmicKrisp" >&2; exit 2; }
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.vert" -o "$work/sentry_ah.vert.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-bn-bc6h -I"$work"
+	"$work/sentry-bn-bc6h"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-cg-mesh ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-cg-mesh requires KosmicKrisp" >&2; exit 2; }
+	glslangValidator -V --quiet --target-env vulkan1.3 -S mesh -x "$here/shaders/sentry_cg.mesh" -o "$work/sentry_cg.mesh.inc"
+	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
+	build sentry-cg-mesh -I"$work"
+	"$work/sentry-cg-mesh"
+	exit
+fi
 if [ "${REPRO_CASE:-}" = sentry-ag ]; then
 	[ "$driver" = moltenvk ] || { echo "sentry-ag requires MoltenVK" >&2; exit 2; }
 	run_sentry_ag
@@ -370,6 +394,11 @@ fi
 if [ "${REPRO_CASE:-}" = sentry-87-components ]; then
 	[ "$driver" = moltenvk ] || { echo "sentry-87-components requires MoltenVK" >&2; exit 2; }
 	exec "$here/sentry-87-components.sh" "$libdir" "$work/sentry-87-components"
+fi
+if [ "${REPRO_CASE:-}" = queue-residency ]; then
+	build queue_residency
+	"$work/queue_residency"
+	exit
 fi
 
 src=$work/gamescope

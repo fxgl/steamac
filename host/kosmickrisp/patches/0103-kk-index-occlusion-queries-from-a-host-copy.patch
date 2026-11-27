@@ -1,0 +1,158 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] kk: index occlusion queries from a host copy of their heap indices
+
+STEAMAC-7C/7D + User Feedback BR (1.9.15, M5 Pro, Assassin's Creed
+Valhalla benchmark): SIGSEGV at kk_ResetQueryPool+120 (ldr x14, [x14]) while
+resetting query 1 of a 4096-query occlusion pool. The heap index read from
+the pool's GPU-visible index table was 0xc4d80000 / 0x44c00000 in two
+crashes, far past 4096 chunks of 32768 queries, so chunks[index >> 15] was
+read out of bounds. In the same second the process' command buffer 748899
+failed with a GPU address fault (BR's launcher.log): something wrote into
+the pool's buffer. The writer is not identified.
+
+Keep the indices allocated at pool creation in host memory and use that copy
+on every CPU path (report addresses, host reset/results, begin query, and
+the heap free at destruction, which would otherwise corrupt the heap's free
+lists). Each use compares the GPU-visible entry: a change is logged once per
+pool (query, value, allocated index, buffer address and size) and restored
+for the GPU's query kernels.
+
+Diagnostic containment, not a fix of the stray write. Not reproduced: the
+GPU overwrite cannot be triggered deterministically; the KosmicKrisp suite's
+query cases pass.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
+index addf1d9..91435f3 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.c
++++ b/src/kosmickrisp/vulkan/kk_query_pool.c
+@@ -26,6 +26,8 @@
+ #include "util/u_atomic.h"
+ #include "vulkan/util/vk_enum_to_str.h"
+ 
++#include <inttypes.h>
++
+ /* Metal allows 32 counter heaps of at most 4096 timestamps per process
+  * (newCounterHeap fails with "there are too many heaps already allocated in
+  * this process or on the system" / "Requested Heap size is too large"), and
+@@ -135,6 +137,32 @@ kk_pool_index_ptr(const struct kk_query_pool *pool)
+    return (uint32_t *)((uint8_t *)pool->bo->cpu + pool->index_start);
+ }
+ 
++/* The heap index of an occlusion query, from the pool's host copy. The
++ * GPU-visible copy is compared on the way: STEAMAC-7C/7D (Assassin's Creed
++ * Valhalla, M5 Pro) faulted in kk_ResetQueryPool on GPU-visible indices
++ * 0xc4d80000 / 0x44c00000, far past any allocated chunk, after a command buffer
++ * of the same process failed with a GPU address fault. A changed entry is
++ * logged once per pool and restored for the GPU's query kernels. */
++static uint32_t
++kk_oq_index(struct kk_query_pool *pool, uint32_t query)
++{
++   const uint32_t index = pool->oq_indices[query];
++   uint32_t *gpu = kk_pool_index_ptr(pool);
++   if (unlikely(gpu[query] != index)) {
++      if (!pool->oq_index_mismatch_logged) {
++         pool->oq_index_mismatch_logged = true;
++         mesa_loge("kk: occlusion query pool %p (%u queries): the GPU-visible "
++                   "index of query %u is 0x%08x, allocated 0x%08x: something "
++                   "wrote into the pool's buffer (bo gpu 0x%" PRIx64 ", size %" PRIu64
++                   ", index table at +%u); restored",
++                   (void *)pool, pool->vk.query_count, query, gpu[query], index,
++                   pool->bo->gpu, pool->bo->size_B, pool->index_start);
++      }
++      gpu[query] = index;
++   }
++   return index;
++}
++
+ static uint32_t
+ kk_reports_per_query(struct kk_query_pool *pool)
+ {
+@@ -181,7 +209,7 @@ kk_query_report_addr(struct kk_device *dev, struct kk_query_pool *pool,
+                      uint32_t query)
+ {
+    if (kk_pool_is_oq(pool)) {
+-      uint32_t index = kk_pool_index_ptr(pool)[query];
++      uint32_t index = kk_oq_index(pool, query);
+       return kk_oq_heap_chunk_bo(&dev->occlusion_queries, index)->gpu +
+              (index % KK_OQ_CHUNK_QUERIES) * sizeof(uint64_t);
+    }
+@@ -201,7 +229,7 @@ kk_query_report_map(struct kk_device *dev, struct kk_query_pool *pool,
+                     uint32_t query)
+ {
+    if (kk_pool_is_oq(pool)) {
+-      uint32_t index = kk_pool_index_ptr(pool)[query];
++      uint32_t index = kk_oq_index(pool, query);
+       return (struct kk_query_report *)kk_oq_heap_chunk_bo(
+                 &dev->occlusion_queries, index)
+                 ->cpu +
+@@ -310,15 +338,25 @@ kk_CreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo *pCreateInfo,
+     * of the recording command buffer (kk_cmd_ts_entry) and resolved into `bo`.
+     */
+    if (kk_pool_is_oq(pool)) {
++      pool->oq_indices =
++         vk_alloc(&dev->vk.alloc, sizeof(uint32_t) * pool->vk.query_count, 4,
++                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      if (pool->oq_indices == NULL) {
++         kk_DestroyQueryPool(device, kk_query_pool_to_handle(pool), pAllocator);
++         return kk_query_pool_create_failed(dev, pCreateInfo,
++                                            VK_ERROR_OUT_OF_HOST_MEMORY,
++                                            "out of host memory for the query indices");
++      }
+       const char *why = NULL;
+       result = kk_oq_heap_alloc(dev, &dev->occlusion_queries,
+-                                pool->vk.query_count, kk_pool_index_ptr(pool),
+-                                &why);
++                                pool->vk.query_count, pool->oq_indices, &why);
+       if (result != VK_SUCCESS) {
+          kk_DestroyQueryPool(device, kk_query_pool_to_handle(pool), pAllocator);
+          return kk_query_pool_create_failed(dev, pCreateInfo, result, why);
+       }
+       pool->oq.queries = pool->vk.query_count;
++      memcpy(kk_pool_index_ptr(pool), pool->oq_indices,
++             sizeof(uint32_t) * pool->vk.query_count);
+    }
+ 
+    if (pCreateInfo->flags & VK_QUERY_POOL_CREATE_RESET_BIT_KHR)
+@@ -340,8 +378,11 @@ kk_DestroyQueryPool(VkDevice device, VkQueryPool queryPool,
+       return;
+ 
+    if (kk_pool_is_oq(pool)) {
+-      kk_oq_heap_free(&dev->occlusion_queries, kk_pool_index_ptr(pool),
+-                      pool->oq.queries);
++      /* The host copy: the GPU-visible one may have been overwritten */
++      if (pool->oq.queries)
++         kk_oq_heap_free(&dev->occlusion_queries, pool->oq_indices,
++                         pool->oq.queries);
++      vk_free(&dev->vk.alloc, pool->oq_indices);
+    }
+ 
+    kk_destroy_bo(dev, pool->bo);
+@@ -581,7 +622,7 @@ kk_CmdBeginQueryIndexedEXT(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+                                       ? MTL_VISIBILITY_RESULT_MODE_COUNTING
+                                       : MTL_VISIBILITY_RESULT_MODE_BOOLEAN;
+    cmd->state.gfx.dirty |= KK_DIRTY_OCCLUSION;
+-   uint32_t oq_index = kk_pool_index_ptr(pool)[query];
++   uint32_t oq_index = kk_oq_index(pool, query);
+    cmd->state.gfx.occlusion.index = oq_index % KK_OQ_CHUNK_QUERIES;
+    cmd->state.gfx.occlusion.chunk = oq_index / KK_OQ_CHUNK_QUERIES;
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.h b/src/kosmickrisp/vulkan/kk_query_pool.h
+index 0eeb00a..f138c2a 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.h
++++ b/src/kosmickrisp/vulkan/kk_query_pool.h
+@@ -33,6 +33,12 @@ struct kk_query_pool {
+    uint32_t query_stride;
+ 
+    struct kk_oq_state oq;
++   /* Occlusion pools: the heap indices allocated to the queries, kept in host
++    * memory. The copy in `bo` (index_start) is what the GPU reads; host paths
++    * use this one, so a stray GPU write into the pool buffer cannot make the
++    * driver index the chunk table out of bounds (STEAMAC-7C/7D). */
++   uint32_t *oq_indices;
++   bool oq_index_mismatch_logged;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(kk_query_pool, vk.base, VkQueryPool,

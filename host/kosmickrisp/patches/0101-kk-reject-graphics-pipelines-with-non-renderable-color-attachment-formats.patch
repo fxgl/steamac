@@ -1,0 +1,107 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] kk: reject graphics pipelines with a non-renderable color attachment format
+
+STEAMAC-BN/D5 (1.9.15, Apple M5, macOS 26.7.3, Hunt: Showdown 594650): the
+VM process aborted in Metal's render pipeline descriptor validation,
+"pixelFormat, for color render target(0), MTLPixelFormatBC6H_RGBUfloat is
+not color renderable", under mtl_new_render_pipeline. 0099's vertex
+function check is unrelated: gather_graphics_pipeline_create_info copies
+state->rp->color_attachment_formats to the Metal descriptor unchecked.
+KosmicKrisp does not advertise COLOR_ATTACHMENT for BC6H (kk_format.c
+BPTC_RGB_UFLOAT uses MTL_FMT_FS, color=0), so the pipeline is invalid
+input, which Metal turns into a process abort.
+
+kk_compile_shaders now checks each non-UNDEFINED color attachment format
+against the driver's own optimal-tiling COLOR_ATTACHMENT feature before any
+work, logs slot, format and features, and fails creation with
+VK_ERROR_INVALID_SHADER_NV (Venus keeps a placeholder whose draws are
+dropped). The attachment is not dropped or substituted.
+
+Regression: REPRO_CASE=sentry-bn-bc6h REPRO_DRIVER=kosmickrisp
+host/moltenvk/repro/run.sh <dylib>: the 1.9.15 driver aborts with the
+reported assertion (exit 134); with this patch creation fails and an RGBA8
+control draws 16 green pixels.
+
+Generated-by: LLM
+---
+diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
+index acf465a..f031971 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.c
++++ b/src/kosmickrisp/vulkan/kk_shader.c
+@@ -13,6 +13,7 @@
+ #include "kk_descriptor_set_layout.h"
+ #include "kk_device.h"
+ #include "kk_format.h"
++#include "kk_image.h"
+ #include "kk_nir_lower_vbo.h"
+ #include "kk_physical_device.h"
+ #include "kk_sampler.h"
+@@ -30,11 +31,14 @@
+ #include "poly/nir/poly_nir.h"
+ 
+ #include "vk_blend.h"
++#include "vk_enum_to_str.h"
+ #include "vk_format.h"
+ #include "vk_graphics_state.h"
+ #include "vk_nir_convert_ycbcr.h"
+ #include "vk_pipeline.h"
+ 
++#include <inttypes.h>
++
+ static const nir_shader_compiler_options *
+ kk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
+                    UNUSED const struct vk_pipeline_robustness_state *rs)
+@@ -2835,6 +2839,38 @@ kk_minmax_layouts_used(uint32_t minmax_sets, uint32_t set_layout_count,
+    return false;
+ }
+ 
++/* Metal aborts the process when a render pipeline names a color attachment
++ * format it cannot render to (STEAMAC-BN/D5: "pixelFormat, for color render
++ * target(0), MTLPixelFormatBC6H_RGBUfloat is not color renderable"). The
++ * driver never advertises COLOR_ATTACHMENT for such formats, so a pipeline
++ * declaring one is invalid input: fail its creation, as for other pipelines
++ * Metal cannot build, instead of dropping or substituting the attachment. */
++static VkResult
++kk_check_color_attachment_formats(struct kk_device *dev,
++                                  const struct vk_graphics_pipeline_state *state)
++{
++   if (state == NULL || state->rp == NULL ||
++       !vk_render_pass_state_has_attachment_info(state->rp))
++      return VK_SUCCESS;
++   struct kk_physical_device *pdev = kk_device_physical(dev);
++   for (uint32_t i = 0u; i < state->rp->color_attachment_count; ++i) {
++      const VkFormat format = state->rp->color_attachment_formats[i];
++      if (format == VK_FORMAT_UNDEFINED)
++         continue;
++      const VkFormatFeatureFlags2 features =
++         kk_get_image_format_features(pdev, format, VK_IMAGE_TILING_OPTIMAL, 0);
++      if (features & VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT)
++         continue;
++      mesa_loge("kk: graphics pipeline rejected: color attachment %u has format "
++                "%s (%u), which is not color renderable (optimal features "
++                "0x%" PRIx64 ", %u color attachments)",
++                i, vk_Format_to_str(format), format, (uint64_t)features,
++                state->rp->color_attachment_count);
++      return vk_error(dev, VK_ERROR_INVALID_SHADER_NV);
++   }
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+                    struct vk_shader_compile_info *infos,
+@@ -2845,6 +2881,13 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+ {
+    struct kk_device *dev = container_of(device, struct kk_device, vk);
+    struct kk_physical_device *pdev = kk_device_physical(dev);
++   VkResult checked = kk_check_color_attachment_formats(dev, state);
++   if (checked != VK_SUCCESS) {
++      for (uint32_t i = 0u; i < shader_count; ++i)
++         ralloc_free(infos[i].nir);
++      memset(shaders_out, 0, shader_count * sizeof(*shaders_out));
++      return checked;
++   }
+    enum kk_feature_key features = kk_make_feature_key(enabled_features);
+    const bool minmax = pdev->info.gpu_apple_family < 10 &&
+                        (features & KK_FEAT_SAMPLER_MINMAX);
