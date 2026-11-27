@@ -88,14 +88,15 @@ the former UI cap (1920 × 1080, or 1920 × 1200 for 16:10; smaller displays kee
 mode), and the native UI is enabled only once at least one account has been handled: Steam creates
 an account's config while it runs and keeps it in memory, so it can only be edited between Steam
 runs. On a fresh install the native UI therefore starts with the Steam start after the first
-sign-in (and a new gamescope session after that). The cap follows the display: on every Steam
-start, while an account still holds exactly the value the launcher wrote
-(`userdata/<account>/config/steamac-native-resolution` remembers it), it is recomputed for the
-current display. Explicit global choices, including `Native`, per-game overrides, and any value
-changed later (also removing the key) are preserved and never followed or reapplied. A config that
-cannot be read or written is skipped and logged; the other accounts are still handled. An account
-signing in for the first time in a session that already runs the native UI gets its cap at the
-next Steam start. The launcher's existing 4094-pixel maximum display side still applies.
+sign-in (and a new gamescope session after that). While an account still has the cap set by the
+launcher (recorded in `userdata/<account>/config/steamac-native-resolution`), the hook recalculates
+it for the current virtual display only when Steam starts. Resizing the window or switching to
+fullscreen does not update the cap until the next Steam start. Explicit global settings, including
+`Native`, per-game overrides, and later changes (including removal of the key) are preserved.
+If an account's config cannot be read, parsed, or written, the hook logs it and processes the other
+accounts. If you sign in to another account for the first time while the native UI is already active,
+games left on `Default` can run at native resolution until you restart Steam. The UI resolution
+is bounded by the launcher's virtual-display size limit.
 
 Steam's idle screensaver (Settings → Display → Screensaver in Game Mode) is off in the VM. After a
 few minutes without input Steam puts its `Screensaver_uid<n>` window in front of a running game,

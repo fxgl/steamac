@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Regression checks for Steam's separate install-scoped UI resolution setting."""
 from contextlib import contextmanager
+from io import StringIO
 from pathlib import Path
 import runpy
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,13 +13,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 HOOK_PATH = ROOT / "guest/layer/usr/lib/steamac/steam-native-resolution"
 hook = runpy.run_path(str(HOOK_PATH))
-KEY = tuple(part.lower() for part in hook["KEY"])
-GAME = tuple(part.lower() for part in hook["GAME_KEY"])
+KEY = hook["KEY"]
+GAME = hook["GAME_KEY"]
+MARKER = hook["MARKER"]
 DEFAULT_ACCOUNT = '"UserLocalConfigStore" { "Gamescope" { "GameResolutionGlobal" "Default" } }'
 
 
-def entries(text):
-    return hook["vdf"]()["vdf_entries"](text)[0]
+def value(text, key):
+    entry, _ = hook["resolution_entry"](text, key)
+    return entry[0] if entry else None
 
 
 @contextmanager
@@ -46,12 +48,16 @@ class NativeResolutionTests(unittest.TestCase):
             self.assertEqual(hook["legacy_resolution"](*mode), expected)
 
     def test_game_default_only_and_per_game_values_untouched(self):
-        for value in (None, "", "Default", "Native", "1280x720", "5120x2880"):
-            entry = '' if value is None else '"GameResolutionGlobal" "' + value + '"'
-            text = '"UserLocalConfigStore" { "Gamescope" { ' + entry + ' } "Apps" { "1172620" { "ResolutionOverride" "Native" } } }'
-            changed = hook["game_resolution"](text, (1920, 1080))
-            self.assertEqual(entries(changed)[GAME][0], "1920x1080" if value in (None, "", "Default") else value)
-            self.assertIn('"ResolutionOverride" "Native"', changed)
+        for original in (None, "", "Default", "Native", "1280x720", "5120x2880"):
+            with self.subTest(original=original), session() as (root, _):
+                entry = '' if original is None else f'"GameResolutionGlobal" "{original}"'
+                per_game = '"Apps" { "1172620" { "ResolutionOverride" "Native" } }'
+                local = account(root, 123, f'"UserLocalConfigStore" {{ "Gamescope" {{ {entry} }} {per_game} }}')
+                hook["main"]()
+                changed = local.read_text()
+                expected = "1920x1080" if original in (None, "", "Default") else original
+                self.assertEqual(value(changed, GAME), expected)
+                self.assertIn(per_game, changed)
 
     def test_native_ui_waits_for_the_first_account(self):
         # A fresh install has no account config; the first session must not turn the native UI on
@@ -65,8 +71,8 @@ class NativeResolutionTests(unittest.TestCase):
             self.assertFalse(config.exists() or marker.exists())
             local = account(root, 123)
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1920x1080")
-            self.assertEqual(entries(config.read_text())[KEY][0], "1")
+            self.assertEqual(value(local.read_text(), GAME), "1920x1080")
+            self.assertEqual(value(config.read_text(), KEY), "1")
             self.assertTrue(marker.exists())
 
     def test_accounts_added_after_install_and_later_choices(self):
@@ -85,16 +91,16 @@ class NativeResolutionTests(unittest.TestCase):
         with session((1280, 800)) as (root, display):
             local = account(root, 123)
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1280x800")
+            self.assertEqual(value(local.read_text(), GAME), "1280x800")
             display["mode"] = (3840, 2160)
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1920x1080")
+            self.assertEqual(value(local.read_text(), GAME), "1920x1080")
             display["mode"] = (2560, 1600)
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1920x1200")
+            self.assertEqual(value(local.read_text(), GAME), "1920x1200")
             display["mode"] = (1280, 800)
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1280x800")
+            self.assertEqual(value(local.read_text(), GAME), "1280x800")
             # The user picks a value: it stays, however the display changes afterwards.
             chosen = local.read_text().replace('"1280x800"', '"2560x1440"')
             local.write_text(chosen)
@@ -104,7 +110,69 @@ class NativeResolutionTests(unittest.TestCase):
             # ... even when the user later picks the value that happens to be the old cap.
             local.write_text(chosen.replace('"2560x1440"', '"1280x800"'))
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1280x800")
+            self.assertEqual(value(local.read_text(), GAME), "1280x800")
+
+    def test_interrupted_account_writes_resume_and_follow_the_display(self):
+        for initial in (True, False):
+            for after_config in (False, True):
+                with self.subTest(initial=initial, after_config=after_config), session((1280, 800)) as (root, display):
+                    local = account(root, 123)
+                    marker = local.parent / MARKER
+                    if not initial:
+                        hook["main"]()
+                    before = value(local.read_text(), GAME)
+                    display["mode"] = (3840, 2160)
+
+                    def interrupt(path, text):
+                        if (after_config and path == marker and text.startswith("seeded ") or
+                                not after_config and path == local):
+                            raise KeyboardInterrupt
+                        hook["atomic_write"](path, text)
+
+                    with patch.dict(hook["main"].__globals__, atomic_write=interrupt), self.assertRaises(KeyboardInterrupt):
+                        hook["main"]()
+                    self.assertEqual(value(local.read_text(), GAME), "1920x1080" if after_config else before)
+                    self.assertEqual(marker.read_text(), f"pending {before.lower()} 1920x1080\n")
+
+                    display["mode"] = (2560, 1600)
+                    hook["main"]()
+                    self.assertEqual(value(local.read_text(), GAME), "1920x1200")
+                    self.assertEqual(marker.read_text(), "seeded 1920x1200\n")
+                    self.assertEqual(value((root / "config/config.vdf").read_text(), KEY), "1")
+
+    def test_pending_account_write_does_not_clobber_a_new_choice(self):
+        with session() as (root, _):
+            chosen = DEFAULT_ACCOUNT.replace('"Default"', '"Native"')
+            local = account(root, 123, chosen)
+            marker = local.parent / MARKER
+            marker.write_text("pending 1280x800 1920x1080\n")
+            hook["main"]()
+            self.assertEqual(local.read_text(), chosen)
+            self.assertEqual(marker.read_text(), "kept\n")
+
+    def test_duplicate_keys_are_logged_and_otherwise_preserved(self):
+        with session() as (root, display):
+            original = (b'\xef\xbb\xbf"UserLocalConfigStore"\r\n{\r\n'
+                        b'\t"Gamescope" { "GameResolutionGlobal" "Default" "gameresolutionglobal" "Native" }\r\n'
+                        b'\t"gamescope" { "GameResolutionGlobal" "1440x900" }\r\n'
+                        b'\t"Software" { "Other" "one" "Other" "two" }\r\n}\r\n')
+            local = account(root, 123)
+            local.write_bytes(original)
+            install = root / "config/config.vdf"
+            install.parent.mkdir()
+            duplicate = b'\t"Other" "one"\r\n\t"other" "two"\r\n'
+            install.write_bytes(b'"InstallConfigStore"\r\n{\r\n' + duplicate + b'}\r\n')
+            with patch("sys.stderr", new_callable=StringIO) as log:
+                hook["main"]()
+            for config in (local, install):
+                self.assertIn(f"duplicate VDF keys in {config}; using first occurrences", log.getvalue())
+            self.assertIn(duplicate, install.read_bytes())
+            self.assertEqual(value(install.read_text(), KEY), "1")
+            self.assertEqual(local.read_bytes(), original.replace(b'"Default"', b'"1920x1080"'))
+
+            display["mode"] = (2560, 1600)
+            hook["main"]()
+            self.assertEqual(local.read_bytes(), original.replace(b'"Default"', b'"1920x1200"'))
 
     def test_removed_key_and_explicit_values_are_not_followed(self):
         with session((1280, 800)) as (root, display):
@@ -114,22 +182,22 @@ class NativeResolutionTests(unittest.TestCase):
             removed.write_text('"UserLocalConfigStore" { "Gamescope" { } }')
             display["mode"] = (3840, 2160)
             hook["main"]()
-            self.assertNotIn(GAME, entries(removed.read_text()))
-            self.assertEqual(entries(explicit.read_text())[GAME][0], "Native")
+            self.assertIsNone(value(removed.read_text(), GAME))
+            self.assertEqual(value(explicit.read_text(), GAME), "Native")
 
     def test_unreadable_account_does_not_stop_the_others(self):
         with session() as (root, _):
             broken = account(root, 1, '"UserLocalConfigStore" {')
             good = account(root, 2)
             hook["main"]()
-            self.assertEqual(entries(good.read_text())[GAME][0], "1920x1080")
+            self.assertEqual(value(good.read_text(), GAME), "1920x1080")
             self.assertFalse((broken.parent / "steamac-native-resolution").exists())
             self.assertEqual(broken.read_text(), '"UserLocalConfigStore" {')
             self.assertTrue((root / "config/steamac-native-resolution").exists())
             # Fixed later: handled on the next start.
             broken.write_text(DEFAULT_ACCOUNT)
             hook["main"]()
-            self.assertEqual(entries(broken.read_text())[GAME][0], "1920x1080")
+            self.assertEqual(value(broken.read_text(), GAME), "1920x1080")
 
     def test_only_unreadable_accounts_keep_the_ui_off(self):
         with session() as (root, _):
@@ -148,13 +216,13 @@ class NativeResolutionTests(unittest.TestCase):
             self.assertEqual(local.read_text(), DEFAULT_ACCOUNT)
             self.assertFalse((root / "config/config.vdf").exists())
             hook["main"]()
-            self.assertEqual(entries(local.read_text())[GAME][0], "1920x1080")
+            self.assertEqual(value(local.read_text(), GAME), "1920x1080")
 
     def test_fresh_install_uses_install_root(self):
         text = hook["native_resolution"]('"InstallConfigStore" {}')
-        values = entries(text)
-        self.assertEqual(values[KEY][0], "1")
-        self.assertEqual(len(values), 1)
+        self.assertEqual(value(text, KEY), "1")
+        self.assertEqual(text, '"InstallConfigStore" {\n\t"Gamescope"\n\t{\n'
+                               '\t\t"EnableSteamNativeExternalResolution"\t\t"1"\n\t}\n}')
 
     def test_existing_config_and_game_resolution_untouched(self):
         original = ('"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
@@ -163,11 +231,11 @@ class NativeResolutionTests(unittest.TestCase):
         self.assertIn('"GameResolutionGlobal" "5120x2880"', text)
         self.assertTrue(text.endswith('} // keep\n'))
         self.assertEqual(hook["native_resolution"](text), text)
-        self.assertEqual(entries(text)[KEY][0], "1")
+        self.assertEqual(value(text, KEY), "1")
 
     def test_explicit_user_choice_wins(self):
-        for value in ("0", "1"):
-            text = '"InstallConfigStore" { "gamescope" { "EnableSteamNativeExternalResolution" "' + value + '" } }'
+        for original in ("0", "1"):
+            text = f'"InstallConfigStore" {{ "gamescope" {{ "EnableSteamNativeExternalResolution" "{original}" }} }}'
             self.assertEqual(hook["native_resolution"](text), text)
 
     def test_malformed_config_is_rejected(self):
@@ -188,7 +256,7 @@ class NativeResolutionTests(unittest.TestCase):
             self.assertEqual(config.read_text(), user)
             marker.unlink()
             hook["main"]()
-            self.assertEqual(entries(config.read_text())[KEY][0], "1")
+            self.assertEqual(value(config.read_text(), KEY), "1")
 
     def test_existing_choice_gets_marker_and_malformed_config_does_not(self):
         with session() as (root, _):
@@ -219,15 +287,16 @@ class NativeResolutionTests(unittest.TestCase):
             self.assertEqual(config.read_text(), text)
             self.assertEqual(config.stat().st_mode & 0o777, 0o600)
 
-    def test_missing_vdf_helper_is_logged_not_raised(self):
-        with tempfile.TemporaryDirectory() as directory:
-            lonely = Path(directory) / "steam-native-resolution"
-            shutil.copy(HOOK_PATH, lonely)
-            result = subprocess.run([sys.executable, str(lonely)], capture_output=True, text=True,
-                                    env={"HOME": directory, "PATH": ""})
+    def test_startup_logs_malformed_config_without_blocking_steam(self):
+        with session() as (root, _):
+            config = root / "config/config.vdf"
+            config.parent.mkdir(parents=True)
+            config.write_text('"InstallConfigStore" {')
+            result = subprocess.run([sys.executable, str(HOOK_PATH)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0)
             self.assertIn("leaving remaining settings unchanged", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+            self.assertFalse((config.parent / MARKER).exists())
 
 
 if __name__ == "__main__":

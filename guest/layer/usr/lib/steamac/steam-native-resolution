@@ -23,33 +23,124 @@ A new gamescope session is required to lift an existing 1080p cap. An account th
 signs in for the first time in a session that already runs the native UI gets its cap at
 the next Steam start.
 """
+import os
 from pathlib import Path
-import runpy
 import re
 import sys
+import tempfile
 
 MARKER = "steamac-native-resolution"
 GAME_KEY = ("UserLocalConfigStore", "Gamescope", "GameResolutionGlobal")
 KEY = ("InstallConfigStore", "Gamescope", "EnableSteamNativeExternalResolution")
-_vdf = None
+EMPTY = '"InstallConfigStore"\n{\n}\n'
+VDF_TOKEN = re.compile(r'//[^\r\n]*|"(?:\\.|[^"\\])*"|[{}"]|[^\s{}"]+')
+SIZE = r"[0-9]+x[0-9]+"
 
 
-def vdf():
-    """The byte-preserving VDF editor shared with the other config.vdf startup hook.
-
-    Loaded on first use so that a failure to load it is handled like any other error.
-    """
-    global _vdf
-    if _vdf is None:
-        _vdf = runpy.run_path(str(Path(__file__).with_name("steam-idle-screensaver")))
-    return _vdf
+def read_config(path):
+    with path.open(encoding="utf-8", newline="") as source:
+        return source.read()
 
 
-def native_resolution(text):
-    values, _ = vdf()["vdf_entries"](text)
-    if tuple(part.lower() for part in KEY) in values:
-        return text
-    return vdf()["vdf_add"](text, KEY, "1")
+def atomic_write(path, text):
+    """Replace one file durably, retaining its existing permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as out:
+            out.write(text)
+            out.flush()
+            os.fchmod(out.fileno(), mode)
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def unquote(token):
+    if not token.startswith('"'):
+        return token
+    token = token[1:-1]
+    if "\\" not in token:
+        return token
+    return re.sub(r'\\([\\"nrt])',
+                  lambda m: {"n": "\n", "r": "\r", "t": "\t"}.get(m[1], m[1]), token)
+
+
+def resolution_entry(text, path, config=None):
+    """Find one setting and its deepest existing container, without rebuilding VDF."""
+    # Valve's KeyValues reader appends same-named siblings; FindKey uses the first.
+    # Follow that branch only, and leave every duplicate byte untouched.
+    names = tuple(part.lower() for part in path)
+    tokens = (m for m in VDF_TOKEN.finditer(text, int(text.startswith("\ufeff")))
+              if not m[0].startswith("//"))
+    frames = [(True, set())]
+    entry = parent = None
+    duplicate = False
+    for token in tokens:
+        if token[0] == "}":
+            if len(frames) == 1:
+                raise ValueError("unbalanced VDF closing brace")
+            matched, _ = frames.pop()
+            if matched and parent is None:
+                parent = len(frames), token.start()
+            continue
+        value = next(tokens, None)
+        if token[0] in ('{', '"') or value is None or value[0] in ('}', '"'):
+            raise ValueError("incomplete VDF key/value")
+        key = unquote(token[0]).lower()
+        matched, seen = frames[-1]
+        if key in seen:
+            duplicate = True
+            matched = False
+        else:
+            seen.add(key)
+            matched = matched and names[len(frames) - 1] == key
+        is_block = value[0] == "{"
+        if matched and is_block == (len(frames) == len(names)):
+            raise ValueError(f"unexpected VDF type at {'/'.join(path[:len(frames)])}")
+        if is_block:
+            frames.append((matched, set()))
+        elif matched:
+            entry = unquote(value[0]), value.start(), value.end()
+    if len(frames) != 1:
+        raise ValueError("unbalanced VDF opening brace")
+    if duplicate and config is not None:
+        print(f"steam-native-resolution: duplicate VDF keys in {config}; using first occurrences",
+              file=sys.stderr)
+    return entry, parent
+
+
+def set_resolution(text, path, entry, parent, value):
+    if entry:
+        _, start, end = entry
+        return text[:start] + f'"{value}"' + text[end:]
+    if parent is None:
+        raise ValueError(f"no {path[0]} block")
+    depth, end = parent
+    line = text.rfind("\n", 0, end)
+    newline = "\r\n" if line > 0 and text[line - 1] == "\r" else "\n"
+    start = line + 1
+    indent = "\t" * (len(path) - 1)
+    addition = f'{indent}"{path[-1]}"\t\t"{value}"{newline}'
+    for level in range(len(path) - 2, depth - 1, -1):
+        indent = "\t" * level
+        addition = f'{indent}"{path[level]}"{newline}{indent}{{{newline}{addition}{indent}}}{newline}'
+    if text[start:end].strip():
+        start = end
+        addition = newline + addition
+    return text[:start] + addition + text[start:]
+
+
+def native_resolution(text, config=None):
+    entry, parent = resolution_entry(text, KEY, config)
+    return text if entry else set_resolution(text, KEY, entry, parent, "1")
 
 
 def legacy_resolution(width, height):
@@ -72,72 +163,46 @@ def format_size(size):
     return f"{size[0]}x{size[1]}"
 
 
-def current_game_resolution(text):
-    """The account's GameResolutionGlobal as written, or None when the key is absent."""
-    values, _ = vdf()["vdf_entries"](text)
-    current = values.get(tuple(part.lower() for part in GAME_KEY))
-    return current[0] if current else None
-
-
-def is_default(value):
-    return value is None or value.lower() in ("", "default")
-
-
-def set_game_resolution(text, value):
-    values, _ = vdf()["vdf_entries"](text)
-    current = values.get(tuple(part.lower() for part in GAME_KEY))
-    if current:
-        _, start, end = current
-        return text[:start] + vdf()["vdf_quote"](value) + text[end:]
-    return vdf()["vdf_add"](text, GAME_KEY, value)
-
-
-def game_resolution(text, size):
-    """Supply a missing/Default value; any other value is a choice and stays."""
-    if not is_default(current_game_resolution(text)):
-        return text
-    return set_game_resolution(text, format_size(size))
-
-
 def read_marker(marker):
-    """None: never handled. "": handled, nothing of ours to follow. "WxH": the value we wrote."""
+    """Return the previous seed and, for an interrupted write, the intended seed."""
     try:
         content = marker.read_text().strip()
     except FileNotFoundError:
-        return None
-    found = re.fullmatch(r"seeded ([0-9]+x[0-9]+)", content)
-    return found.group(1) if found else ""
-
-
-def write_marker(marker, seeded):
-    vdf()["atomic_write"](marker, f"seeded {seeded}\n" if seeded else "kept\n")
+        return None, None
+    if found := re.fullmatch(rf"pending (default|{SIZE}) ({SIZE})", content):
+        before, after = found.groups()
+        return (None if before == "default" else before), after
+    found = re.fullmatch(rf"seeded ({SIZE})", content)
+    return (found[1] if found else ""), None
 
 
 def protect_account(config):
-    """Look at one account. True when it is handled (it has a marker afterwards)."""
+    """Protect one account before it can count towards enabling the native UI."""
     marker = config.parent / MARKER
-    seeded = read_marker(marker)
+    seeded, pending = read_marker(marker)
     if seeded == "":
         return True
-    text = config.read_text()
-    current = current_game_resolution(text)
-    if seeded is None:
-        if is_default(current):
-            value = format_size(legacy_resolution(*preferred_mode()))
-            vdf()["atomic_write"](config, set_game_resolution(text, value))
-            print(f"steam-native-resolution: game resolution {value} in {config}", file=sys.stderr)
-            write_marker(marker, value)
-        else:
-            write_marker(marker, None)
-    elif current is not None and current.lower() == seeded:
-        # Still the value we wrote: follow the display, as Default did before.
-        value = format_size(legacy_resolution(*preferred_mode()))
-        if value != seeded:
-            vdf()["atomic_write"](config, set_game_resolution(text, value))
-            print(f"steam-native-resolution: game resolution {seeded} -> {value} in {config}", file=sys.stderr)
-            write_marker(marker, value)
-    else:
-        write_marker(marker, None)
+    text = read_config(config)
+    entry, parent = resolution_entry(text, GAME_KEY, config)
+    current = entry[0].lower() if entry else None
+    if pending is not None and current == pending:
+        # The config was replaced, but the new seed wasn't finalized.
+        seeded = pending
+    managed = current in (None, "", "default") if seeded is None else current == seeded
+    if not managed:
+        atomic_write(marker, "kept\n")
+        return True
+
+    value = format_size(legacy_resolution(*preferred_mode()))
+    if value != seeded:
+        changed = set_resolution(text, GAME_KEY, entry, parent, value)
+        # Record both possible config states before replacing the VDF.
+        atomic_write(marker, f"pending {seeded or 'default'} {value}\n")
+        atomic_write(config, changed)
+        previous = f"{seeded} -> " if seeded else ""
+        print(f"steam-native-resolution: game resolution {previous}{value} in {config}", file=sys.stderr)
+    if value != seeded or pending is not None:
+        atomic_write(marker, f"seeded {value}\n")
     return True
 
 
@@ -162,20 +227,20 @@ def main():
     marker = config.parent / MARKER
     if marker.exists():
         return
-    text = config.read_text() if config.exists() else ""
-    changed = native_resolution(text if text.strip() else vdf()["EMPTY"])
+    text = read_config(config) if config.exists() else ""
+    changed = native_resolution(text if text.strip() else EMPTY, config)
     if changed != text and not handled:
         print("steam-native-resolution: native UI waits for the first account's game resolution; "
               "retry next Steam start", file=sys.stderr)
         return
     if changed != text:
-        vdf()["atomic_write"](config, changed)
+        atomic_write(config, changed)
         print("steam-native-resolution: default Steam UI to native display resolution", file=sys.stderr)
-    vdf()["atomic_write"](marker, "1\n")
+    atomic_write(marker, "1\n")
 
 
 if __name__ == "__main__":
-    # Never block Steam's start: whatever fails here (including loading the helper) is logged.
+    # Never block Steam's start: whatever fails here is logged.
     try:
         main()
     except Exception as error:
