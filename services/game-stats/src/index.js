@@ -287,9 +287,10 @@ function mergeConfigs(sessions, ratings) {
   }
   return [...rows.values()].map((row) => ({ ...row, wmtr: Boolean(row.wmtr) }));
 }
-/** Rank profiles across chips in the same hardware scope. Score = (well + 0.5 * issues) / ratings;
- *  no ratings score zero. Require two distinct installs across either source. Ties prefer launch
- *  success, then fewer early exits (missing rates last), then stable profile-key order.
+/** Rank profiles across chips in the same hardware scope. Score = (well + 0.5 * issues) / ratings.
+ *  Require two distinct installs across either source and at least one "well" or "issues" rating:
+ *  a window appearing is not evidence that the game plays (an error dialog opens one, STEAMAC-C5).
+ *  Ties prefer launch success, then fewer early exits (missing rates last), then stable profile-key order.
  *  Unknown legacy graphics paths cannot be applied safely, so they never qualify. */
 async function recommended(db, scope) {
   const group = "vm_driver, effective_gfx, env";
@@ -323,6 +324,7 @@ async function recommended(db, scope) {
   FROM profiles p
   LEFT JOIN profile_sessions s ON s.vm_driver = p.vm_driver AND s.effective_gfx = p.effective_gfx AND s.env IS p.env
   LEFT JOIN profile_ratings r ON r.vm_driver = p.vm_driver AND r.effective_gfx = p.effective_gfx AND r.env IS p.env
+  WHERE coalesce(r.well, 0) + coalesce(r.issues, 0) > 0
   ORDER BY coalesce((r.well + 0.5 * r.issues) / r.ratings, 0) DESC,
     s.launch_rate IS NULL, s.launch_rate DESC, s.early_exit_rate IS NULL, s.early_exit_rate ASC,
     p.vm_driver, p.effective_gfx, p.env

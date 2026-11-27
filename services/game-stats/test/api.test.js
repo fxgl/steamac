@@ -393,14 +393,23 @@ describe("per-game profile statistics", () => {
     const second = await (await request("/v1/games/1091500")).json();
     expect(second.recommended).toMatchObject({ installs: 2, sessions: 2, ratings: { well: 1, issues: 1 } });
   });
-  it("allows rating-only and session-only recommendations", async () => {
+  it("allows rating-only recommendations but never session-only ones", async () => {
     await reports({ session: false });
     let game = await (await request("/v1/games/1091500")).json();
     expect(game.recommended).toMatchObject({ installs: 2, sessions: 0, launch_rate: null, fps_avg_median: null });
-    await reports({ gfx: "dxmt", ratings: [null, null] });
-    await env.DB.prepare("DELETE FROM ratings").run(); host++;
+    await env.DB.prepare("DELETE FROM ratings").run();
+    await reports({ gfx: "dxmt", ratings: [null, null] }); host++;
     game = await (await request("/v1/games/1091500")).json();
-    expect(game.recommended).toMatchObject({ gfx: "dxmt", installs: 2, sessions: 2, ratings: { well: 0, issues: 0, unplayable: 0, no_start: 0 } });
+    expect(game.recommended).toBeNull();
+  });
+  it("never recommends a profile without a well or issues rating, however often its window appeared", async () => {
+    await reports({ gfx: "dxmt", ratings: ["no_start", "unplayable"] });
+    let game = await (await request("/v1/games/1091500")).json();
+    expect(game.configs.filter((c) => c.gfx === "dxmt").map((c) => c.launch_rate)).toEqual([1, 1]);
+    expect(game.recommended).toBeNull();
+    await reports({ gfx: "vulkan", ratings: ["issues", "no_start"] }); host++;
+    game = await (await request("/v1/games/1091500")).json();
+    expect(game.recommended).toMatchObject({ gfx: "vulkan", ratings: { well: 0, issues: 1, no_start: 1 } });
   });
   it("breaks score ties by launch success before early exits", async () => {
     await reports({ gfx: "dxmt", launched: false });

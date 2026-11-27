@@ -229,8 +229,9 @@ Mac's values (`?chip=…&gpu=…&ram=…&pcores=…`) and turns the filter on; t
 
 `GET /v1/games/<appid>` also returns `recommended` (or `null` if no profile qualifies).
 It groups `(driver, gfx, env)` across all chips within the same My Mac filters, requiring at least
-two distinct installations across sessions or ratings; unknown graphics paths cannot win.
-Score = `(well + 0.5 × issues) / total ratings` (zero without ratings); ties favor higher
+two distinct installations across sessions or ratings and at least one “well” or “issues” rating: a
+window appearing is not evidence that the game plays (an error dialog opens one too, STEAMAC-C5);
+unknown graphics paths cannot win. Score = `(well + 0.5 × issues) / total ratings`; ties favor higher
 `launch_rate`, then lower `early_exit_rate`, with missing rates last and deterministic
 driver/graphics/env ordering after that. The result includes driver, graphics path, launch words,
 install/session counts, ratings, median average FPS and launch rate. The site and launcher show
