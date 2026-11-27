@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 SCRIPT = Path(__file__).resolve().parents[2] / "guest/layer/usr/lib/steamac/steam-share-library"
+sys.path.insert(0, str(SCRIPT.parent))
 loader = importlib.machinery.SourceFileLoader("steam_share_library", str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 share = importlib.util.module_from_spec(spec)
@@ -38,12 +39,14 @@ class ShareLibraryTests(unittest.TestCase):
 
     def test_no_file_creates_internal_and_shared_library(self):
         share.register_library(self.root, self.mount)
-        values, _ = share.vdf_entries(self.config.read_text())
+        values, _, _ = share.vdf_entries(self.config.read_text(), strict=True)
         self.assertEqual(values[("libraryfolders", "0", "path")][0], str(self.root))
         self.assertEqual(values[("libraryfolders", "1", "path")][0], str(self.library))
         self.assertNotIn(("libraryfolders", "1", "contentid"), values)
         self.assertTrue((self.library / "steamapps").is_dir())
         self.assertEqual(json.loads(self.marker.read_text()), [str(self.library)])
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.marker.stat().st_mode & 0o777, 0o600)
         self.assertEqual(list(self.mount.glob(".steamac-library-*")), [])
 
     def test_existing_libraries_preserved_and_next_free_index(self):
@@ -124,7 +127,8 @@ class ShareLibraryTests(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertFalse(self.library.exists())
         self.assertEqual(list(self.mount.iterdir()), [])
-        for bad in ['"libraryfolders" {', '}', '"other" {}', '"libraryfolders" { "1" {} "1" {} }']:
+        for bad in ['"libraryfolders" {', '}', '"other" {}', '"libraryfolders" { "1" {} "1" {} }',
+                    '"libraryfolders" { "1" "/old" "1" {} }', '"libraryfolders" { "1" {} "1" "/old" }']:
             self.write_config(bad)
             with self.assertRaises(ValueError):
                 share.register_library(self.root, self.mount)
@@ -133,26 +137,28 @@ class ShareLibraryTests(unittest.TestCase):
 
     def test_quoted_paths_comments_and_single_line_vdf(self):
         library = Path('/home/steamos/quotes"and\\slashes/SteamLibrary')
-        text = '"libraryfolders" { "0" "/internal" } // retained\n'
-        changed = share.add_library(text, library, self.root)
-        values, _ = share.vdf_entries(changed)
-        self.assertEqual(values[("libraryfolders", "1", "path")][0], str(library))
-        self.assertTrue(changed.endswith('} // retained\n'))
+        for suffix in ('} // retained\n', '} // retained "\r\n'):
+            with self.subTest(suffix=suffix):
+                changed = share.add_library('"libraryfolders" { "0" "/internal" ' + suffix, library, self.root)
+                values, _, _ = share.vdf_entries(changed, strict=True)
+                self.assertEqual(values[("libraryfolders", "1", "path")][0], str(library))
+                self.assertTrue(changed.endswith(suffix))
 
     def test_unterminated_quotes_leave_list_and_marker_alone(self):
         for bad in [EXISTING + '"', '"libraryfolders" { "0" "/internal" " }']:
             with self.subTest(text=bad):
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "invalid VDF token"):
                     share.add_library(bad, self.library, self.root)
                 self.write_config(bad)
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "invalid VDF token"):
                     share.register_library(self.root, self.mount)
-                self.assertEqual(self.config.read_text(), bad)
+                self.assertEqual(self.config.read_bytes(), bad.encode())
                 self.assertFalse(self.marker.exists())
                 self.assertEqual(list(self.mount.iterdir()), [])
 
     def test_entrypoint_errors_do_not_block_steam(self):
-        result = subprocess.run([sys.executable, str(SCRIPT)], env={**os.environ, "STEAMAC_CMDLINE": str(self.mount / "absent")}, capture_output=True)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT)],
+                                env={**os.environ, "STEAMAC_CMDLINE": str(self.mount / "absent")}, capture_output=True)
         self.assertEqual(result.returncode, 0)
         self.assertIn(b'could not register', result.stderr)
 

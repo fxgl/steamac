@@ -18,19 +18,18 @@ failed ("Tool 3127680 "fex" unsupported version 0").
 With the setting off (`vulkan`), or a profile no longer requesting DXMT, our entries are removed.
 The games it mapped are remembered in $STATE/compat-default.json; a game whose entry was changed in Steam since is left alone
 from then on. Steam is not running when this runs (ExecStartPre of steam.service); it rewrites
-config.vdf only when it exits. Every byte of config.vdf outside the entries is kept (the VDF helpers
-are mac-clock-format's).
+config.vdf only when it exits. The shared VDF helpers keep every byte outside the edited entries.
 Usage: steam-compat-default dxmt|vulkan
 Test overrides: STEAMAC_STEAM_ROOT, STEAMAC_GFX_STATE.
 """
 import json
 import os
 from pathlib import Path
-import re
 import struct
 import subprocess
 import sys
-import tempfile
+
+from steam_vdf import atomic_write, vdf_entries, vdf_quote
 
 TOOL = "proton_10"
 NATIVE_TOOL = "steamac_dxmt_arm64ec"
@@ -44,69 +43,11 @@ def log(text):
     print("steam-compat-default: " + text, file=sys.stderr)
 
 
-def atomic_write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w") as out:
-            out.write(text)
-        os.chmod(tmp, path.stat().st_mode & 0o777 if path.exists() else 0o600)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-
-
-def vdf_unquote(token):
-    if not token.startswith('"'):
-        return token
-    return re.sub(r'\\([\\"nrt])', lambda m: {"n": "\n", "r": "\r", "t": "\t"}.get(m[1], m[1]), token[1:-1])
-
-
-def vdf_quote(value):
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + '"'
-
-
-def vdf_entries(text):
-    """Scalar spans, block closing offsets and block key offsets; every unrelated byte is retained."""
-    tokens = [m for m in re.finditer(r'//[^\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+', text)
-              if not m[0].startswith("//")]
-    values, blocks, starts, stack = {}, {}, {}, []
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token[0] == "}":
-            if not stack:
-                raise ValueError("unbalanced VDF closing brace")
-            blocks[tuple(stack)] = token.start()
-            stack.pop()
-            i += 1
-            continue
-        if token[0] == "{" or i + 1 == len(tokens):
-            raise ValueError("incomplete VDF key/value")
-        key = vdf_unquote(token[0]).lower()
-        value = tokens[i + 1]
-        if value[0] == "{":
-            stack.append(key)
-            starts[tuple(stack)] = token.start()
-        elif value[0] == "}":
-            raise ValueError("missing VDF value")
-        else:
-            path = (*stack, key)
-            if path in values:
-                raise ValueError("duplicate VDF value")
-            values[path] = (vdf_unquote(value[0]), value.start(), value.end())
-        i += 2
-    if stack:
-        raise ValueError("unbalanced VDF opening brace")
-    return values, blocks, starts
-
-
 def vdf_set(text, path, value):
     values, blocks, _ = vdf_entries(text)
     key = tuple(part.lower() for part in path)
     if key in values:
-        _, start, end = values[key]
+        _, _, start, end = values[key]
         return text[:start] + vdf_quote(value) + text[end:]
     # Add only missing containers, inside the deepest existing ancestor.
     depth = len(key) - 1
@@ -140,7 +81,7 @@ def mappings(text):
     values, _, _ = vdf_entries(text)
     parent = tuple(part.lower() for part in MAPPING)
     found = {}
-    for path, (value, _, _) in values.items():
+    for path, (value, _, _, _) in values.items():
         if len(path) == len(parent) + 2 and path[:len(parent)] == parent:
             found.setdefault(path[-2], {})[path[-1]] = value
     return found

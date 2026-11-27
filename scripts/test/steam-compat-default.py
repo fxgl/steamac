@@ -19,6 +19,7 @@ _spec = importlib.util.spec_from_loader(_loader.name, _loader)
 assert _spec is not None
 compat = importlib.util.module_from_spec(_spec)
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(SCRIPT.parent))
 _loader.exec_module(compat)
 native_fixture = runpy.run_path(str(Path(__file__).with_name("steam-dxmt-arm64ec.py")))
 native_builder = native_fixture["native"]
@@ -112,9 +113,9 @@ class CompatDefaultTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_mode(self, mode):
-        result = subprocess.run([sys.executable, str(SCRIPT), mode], env=self.env, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def run_mode(self, mode, expected_status=0):
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT), mode], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, expected_status, result.stderr)
         return result.stderr
 
     def write(self, text):
@@ -164,6 +165,20 @@ class CompatDefaultTests(unittest.TestCase):
         self.run_mode("vulkan")
         self.assertFalse(self.config.exists())
         self.assertFalse(self.marker.exists())
+
+    def test_unterminated_quotes_leave_configs_and_marker_untouched(self):
+        self.write(CONFIG % "")
+        folders = self.steam / "steamapps/libraryfolders.vdf"
+        originals = {path: path.read_bytes() for path in (self.config, folders)}
+        for malformed in originals:
+            with self.subTest(vdf=malformed.name):
+                expected = {path: data + b'"' if path == malformed else data for path, data in originals.items()}
+                for path, data in expected.items():
+                    path.write_bytes(data)
+                self.assertIn("invalid VDF token", self.run_mode("dxmt", expected_status=1))
+                for path, data in expected.items():
+                    self.assertEqual(path.read_bytes(), data)
+                self.assertFalse(self.marker.exists())
 
 
     def test_profile_subset_removes_old_blanket_entries(self):

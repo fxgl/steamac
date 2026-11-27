@@ -15,6 +15,7 @@ loader = importlib.machinery.SourceFileLoader("steam_title_defaults", str(path))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 titles = importlib.util.module_from_spec(spec)
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(path.parent))
 loader.exec_module(titles)
 KEY = (*titles.VDF_PATH, "2054970", "LaunchOptions")
 WORDS = " ".join(titles.TITLES["2054970"][0])
@@ -48,7 +49,7 @@ class TitleDefaultsTests(unittest.TestCase):
         self.config.write_text(text)
 
     def options(self):
-        values, _ = titles.vdf_entries(self.config.read_text())
+        values, _, _ = titles.vdf_entries(self.config.read_text())
         stored = values.get(tuple(part.lower() for part in KEY))
         return stored[0] if stored else None
 
@@ -56,11 +57,19 @@ class TitleDefaultsTests(unittest.TestCase):
         return json.loads(self.marker.read_text())["accounts"]["123"]["2054970"]
 
     def run_script(self):
-        result = subprocess.run([sys.executable, str(path)], env=self.env, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, "-B", str(path)], env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"Unrelated" "keep"', self.config.read_text())
         self.assertTrue(self.config.read_text().endswith('// retained\n'))
         return result.stderr
+
+    def test_unterminated_quote_leaves_config_untouched(self):
+        bad = self.config.read_bytes().replace(b" // retained\n", b' " // retained\n')
+        self.config.write_bytes(bad)
+        self.assertIn("invalid VDF token", self.run_script())
+        self.assertEqual(self.config.read_bytes(), bad)
+        self.assertFalse((self.home / "calls").exists())
+        self.assertNotIn("123", json.loads(self.marker.read_text()).get("accounts", {}))
 
     def test_apply_idempotence_and_revert(self):
         for previous in (None, "", "FOO=bar %command% --custom"):
@@ -170,7 +179,7 @@ class TitleDefaultsTests(unittest.TestCase):
         path.write_text(json.dumps({"v": 1, "games": games}))
 
     def app_options(self, appid):
-        values, _ = titles.vdf_entries(self.config.read_text())
+        values, _, _ = titles.vdf_entries(self.config.read_text())
         stored = values.get(tuple(part.lower() for part in (*titles.VDF_PATH, appid, "LaunchOptions")))
         return stored[0] if stored else None
 

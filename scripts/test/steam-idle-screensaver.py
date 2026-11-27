@@ -7,11 +7,13 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 # Loading the hook must not leave a __pycache__ in guest/layer (it would ship in the layer).
 sys.dont_write_bytecode = True
 
 path = Path(__file__).resolve().parents[2] / "guest/layer/usr/lib/steamac/steam-idle-screensaver"
+sys.path.insert(0, str(path.parent))
 loader = importlib.machinery.SourceFileLoader("steam_idle_screensaver", str(path))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 idle = importlib.util.module_from_spec(spec)
@@ -37,7 +39,7 @@ class IdleScreensaverTests(unittest.TestCase):
     def test_existing_config_keeps_every_other_byte(self):
         text, added = idle.screensaver_off(STEAM)
         self.assertEqual(added, list(idle.KEYS))
-        values, _ = idle.vdf_entries(text)
+        values, _, _ = idle.vdf_entries(text)
         self.assertEqual((values[AC][0], values[BATTERY][0]), ("0", "0"))
         block = ('\t\t\t\t"System"\n\t\t\t\t{\n\t\t\t\t\t"IdleScreensaverACSeconds"\t\t"0"\n'
                  '\t\t\t\t\t"IdleScreensaverBatterySeconds"\t\t"0"\n\t\t\t\t}\n')
@@ -49,19 +51,31 @@ class IdleScreensaverTests(unittest.TestCase):
                              '\t\t\t\t\t"IdleScreensaverACSeconds"\t\t"300"\n\t\t\t\t}\n\t\t\t\t"ShaderCacheManager"')
         text, added = idle.screensaver_off(user)
         self.assertEqual(added, ["IdleScreensaverBatterySeconds"])
-        values, _ = idle.vdf_entries(text)
+        values, _, _ = idle.vdf_entries(text)
         self.assertEqual((values[AC][0], values[BATTERY][0]), ("300", "0"))
         both, added = idle.screensaver_off(text)
         self.assertEqual((both, added), (text, []))
 
     def test_single_line_and_malformed(self):
         text, _ = idle.screensaver_off('"InstallConfigStore" { "Software" { } } // retained\n')
-        values, _ = idle.vdf_entries(text)
+        values, _, _ = idle.vdf_entries(text)
         self.assertEqual((values[AC][0], values[BATTERY][0]), ("0", "0"))
         self.assertTrue(text.endswith('} // retained\n'))
-        for bad in ['"InstallConfigStore" {', '}', '"UserLocalConfigStore" { }', '"a" { "b" "1" "b" "2" }']:
+        for bad in ['"InstallConfigStore" {', '}', '"UserLocalConfigStore" { }',
+                    '"a" { "b" "1" "b" "2" }', STEAM + '"']:
             with self.assertRaises(ValueError):
                 idle.screensaver_off(bad)
+
+    def test_unterminated_quote_leaves_config_and_marker_untouched(self):
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, HOME=home):
+            config = Path(home) / ".local/share/Steam/config/config.vdf"
+            config.parent.mkdir(parents=True)
+            bad = STEAM.encode() + b'"\n'
+            config.write_bytes(bad)
+            with self.assertRaisesRegex(ValueError, "invalid VDF token"):
+                idle.main()
+            self.assertEqual(config.read_bytes(), bad)
+            self.assertFalse((config.parent / "steamac-idle-screensaver").exists())
 
     def test_once_per_install(self):
         with tempfile.TemporaryDirectory() as home:
@@ -70,9 +84,10 @@ class IdleScreensaverTests(unittest.TestCase):
             try:
                 config = Path(home) / ".local/share/Steam/config/config.vdf"
                 idle.main()
-                values, _ = idle.vdf_entries(config.read_text())
+                values, _, _ = idle.vdf_entries(config.read_text())
                 self.assertEqual((values[AC][0], values[BATTERY][0]), ("0", "0"))
                 self.assertEqual(config.stat().st_mode & 0o777, 0o644)
+                self.assertEqual((config.parent / "steamac-idle-screensaver").stat().st_mode & 0o777, 0o644)
                 # A screensaver chosen later in Steam (here: keys removed) is not overridden.
                 config.write_text(STEAM)
                 idle.main()

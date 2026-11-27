@@ -8,75 +8,17 @@ exists before sign-in, so that account gets the Mac format on its next start.
 """
 import configparser
 import json
-import os
 from pathlib import Path
-import re
 import sys
-import tempfile
 
-
-def atomic_write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w") as out:
-            out.write(text)
-        os.chmod(tmp, path.stat().st_mode & 0o777 if path.exists() else 0o600)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-
-
-def vdf_unquote(token):
-    if not token.startswith('"'):
-        return token
-    return re.sub(r'\\([\\"nrt])', lambda m: {"n": "\n", "r": "\r", "t": "\t"}.get(m[1], m[1]), token[1:-1])
-
-
-def vdf_quote(value):
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + '"'
-
-
-def vdf_entries(text):
-    """Return scalar spans and block closing offsets; retain every unrelated byte."""
-    tokens = [m for m in re.finditer(r'//[^\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+', text)
-              if not m[0].startswith("//")]
-    values, blocks, stack = {}, {}, []
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token[0] == "}":
-            if not stack:
-                raise ValueError("unbalanced VDF closing brace")
-            blocks[tuple(stack)] = token.start()
-            stack.pop()
-            i += 1
-            continue
-        if token[0] == "{" or i + 1 == len(tokens):
-            raise ValueError("incomplete VDF key/value")
-        key = vdf_unquote(token[0]).lower()
-        value = tokens[i + 1]
-        if value[0] == "{":
-            stack.append(key)
-        elif value[0] == "}":
-            raise ValueError("missing VDF value")
-        else:
-            path = (*stack, key)
-            if path in values:
-                raise ValueError("duplicate VDF value")
-            values[path] = (vdf_unquote(value[0]), value.start(), value.end())
-        i += 2
-    if stack:
-        raise ValueError("unbalanced VDF opening brace")
-    return values, blocks
+from steam_vdf import atomic_write, vdf_entries, vdf_quote
 
 
 def vdf_set(text, path, value):
-    values, blocks = vdf_entries(text)
+    values, blocks, _ = vdf_entries(text)
     key = tuple(part.lower() for part in path)
     if key in values:
-        _, start, end = values[key]
+        _, _, start, end = values[key]
         return text[:start] + vdf_quote(value) + text[end:]
     # Add only missing containers, inside the deepest existing ancestor.
     depth = len(key) - 1
@@ -136,7 +78,7 @@ def main():
             continue
         try:
             text = config.read_text()
-            values, _ = vdf_entries(text)
+            values, _, _ = vdf_entries(text)
             stored = values.get(tuple(part.lower() for part in path))
             prefs = json.loads(stored[0]) if stored else {}
             if not isinstance(prefs, dict):
