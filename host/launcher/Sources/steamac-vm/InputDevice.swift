@@ -105,7 +105,7 @@ final class InputDevice {
         while Darwin.read(readFd, &buf, buf.count) > 0 {}
     }
 
-    // MARK: config queries (libkrun device thread). Never fail: libkrun before 1.19.8 loses the
+    // MARK: config queries (libkrun device thread). Never fail: libkrun before 1.19.7 loses the
     // guest's select byte after an error (InputConfig::invalidate), so unsupported
     // selections answer "0 bytes" instead.
 
