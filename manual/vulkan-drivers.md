@@ -76,6 +76,13 @@ logged with the name, the library's functions and the program's MSL hashes, inst
 an image view destroyed before the pass began is logged with the attachment, format and framebuffer before
 Mesa's common code dereferences the freed view (STEAMAC-BJ/BK, DOOM 2016: `transition_attachment` read the
 view's image as NULL; who destroyed it is not yet known; `REPRO_CASE=sentry-bj`).
+A graphics pipeline whose color attachment format KosmicKrisp does not advertise as renderable (BC6H) fails
+creation, logged, instead of Metal aborting with “not color renderable” (STEAMAC-BN/D5, Hunt: Showdown;
+`REPRO_CASE=sentry-bn-bc6h`), and so does a mesh-shader pipeline, which KosmicKrisp cannot run and which has
+no input assembly state (STEAMAC-CG/CH, Final Fantasy VII Rebirth: `kk_gather_program` read it as NULL;
+`REPRO_CASE=sentry-cg-mesh`). Occlusion query pools keep their heap indices in host memory, so an
+overwritten GPU-visible index (after a GPU address fault in AC Valhalla, STEAMAC-7C/7D) is logged and
+restored instead of crashing `vkResetQueryPool`; what wrote it is not yet known.
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
@@ -112,6 +119,13 @@ MoltenVK keeps separate Component-qualified vertex outputs and the matching frag
 width-linked varyings, fixing 1.9.14's duplicated `locnN` / invalid vertex return type regression
 (STEAMAC-87/BB; `REPRO_CASE=sentry-87-components`, pixel-checked for plain and block declarations, both
 width directions and serialized pipeline-cache reuse).
+More than 32 VkDevices alive at once no longer abort MoltenVK: Metal allows 32 residency sets per command
+queue and MoltenVK's queues are shared by every device, so each device's residency set now goes with its
+command buffers (STEAMAC-3/D8/D9; `REPRO_CASE=queue-residency`, 40 devices). The M1 workaround for projected
+sampling of sample-rate inputs (undefined `llvm.agx2.sample.itrproj.1xf`) now also applies on M2
+(STEAMAC-CA, M2 Max; verified on M1 only). A loop whose continue block writes an image with
+robustImageAccess2 is emitted as a structured loop instead of an `expected ')'` for-loop header
+(STEAMAC-B6/B7/B8/B9; `sentry-b6-continue.sh`, GPU readback).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function

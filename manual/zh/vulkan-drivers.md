@@ -34,6 +34,8 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 顶点函数在其库中解析不到的渲染管线，会像其他编译失败一样创建失败，并在日志中记录函数名、库中的函数和程序的 MSL 哈希，而不是触发 Metal 的进程中止 `vertexFunction must not be nil`（STEAMAC-BN/BP；`REPRO_CASE=sentry-bn`）。若渲染通道的帧缓冲引用了在通道开始前已销毁的图像视图，会在 Mesa 通用代码访问这个已释放的视图前记录其附件、格式与帧缓冲（STEAMAC-BJ/BK，DOOM 2016：`transition_attachment` 读到该视图的图像为 NULL；尚不清楚由谁销毁；`REPRO_CASE=sentry-bj`）。MoltenVK 在为其他变量匹配向量宽度时，仍保持带不同 Component 的顶点输出及对应片元输入彼此独立，修复了 1.9.14 中重复 `locnN`／顶点函数返回类型无效的回归（STEAMAC-87/BB；`REPRO_CASE=sentry-87-components`，像素测试覆盖普通声明、接口块、两个方向的宽度调整以及序列化管线缓存的重用）。
 
+颜色附件格式未被 KosmicKrisp 声明为可渲染（BC6H）的图形管线会创建失败并记录日志，而不是由 Metal 以“not color renderable”中止进程（STEAMAC-BN/D5，Hunt: Showdown；`REPRO_CASE=sentry-bn-bc6h`）；KosmicKrisp 无法运行、且没有输入装配状态的网格着色器管线同样如此（STEAMAC-CG/CH，《最终幻想 VII 重生》：`kk_gather_program` 读到其为 NULL；`REPRO_CASE=sentry-cg-mesh`）。遮挡查询池在主机内存中保存其堆索引：GPU 可见的索引被覆写（发生在《刺客信条：英灵殿》的 GPU 地址错误之后，STEAMAC-7C/7D）时会记录日志并恢复，而不是让 `vkResetQueryPool` 崩溃；覆写来源尚不清楚。同时存在超过 32 个 VkDevice 时 MoltenVK 不再中止：Metal 每个命令队列最多允许 32 个驻留集，而 MoltenVK 的队列由所有设备共享，因此设备的驻留集改为随其命令缓冲区使用（STEAMAC-3/D8/D9；`REPRO_CASE=queue-residency`，40 个设备）。M1 上针对按样本频率输入做投影采样的规避（未定义的 `llvm.agx2.sample.itrproj.1xf`）现也用于 M2（STEAMAC-CA，M2 Max；仅在 M1 上验证）。在 robustImageAccess2 下，continue 块写入图像的循环改为输出结构化循环，而不是带 `expected ')'` 错误的 for 循环头（STEAMAC-B6/B7/B8/B9；`sentry-b6-continue.sh`，GPU 回读）。
+
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
 应用捆绑 `libwmtr_host.dylib`；客户机层包含 DXMT 的
