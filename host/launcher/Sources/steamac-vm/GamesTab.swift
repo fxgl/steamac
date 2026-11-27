@@ -19,6 +19,7 @@ struct GamesTab: View {
     }
 
     var body: some View {
+        let games = self.games
         Form {
             Section {
                 Toggle(isOn: $settings.shareGameStats) {
@@ -55,8 +56,13 @@ struct GamesTab: View {
             } header: {
                 Text("Games")
             } footer: {
-                Text("Ratings are optional and shared with the statistics. A game with Share off is kept only on this Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ratings are optional. Sessions and ratings are uploaded only for games with sharing enabled.")
+                    if !games.isEmpty {
+                        Text("Recommendations aren't fetched automatically. Get Recommendation and Retry send the game's Steam App ID and this Mac's RAM, GPU core count, and performance core count to the statistics service, even with sharing off.")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .onAppear { recommendations.reset() }
@@ -135,18 +141,12 @@ private struct GameProfileRow: View {
             HStack {
                 Text("Recommended: unavailable").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Try Again") { recommendations.fetch(appid) }.help(Self.lookupDisclosure)
+                Button("Retry") { recommendations.fetch(appid) }
             }
         case nil:
-            VStack(alignment: .leading, spacing: 2) {
-                Button("Get Recommendation") { recommendations.fetch(appid) }.help(Self.lookupDisclosure)
-                Text(verbatim: Self.lookupDisclosure)
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            Button("Get Recommendation") { recommendations.fetch(appid) }
         }
     }
-
-    static let lookupDisclosure = String(localized: "Sends this game's Steam App ID and this Mac's RAM, GPU core and performance core counts to the FX Steam Launcher statistics service. Nothing is sent until you click.")
 }
 
 private struct GameStatsWhatIsSent: View {
@@ -186,7 +186,7 @@ private struct GameStatsRow: View {
             Toggle("Share", isOn: Binding(get: { game.sharing }, set: { store.setSharing($0, for: game.appid) }))
                 .toggleStyle(.checkbox)
                 .help(sharingOn ? String(localized: "Send this game's sessions and rating")
-                      : String(localized: "Turn on Share game statistics above to send anything"))
+                      : String(localized: "Turn on Share game statistics above to upload sessions and ratings"))
         }
     }
 

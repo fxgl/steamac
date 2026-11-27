@@ -5256,18 +5256,18 @@
         }
       }
     },
-    "Ratings are optional and shared with the statistics. A game with Share off is kept only on this Mac." : {
+    "Ratings are optional. Sessions and ratings are uploaded only for games with sharing enabled." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Оценки необязательны и отправляются вместе со статистикой. Данные игры с выключенным «Делиться» остаются только на этом Mac."
+            "value" : "Оценки необязательны. Сеансы и оценки отправляются только для игр, которыми вы делитесь."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "评分是可选的，会随统计一起共享。关闭“共享”的游戏的数据只保存在这台 Mac 上。"
+            "value" : "评分是可选的。仅上传已开启共享的游戏的会话和评分。"
           }
         }
       }
@@ -5380,6 +5380,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在回收磁盘空间…"
+          }
+        }
+      }
+    },
+    "Recommendations aren't fetched automatically. Get Recommendation and Retry send the game's Steam App ID and this Mac's RAM, GPU core count, and performance core count to the statistics service, even with sharing off." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рекомендации не запрашиваются автоматически. Кнопки «Получить рекомендацию» и «Повторить попытку» отправляют в сервис статистики Steam App ID игры, объём ОЗУ, число ядер GPU и число производительных ядер этого Mac, даже если отправка статистики выключена."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不会自动请求推荐。点击“获取推荐”或“重试”时，即使未开启共享，启动器也会将游戏的 Steam App ID 以及本机的内存大小、GPU 核心数和性能核心数发送给统计服务。"
           }
         }
       }
@@ -6142,22 +6158,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在发送报告…"
-          }
-        }
-      }
-    },
-    "Sends this game's Steam App ID and this Mac's RAM, GPU core and performance core counts to the FX Steam Launcher statistics service. Nothing is sent until you click." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправляет App ID игры в Steam и число ядер GPU, производительных ядер и объём ОЗУ этого Mac в сервис статистики FX Steam Launcher. Пока вы не нажмёте, ничего не отправляется."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "将此游戏的 Steam App ID 以及本机的内存大小、GPU 核心数和性能核心数发送到 FX Steam Launcher 统计服务。点击之前不会发送任何内容。"
           }
         }
       }
@@ -8267,34 +8267,18 @@
         }
       }
     },
-    "Try Again" : {
+    "Turn on Share game statistics above to upload sessions and ratings" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Повторить"
+            "value" : "Чтобы отправлять сеансы и оценки, включите «Делиться статистикой игр» выше"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重试"
-          }
-        }
-      }
-    },
-    "Turn on Share game statistics above to send anything" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чтобы что-то отправлялось, включите «Делиться статистикой игр» выше"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需先开启上方的“共享游戏统计”才会发送"
+            "value" : "开启上方的“共享游戏统计”才能上传会话和评分"
           }
         }
       }

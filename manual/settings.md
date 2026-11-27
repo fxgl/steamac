@@ -79,14 +79,13 @@ means the profile adds no overrides (the field no longer shows a `VKD3D_CONFIG=d
 like a forced value, STEAMAC-8X). The Metal Performance HUD shows the Mac's drawable size, which can
 differ from the game's rendering resolution.
 
-**Get Recommendation** fetches a profile from the statistics service using this Mac's **My Mac**
-limits (GPU cores, RAM and performance cores no greater than this Mac's) and shows it as
-**Recommended: … — Apply**. Only that click sends anything (the game's App ID and those three
-numbers, as the caption under the button says), independent of **Share game statistics**;
-opening the tab sends nothing. Configurations are ranked
-by `(runs well + 0.5 × playable with issues) / all ratings`, then higher launch success and fewer
+Opening **Settings → Games** does not fetch recommendations. Clicking **Get Recommendation** or
+**Retry** sends the game's Steam App ID and this Mac's RAM, GPU core count and performance core
+count to the statistics service, regardless of the **Share game statistics** setting. The service
+uses those **My Mac** limits to find profiles from Macs no more powerful than this one and ranks
+them by `(runs well + 0.5 × playable with issues) / all ratings`, then higher launch success and fewer
 early exits; at least two distinct installs are required (details in [Game statistics](privacy-and-updates.md#game-statistics)).
-Recommendations are never automatic: only **Apply** changes the profile.
+A matching profile is shown as **Recommended: … — Apply**. Only **Apply** changes the profile.
 
 DXMT requires **Settings → Advanced → Allow DXMT (D3D11 on the Mac's Metal)** and a VM boot with
 that permission. While it is off, a DXMT profile is shown as not in effect and offers **Allow DXMT…**

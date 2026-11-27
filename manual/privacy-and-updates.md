@@ -199,14 +199,19 @@ The service still accepts v1 (including previously saved sessions), storing its 
 Invalid v2 assignments are rejected with HTTP 400; valid ones are sorted by name, last duplicate wins.
 
 Every report is kept on this Mac (`~/Library/Application Support/es.fxgam.steamac/game-stats.json`,
-20 sessions per game) and listed in **Settings → Games**. Nothing leaves the Mac until **Share
-game statistics** is on: after the first game with a window the launcher asks once, in a window
-beside the VM window that does not take the keyboard or the captured mouse (**Share** / **Don't
-Share**); the switch in Settings → Games changes it at any time. While it is on, finished sessions
-and ratings go to the statistics service (`POST /v1/sessions`, `POST /v1/ratings`), sessions
-recorded earlier included; a game whose **Share** box is off sends nothing and its rating is
-withdrawn (`"rating": "none"`). Uploads go one at a time; HTTP 400/413 drops a report, anything
-else is retried after 10 minutes, at the next session end or the next boot.
+20 sessions per game) and listed in **Settings → Games**. Session reports and ratings are uploaded
+only when **Share game statistics** is on. After the first game with a window, the launcher asks
+once in a window beside the VM window that does not take the keyboard or the captured mouse
+(**Share** / **Don't Share**); the switch in Settings → Games changes it at any time. While it is on,
+finished sessions and ratings go to the statistics service (`POST /v1/sessions`, `POST /v1/ratings`),
+sessions recorded earlier included. For a game whose **Share** box is off, no sessions are uploaded
+and any shared rating is withdrawn (`"rating": "none"`). Uploads go one at a time; HTTP 400/413
+drops a report, anything else is retried after 10 minutes, at the next session end or the next boot.
+
+Recommendation lookups are separate from uploads. Opening **Settings → Games** never fetches
+recommendations. Clicking **Get Recommendation** or **Retry** sends the game's Steam App ID and
+this Mac's RAM, GPU core count and performance core count to the statistics service, even if sharing
+is off.
 
 Privacy: no name, user or computer name, Steam account, files or arbitrary typed text (only the
 allowlisted graphics launch words above are shared); the install ID is a

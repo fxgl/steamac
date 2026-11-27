@@ -79,11 +79,13 @@ KosmicKrisp / MoltenVK (利用可能なドライバーだけが表示されま�
 フィールドに表示されなくなりました。STEAMAC-8X)。Metal Performance HUD に表示されるのは Mac の drawable のサイズで、
 ゲームのレンダリング解像度とは異なる場合があります。
 
-**Recommended: … — Apply** は、この Mac の **My Mac** の条件
-(GPU コア数、RAM、パフォーマンスコア数がこの Mac 以下) で、統計サービスからプロファイルを取得します。構成は
+**Settings → Games** を開くだけでは、推奨プロファイルは取得されません。
+**Get Recommendation** または **Retry** を押すと、**Share game statistics** の設定にかかわらず、
+ゲームの Steam App ID と、この Mac の RAM 容量、GPU コア数、パフォーマンスコア数が統計サービスに送信されます。
+サービスはこれらを **My Mac** の上限として使い、この Mac 以下の性能の Mac のプロファイルを探します。構成は
 `(runs well + 0.5 × playable with issues) / all ratings` で順位付けされ、次に起動の成功率が高く、
 早期終了が少ないものが優先されます。少なくとも 2 つの異なるインストールが必要です (詳細は[ゲーム統計](privacy-and-updates.md#ゲーム統計)を参照)。
-推奨が自動で適用されることはありません: プロファイルを変更するのは **Apply** だけです。
+該当するプロファイルは **Recommended: … — Apply** と表示され、**Apply** を押したときだけ適用されます。
 
 DXMT には **Settings → Advanced → Allow DXMT (D3D11 on the Mac's Metal)** と、その許可を付けた
 VM の起動が必要です。オフの間、DXMT のプロファイルは無効として表示され、既存のセキュリティ警告とともに
