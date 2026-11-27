@@ -539,6 +539,10 @@ for p in "$here"/patches/*.patch; do
 done
 patch_rev=$(cat "$here"/patches/*.patch | shasum -a 256 | cut -c1-8)
 
+# Link in the regression sources so they can use Mesa's private targets and be edited in place.
+ln -s "$here/test" "$src/src/kosmickrisp/steamac-tests"
+printf "\nsubdir('steamac-tests')\n" >> "$src/src/kosmickrisp/meson.build"
+
 # --- build-time python (Mesa needs Mako, PyYAML, packaging)
 if [ ! -x "$work/venv/bin/python3" ] || ! "$work/venv/bin/python3" -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
 	rm -rf "$work/venv"
@@ -568,20 +572,9 @@ PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 meson setup "
 PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 ninja -C "$work/build"
 built=$work/build/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib
 
-# --- Mesa util regression on macOS: util_queue_finish over the mutex/condvar barrier fallback (0077)
-uqf=$work/util_queue_finish
-eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build") \
-	"$here/test/util_queue_finish.c" "$work/build/src/util/libmesa_util.a" \
-	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$uqf"
-"$uqf"
-
-# --- NIR serialization of shaders with more than 2^20 objects (0080)
-noi=$work/nir_object_ids
-eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build" src/compiler/nir/nir_serialize.c) \
-	"$here/test/nir_object_ids.c" "$work/build/src/compiler/nir/libnir.a" "$work/build/src/compiler/libcompiler.a" \
-	"$work/build/src/util/libmesa_util.a" "$work/build/src/util/blake3/libblake3.a" \
-	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$noi"
-"$noi"
+# --- Mesa util and NIR regressions (0077, 0080)
+PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 meson test -C "$work/build" \
+	--suite steamac --num-processes 1 --print-errorlogs
 
 # --- stage
 stage=$work/stage

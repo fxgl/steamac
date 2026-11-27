@@ -3,7 +3,7 @@
  * leaving the barrier destroyed it, so the first one out destroyed the mutex and condvar under the
  * others and the finishing thread waited forever: disk_cache_destroy in kk_physical_device_destroy
  * hung the repro `compilers` test (and a VM process tearing down a Vulkan instance).
- * Built and run by host/kosmickrisp/build.sh against the driver build's libmesa_util.a. */
+ * Runs in the steamac Meson suite against the driver build's Mesa util library. */
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
