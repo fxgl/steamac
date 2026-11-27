@@ -155,7 +155,7 @@ gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换�
 - **在游戏中自动捕获鼠标** — 所有游戏默认；
 - **立即捕获或释放鼠标（Ctrl+Cmd+G）** — 同 Ctrl+Cmd+G。
 
-这些与所有其他设置都在**设置**窗口（见下），域为
+这些与所有其他设置都在[**设置**窗口](settings.md#设置窗口)，域为
 `es.fxgam.steamac`（`defaults read es.fxgam.steamac`）；首次启动时从旧域 `dev.steamac.vm`
 一次性拷贝。Metal 按应用标识存着色器缓存，改标识后游戏首次启动会重新编译着色器（一次“冷”启动）。
 `--auto-capture on|off` 覆盖单次启动的默认值。

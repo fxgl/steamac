@@ -69,7 +69,7 @@ d3d11bench 100 次绘制 + 16 次全屏通道为 44 / 50（Proton 10.0 + DXVK）
 DXMT 的 winemetal 调用通过 virtio-gpu 到达 **Mac 上虚拟机进程内部**的执行器，
 由其在虚拟机视图内呈现 `CAMetalLayer`。该图层会遮住客户机合成器的光标；启动器改为在其上绘制
 游戏自己的光标，尺寸与 gamescope 一致。跟踪由宿主控制，仅用于 DXMT：只有游戏焦点允许显示覆盖层，
-且实际 wmtr 图层已附加并可见时才运行，而非仅因开启“允许 DXMT”（见“如何工作”中的“DXMT 路径上的光标”）。
+且实际 wmtr 图层已附加并可见时才运行，而非仅因开启“允许 DXMT”（见 [DXMT 路径上的光标](architecture.md#dxmt-路径上的光标)）。
 D3D12（vkd3d-proton）和原生 Vulkan 仍走 Venus；此路径**仅支持 D3D11/D3D10**，不支持 D3D9。
 DXMT 仍有兼容性缺口，包括**不支持流输出（stream output）**；首次启动会编译着色器并可能卡顿，
 不能假定 Steam 的 Vulkan 着色器缓存覆盖 Metal。
@@ -120,3 +120,4 @@ descriptors: soft limit 256 → N”）；virglrenderer 记录失败 shm 或描�
 
 无虚拟机检查：`host/kosmickrisp/build.sh` 对暂存驱动运行 `host/moltenvk/probe` 与复现
 （`REPRO_DRIVER=kosmickrisp host/moltenvk/repro/run.sh <dylib>`，经 Khronos loader，仅测试）；`host/virglrenderer/build.sh` 对各已装驱动运行 `venus_check`。
+如遇管线创建错误，请参阅[使用 Fossilize 捕获和重放管线](../../host/kosmickrisp/FOSSILIZE.md)。

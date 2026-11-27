@@ -4,8 +4,6 @@
 
 ← [Manual](README.md)
 
-## Controller
-
 Any controller macOS's GameController framework supports (Xbox, DualSense, DualShock 4, MFi, …)
 drives a gamepad in SteamOS: the first connected one, or the one picked in Settings → Controller,
 is player 1, and further ones are players 2–4 (“Several controllers” below). The pad is not a virtio-input

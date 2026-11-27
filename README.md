@@ -103,8 +103,8 @@ patches — MIT (as in those projects), five gamescope session files derived fro
 in `docs/media` are not covered by the project license. License texts are in `LICENSES/`.
 
 SteamOS is not part of the project and is not distributed with it: the app downloads a signed image
-from Valve's servers after the user accepts Valve's license (see “Creating the SteamOS disk without
-Docker”).
+from Valve's servers after the user accepts Valve's license (see
+[Creating the SteamOS disk without Docker](manual/building.md#creating-the-steamos-disk-without-docker)).
 
 Steam, the Steam logo, SteamOS, Steam Deck, and Steam Frame are trademarks and/or registered trademarks
 of Valve Corporation in the United States and/or other countries. The project is not affiliated with or

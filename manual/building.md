@@ -187,7 +187,7 @@ returning to Steam, capture is released automatically. **Mouse** menu:
 - **Auto-Capture Mouse in Games** — default for all games;
 - **Capture / Release Mouse Now** — same as Ctrl+Cmd+G.
 
-These and all other settings are in the **Settings** window (see below), domain
+These and all other settings are in the [**Settings** window](settings.md#settings-window), domain
 `es.fxgam.steamac` (`defaults read es.fxgam.steamac`); on first launch they are copied once from
 the previous domain `dev.steamac.vm`. Metal stores the shader cache by app identifier, so after
 changing the identifier, the first launch of games compiles shaders again (one “cold” start).

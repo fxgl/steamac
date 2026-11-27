@@ -78,6 +78,9 @@ Each component, its pinned upstream and what its patches do are described in
 
 ## License
 
-By contributing you agree that your contribution is licensed under the project's licenses: Apache-2.0
-for the project code, GPL-2.0-only for Linux kernel patches, and MIT for Mesa and virglrenderer patches
-(see `NOTICE` and `LICENSES/`).
+By contributing you agree that your contribution is licensed under the license applicable to the part
+of the project it changes: Apache-2.0 by default; GPL-2.0-only for Linux kernel patches and
+configuration (`guest/kernel/patches/`, `guest/kernel/config/`, `guest/kernel/config-steamac`);
+MIT for Mesa and virglrenderer patches (`guest/mesa/`, `host/virglrenderer/patches/`) and the
+Valve-derived gamescope session files; LGPL-2.1-or-later (LGPL-2.1+) for DXMT patches (`host/dxmt/patches/`);
+and BSD-3-Clause for the DXMT remoting layer (`wmtr/`). See [NOTICE](NOTICE) and [LICENSES/](LICENSES/).

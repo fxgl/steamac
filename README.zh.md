@@ -101,6 +101,6 @@ cd steamac
 `docs/media` 截图不在项目许可范围内。许可文本在 `LICENSES/`。
 
 SteamOS 非项目组成部分，也不随项目分发：应用在用户接受 Valve 许可后从 Valve 服务器下载签名映像
-（见“无需 Docker 创建 SteamOS 磁盘”）。
+（见[无需 Docker 创建 SteamOS 磁盘](manual/zh/building.md#无需-docker-创建-steamos-磁盘)）。
 
 Steam、Steam 标志、SteamOS、Steam Deck 与 Steam Frame 是 Valve Corporation 在美国和/或其他国家的商标和/或注册商标。本项目与 Valve Corporation 无关，也未经其背书。

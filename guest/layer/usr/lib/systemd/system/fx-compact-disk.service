@@ -1,7 +1,7 @@
 # steamac: reclaim sparse steamos.img space on the Mac. The session's
 # fx-progress-agent writes ~/.local/share/steamac/compact-request; fx-compact-disk.path
 # starts this oneshot as root to fstrim /home (and /var when mounted). virtio-blk
-# DISCARD then punches holes in the host image (see README "Reclaim space on the Mac").
+# DISCARD then punches holes in the host image (see "Reclaim space on the Mac" in manual/settings.md).
 [Unit]
 Description=FX Steam Launcher reclaim sparse disk space
 ConditionPathExists=/home/steamos/.local/share/steamac/compact-request

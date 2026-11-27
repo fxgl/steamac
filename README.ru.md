@@ -103,8 +103,8 @@ cd steamac
 лицензией проекта не покрываются. Тексты лицензий — в `LICENSES/`.
 
 SteamOS в проект не входит и с ним не распространяется: приложение скачивает подписанный образ
-с серверов Valve после того, как пользователь принял лицензию Valve (см. «Создание диска SteamOS
-без Docker»).
+с серверов Valve после того, как пользователь принял лицензию Valve (см.
+[Создание диска SteamOS без Docker](manual/ru/building.md#создание-диска-steamos-без-docker-creating-the-steamos-disk-without-docker)).
 
 Steam, логотип Steam, SteamOS, Steam Deck и Steam Frame — товарные знаки и/или зарегистрированные
 товарные знаки Valve Corporation в США и/или других странах. Проект не связан с Valve Corporation и

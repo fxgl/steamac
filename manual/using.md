@@ -20,7 +20,7 @@ Launching from Finder (without arguments) uses the kernel, initramfs, and layer 
 and the SteamOS disk from Settings → Advanced → Disk image. By default:
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`; otherwise, the repository's
 `work/out/steamos.img` (next to the bundle or where it was built). If there is no disk, a
-first-launch window offers **Create New Disk…** (see the next section) or **Use Existing Disk…**
+first-launch window offers **Create New Disk…** (see [Creating the SteamOS disk without Docker](building.md#creating-the-steamos-disk-without-docker)) or **Use Existing Disk…**
 (the image is used in place and never copied; `scripts/build-image.sh` also builds one). A disk must be
 a raw SteamOS GPT disk with this layout's partitions: a Steam Deck recovery archive or the macOS Steam
 installer is rejected when chosen, and a saved disk that is not one is refused before boot

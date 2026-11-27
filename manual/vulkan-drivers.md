@@ -4,8 +4,6 @@
 
 ← [Manual](README.md)
 
-## Vulkan driver
-
 The host Vulkan driver behind Venus is chosen in **Settings → Advanced → Vulkan driver** (applies on
 next start) or for one launch with `--vulkan-driver moltenvk|kosmickrisp`. The default is KosmicKrisp
 where the Mac and the build have it (macOS 26+, a build made on macOS 26+), MoltenVK otherwise; a
@@ -202,7 +200,7 @@ executor **inside the VM process on the Mac**, which presents a `CAMetalLayer` i
 That layer would cover the guest compositor's cursor; the launcher draws the game's own cursor above
 it instead, with gamescope-compatible sizing. Cursor tracking is host-gated and DXMT-only: it runs
 only when game focus permits the overlay and an actual wmtr layer is attached and visible, not
-merely because Allow DXMT is on (see “Cursor on the DXMT path” under “How it works”).
+merely because Allow DXMT is on (see [Cursor on the DXMT path](architecture.md#cursor-on-the-dxmt-path)).
 D3D12 (vkd3d-proton) and native Vulkan remain on Venus; this path is for **D3D11/D3D10 only**, not D3D9.
 DXMT still has compatibility gaps, including **no stream output**; expect first-launch shader
 compilation and stutter rather than assuming Steam's Vulkan shader cache covers Metal.
