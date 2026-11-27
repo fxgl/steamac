@@ -18,7 +18,7 @@ import Foundation
 /// ```
 /// begin      blobs (new GPT) -> journal slot, phase = filesystem (or partition table when the
 ///            ext4 already fits)
-/// filesystem guest pass; once the ext4 fits and resize2fs left no error flag: phase = partition table
+/// filesystem guest pass; once ext4 is clean and fits: phase = partition table
 /// partition  backup GPT at the new end -> ftruncate -> primary GPT -> journal cleared
 /// table
 /// ```
@@ -45,15 +45,22 @@ enum DiskShrinker {
     static func cmdlineFlag(homeGiB: Int) -> String { "\(cmdlineFlagPrefix)\(homeGiB)" }
 
     static func request(path: String, homeGiB: Int) throws -> Request {
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
+        defer { close(fd) }
+        return try request(fd: fd, table: GPT.readStrict(fd: fd, path: path), path: path, homeGiB: homeGiB)
+    }
+
+    private static func request(fd: Int32, table: GPT, path: String, homeGiB: Int) throws -> Request {
         guard (8...4096).contains(homeGiB) else {
             throw OptionError("home size must be 8..4096 GiB", localized: String(localized: "home size must be 8..4096 GiB"))
         }
-        let table = try GPT.read(path: path)
         guard let home = table.entries.last, home.name == "home", home.type == DiskLayout.typeHome,
               table.entries.dropLast().allSatisfy({ $0.lastLBA < home.firstLBA }) else {
             throw OptionError("\(path): not a SteamOS disk with home as its last partition",
                               localized: String(localized: "\(path): not a SteamOS disk with home as its last partition"))
         }
+        try requireJournalSpace(table)
         let target = UInt64(homeGiB) * (1 << 30)
         let current = home.sectors * 512
         guard target < current else {
@@ -61,9 +68,8 @@ enum DiskShrinker {
             throw OptionError("the new home size must be smaller than its current \(currentGiB) GiB (use Grow Disk to enlarge)",
                               localized: String(localized: "the new home size must be smaller than its current \(currentGiB) GiB (use Grow Disk to enlarge)"))
         }
-        let probe = try Ext4Probe.read(path: path, partitionOffset: home.firstLBA * 512)
-        let need = probe.usedBytes + slackBytes
-        guard need <= target else {
+        let probe = try Ext4Probe.read(fd: fd, path: path, partitionOffset: home.firstLBA * 512)
+        guard probe.usedBytes <= target - slackBytes else {
             let usedGiB = String(format: "%.1f", Double(probe.usedBytes) / Double(1 << 30))
             throw OptionError("home uses about \(usedGiB) GiB; free space inside SteamOS or pick a larger size",
                               localized: String(localized: "home uses about \(usedGiB) GiB; free space inside SteamOS or pick a larger size"))
@@ -71,16 +77,15 @@ enum DiskShrinker {
         return Request(path: path, homeGiB: homeGiB, diskGUID: table.diskGUID, filesystemFits: fits(probe, homeGiB: homeGiB))
     }
 
-    /// The filesystem is at most `homeGiB` and no resize2fs is half done (it flags the
-    /// filesystem with errors until it has finished, so an interrupted one never counts).
+    /// The filesystem must be clean and at most `homeGiB` before any partition changes.
     static func fits(_ probe: Ext4Probe.Info, homeGiB: Int) -> Bool {
-        probe.totalBytes <= UInt64(homeGiB) << 30 && !probe.hasErrors
+        probe.isClean && probe.totalBytes <= UInt64(homeGiB) << 30
     }
 
     // MARK: journal
 
     struct Journal: Equatable {
-        enum Phase: UInt32 { case filesystem = 1, partitionTable = 2 }
+        enum Phase: UInt32 { case filesystem = 1, partitionTable = 2, repairRequired = 3 }
         var phase: Phase
         var sequence: UInt64
         let homeGiB: Int
@@ -99,6 +104,17 @@ enum DiskShrinker {
     static let primarySectors: UInt64 = 34
     static let backupLBA: UInt64 = 76
     static let backupSectors: UInt64 = 33
+
+    private static func requireJournalSpace(_ table: GPT) throws {
+        let firstAllowed = backupLBA + backupSectors
+        guard table.entries.allSatisfy({ $0.firstLBA >= firstAllowed }) else {
+            throw OptionError("the disk's first partition overlaps the Shrink Disk journal (LBA 40–108)",
+                              localized: String(localized: "The disk's first partition overlaps the sectors Shrink Disk needs for its recovery journal."))
+        }
+        guard table.entries.allSatisfy({ $0.firstLBA <= $0.lastLBA && $0.lastLBA <= table.lastUsableLBA }) else {
+            throw diskChanged
+        }
+    }
     private static let magic = Array("STEAMACSHRINK\0\0\0".utf8)
 
     private static func header(_ j: Journal) -> [UInt8] {
@@ -123,6 +139,7 @@ enum DiskShrinker {
         guard h.count == 512, Array(h[0..<16]) == magic, GPT.get32(h, 16) == 1,
               GPT.crc32(h[0..<508]) == GPT.get32(h, 508),
               let phase = Journal.Phase(rawValue: GPT.get32(h, 20)) else { return nil }
+        guard (8...4096).contains(GPT.get32(h, 24)) else { return nil }
         return (phase, GPT.get64(h, 28), Int(GPT.get32(h, 24)), GPT.get64(h, 36), GPT.get64(h, 44), GPT.get64(h, 52),
                 GPT.getGUID(h, 60), GPT.get32(h, 76))
     }
@@ -136,6 +153,9 @@ enum DiskShrinker {
             if best == nil || d.sequence > best!.sequence { best = d }
         }
         guard let b = best,
+              b.old <= UInt64(Int64.max) / 512, b.new < b.old,
+              b.firstLBA >= backupLBA + backupSectors, b.new > b.firstLBA,
+              b.new - b.firstLBA == (UInt64(b.homeGiB) << 30) / 512 + DiskLayout.mib / 512,
               let primary = try? GPT.preadAll(fd, Int(primarySectors) * 512, at: primaryLBA * 512),
               let backup = try? GPT.preadAll(fd, Int(backupSectors) * 512, at: backupLBA * 512),
               GPT.crc32(primary + backup) == b.blobCRC else { return nil }
@@ -159,12 +179,14 @@ enum DiskShrinker {
         try syncDisk(fd, path)
     }
 
-    private static func clearJournal(fd: Int32, path: String) throws {
+    private static func clearJournal(_ j: Journal, fd: Int32, path: String) throws {
         let zero = [UInt8](repeating: 0, count: 512)
-        try GPT.pwriteAll(fd, zero, at: slotLBAs[0] * 512)
+        let latest = Int(j.sequence % 2)
+        // Do not expose an older filesystem phase after the image has already been truncated.
+        try GPT.pwriteAll(fd, zero, at: slotLBAs[1 - latest] * 512)
         try syncDisk(fd, path)
         try point("clear-half")
-        try GPT.pwriteAll(fd, zero, at: slotLBAs[1] * 512)
+        try GPT.pwriteAll(fd, zero, at: slotLBAs[latest] * 512)
         try syncDisk(fd, path)
     }
 
@@ -185,14 +207,17 @@ enum DiskShrinker {
     // MARK: operation
 
     /// Write the journal (VM stopped, disk lock taken). Nothing else on the disk changes yet.
-    private static func begin(_ r: Request, fd: Int32) throws -> Journal {
+    private static func begin(_ r: Request, fd: Int32, allowGuestPass: Bool = true) throws -> Journal {
         guard readJournal(fd: fd) == nil else {
             throw OptionError("an earlier Shrink Disk is unfinished; start SteamOS to finish it first",
                               localized: String(localized: "an earlier Shrink Disk is unfinished; start SteamOS to finish it first"))
         }
-        let checked = try request(path: r.path, homeGiB: r.homeGiB)
+        var table = try GPT.readStrict(fd: fd, path: r.path)
+        let checked = try request(fd: fd, table: table, path: r.path, homeGiB: r.homeGiB)
         guard checked.diskGUID == r.diskGUID else { throw diskChanged }
-        var table = try GPT.readStrict(path: r.path)
+        guard allowGuestPass || checked.filesystemFits else {
+            throw OptionError("home must be clean and fit within \(r.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot")
+        }
         let homeIdx = table.entries.count - 1
         let home = table.entries[homeIdx]
         let targetSectors = UInt64(r.homeGiB) * (1 << 30) / 512
@@ -205,6 +230,7 @@ enum DiskShrinker {
         let oldSectors = table.sectors
         table.entries[homeIdx].lastLBA = newLast
         table.sectors = ((newLast + 1) * 512 + DiskLayout.mib) / 512
+        guard table.sectors < oldSectors else { throw diskChanged }
         let journal = Journal(phase: checked.filesystemFits ? .partitionTable : .filesystem, sequence: 1,
                               homeGiB: r.homeGiB, diskGUID: table.diskGUID, homeFirstLBA: home.firstLBA,
                               oldSectors: oldSectors, newSectors: table.sectors,
@@ -221,19 +247,30 @@ enum DiskShrinker {
     /// Phase partition table: every step can be repeated, in this order. Backup GPT at the new
     /// end (inside the old image, over space the shrunk filesystem no longer uses), truncation,
     /// primary GPT, journal cleared.
-    private static func complete(_ j: Journal, fd: Int32, path: String) throws {
+    private static func complete(_ j: Journal, fd: Int32, path: String, probe: Ext4Probe.Info) throws {
+        // A different launcher may have booted the old GPT and run growfs after the journal
+        // advanced to this phase. Check the live superblock before even writing the backup.
+        guard fits(probe, homeGiB: j.homeGiB) else {
+            throw OptionError("home no longer fits cleanly; refusing to finish the partition table",
+                              localized: String(localized: "Home is not clean or no longer fits the shrink target. The partition table and image size were not changed on this attempt."))
+        }
         var st = stat()
         guard fstat(fd, &st) == 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
         let size = UInt64(st.st_size)
-        guard size == j.oldSectors * 512 || size == j.newSectors * 512 else {
-            // The image is neither what the operation started with nor what it produces: the
-            // journal does not apply any more.
-            try? clearJournal(fd: fd, path: path)
+        guard size / 512 == j.oldSectors || size / 512 == j.newSectors, size % 512 == 0 else {
             throw diskChanged
         }
-        try GPT.pwriteAll(fd, j.backup, at: (j.newSectors - backupSectors) * 512)
-        try syncDisk(fd, path)
-        try point("complete-backup")
+        if size / 512 == j.oldSectors {
+            _ = try originalHome(j, fd: fd, path: path)
+            try GPT.pwriteAll(fd, j.backup, at: (j.newSectors - backupSectors) * 512)
+            try syncDisk(fd, path)
+            try point("complete-backup")
+        } else {
+            // The backup was synced before the file was shortened; this is the disk we can redo.
+            guard try GPT.preadAll(fd, j.backup.count, at: (j.newSectors - backupSectors) * 512) == j.backup else {
+                throw diskChanged
+            }
+        }
         if size != j.newSectors * 512 {
             guard ftruncate(fd, off_t(j.newSectors * 512)) == 0 else {
                 throw OptionError("shrink \(path): \(String(cString: strerror(errno)))")
@@ -244,9 +281,9 @@ enum DiskShrinker {
         try GPT.pwriteAll(fd, j.primary, at: 0)
         try syncDisk(fd, path)
         try point("complete-primary")
-        let table = try GPT.readStrict(path: path)
-        guard table.diskGUID == j.diskGUID, table.sectors == j.newSectors else { throw diskChanged }
-        try clearJournal(fd: fd, path: path)
+        let table = try GPT.readStrict(fd: fd, path: path)
+        guard table == (try plannedTable(j)) else { throw diskChanged }
+        try clearJournal(j, fd: fd, path: path)
         log("shrink-disk: \(path), home \(j.homeGiB) GiB; GPT rewritten and image truncated")
     }
 
@@ -257,27 +294,52 @@ enum DiskShrinker {
         case completed
     }
 
-    /// Continue the operation from its journal. Phase filesystem: if the ext4 now fits (and no
-    /// resize2fs is half done) move on to the partition table, else the guest pass is due.
-    private static func finish(_ j: Journal, fd: Int32, path: String) throws -> Outcome {
+    private static func plannedTable(_ j: Journal) throws -> GPT {
+        try GPT.parse(header: Array(j.primary[512..<1024]), array: Array(j.primary[1024...]),
+                      myLBA: 1, sectors: j.newSectors)
+    }
+
+    private static func originalHome(_ j: Journal, fd: Int32, path: String) throws -> GPT.Entry {
+        var table = try GPT.readStrict(fd: fd, path: path)
+        try requireJournalSpace(table)
+        guard table.diskGUID == j.diskGUID, table.sectors == j.oldSectors,
+              let home = table.entries.last, home.name == "home", home.type == DiskLayout.typeHome,
+              home.firstLBA == j.homeFirstLBA else { throw diskChanged }
+        let newHomeLast = j.newSectors - DiskLayout.mib / 512 - 1
+        guard newHomeLast < home.lastLBA else { throw diskChanged }
+        table.entries[table.entries.count - 1].lastLBA = newHomeLast
+        table.sectors = j.newSectors
+        guard table == (try plannedTable(j)) else { throw diskChanged }
+        return home
+    }
+
+    /// Only a clean filesystem that fits can advance or finish the partition-table phase.
+    private static func finish(_ j: Journal, fd: Int32, path: String, checkedByGuest: Bool = false) throws -> Outcome {
         var journal = j
-        if journal.phase == .filesystem {
-            guard let probe = try? Ext4Probe.read(path: path, partitionOffset: journal.homeFirstLBA * 512),
-                  fits(probe, homeGiB: journal.homeGiB) else { return .guestPass }
+        let probe = try? Ext4Probe.read(fd: fd, path: path, partitionOffset: journal.homeFirstLBA * 512)
+        if journal.phase != .partitionTable {
+            guard (journal.phase != .repairRequired || checkedByGuest), let probe, fits(probe, homeGiB: journal.homeGiB) else {
+                _ = try originalHome(journal, fd: fd, path: path)
+                return .guestPass
+            }
             journal.phase = .partitionTable
             journal.sequence += 1
             try writeSlot(journal, fd: fd, path: path)
         }
-        try complete(journal, fd: fd, path: path)
+        guard let probe else {
+            throw OptionError("unreadable home superblock; refusing to finish the partition table",
+                              localized: String(localized: "Home is not clean or no longer fits the shrink target. The partition table and image size were not changed on this attempt."))
+        }
+        try complete(journal, fd: fd, path: path, probe: probe)
         return .completed
     }
 
     /// Begin the operation now (VM stopped) and go as far as possible: with the ext4 already
     /// fitting that is all of it, otherwise the guest pass is next.
-    static func apply(_ r: Request) throws -> Outcome {
+    static func apply(_ r: Request, allowGuestPass: Bool = true) throws -> Outcome {
         let fd = try DiskLock.lock(r.path, writable: true)
         defer { close(fd) }
-        let journal = try begin(r, fd: fd)
+        let journal = try begin(r, fd: fd, allowGuestPass: allowGuestPass)
         return try finish(journal, fd: fd, path: r.path)
     }
 
@@ -316,6 +378,7 @@ enum DiskShrinker {
             defer { close(fd) }
             _ = try begin(queued, fd: fd)
         }
+        var outcome = Outcome.idle
         for disk in writable {
             // Most starts have no operation: look first, lock only a disk that carries a journal.
             guard readJournal(path: disk.path) != nil else { continue }
@@ -323,39 +386,63 @@ enum DiskShrinker {
             defer { close(fd) }
             guard let journal = readJournal(fd: fd) else { continue }
             log("shrink-disk: continuing the operation on \(disk.path) (phase \(journal.phase == .filesystem ? "filesystem" : "partition table"), home \(journal.homeGiB) GiB)")
-            return try finish(journal, fd: fd, path: disk.path)
+            outcome = try finish(journal, fd: fd, path: disk.path)
+            if outcome == .guestPass {
+                guard disks.first?.path == disk.path else {
+                    throw OptionError("the shrink boot requires the image to be the first disk",
+                                      localized: String(localized: "Attach the SteamOS image as the first disk to run the shrink boot."))
+                }
+                break
+            }
         }
+        return outcome
+    }
+
+    /// A clean, fitting ext4 can be committed after the resize. On failure, only abandon the
+    /// journal if the original GPT is intact and home is still safe to boot at its old size.
+    static let repairRequiredPrefix = "needs-repair: "
+
+    static func displayFailure(_ reason: String) -> String {
+        reason.hasPrefix(repairRequiredPrefix) ? String(reason.dropFirst(repairRequiredPrefix.count)) : reason
+    }
+
+    static func finishGuestPass(disks: [DiskSpec], checkedByGuest: Bool, failure: String?) throws -> Outcome {
+        guard let disk = disks.first, !disk.readOnly else { throw diskChanged }
+        let fd = try DiskLock.lock(disk.path, writable: true)
+        defer { close(fd) }
+        guard var journal = readJournal(fd: fd), journal.phase != .partitionTable else { throw diskChanged }
+        if checkedByGuest, try finish(journal, fd: fd, path: disk.path, checkedByGuest: true) == .completed { return .completed }
+        let home = try originalHome(journal, fd: fd, path: disk.path)
+        let safe = (try? Ext4Probe.read(fd: fd, path: disk.path, partitionOffset: home.firstLBA * 512))
+            .map { $0.isClean && $0.totalBytes <= home.sectors * 512 } ?? false
+        let needsRepair = failure?.hasPrefix(repairRequiredPrefix) == true || !safe
+            || (journal.phase == .repairRequired && !checkedByGuest)
+        if needsRepair {
+            if journal.phase != .repairRequired {
+                journal.phase = .repairRequired
+                journal.sequence += 1
+                try writeSlot(journal, fd: fd, path: disk.path)
+            }
+            throw OptionError("home is not safe to mount after the shrink boot; keeping the recovery journal",
+                              localized: String(localized: "SteamOS was not started because home still needs repair. The shrink journal was kept for recovery on the next launch."))
+        }
+        try clearJournal(journal, fd: fd, path: disk.path)
+        log("shrink-disk: operation on \(disk.path) abandoned; its partition table was not changed")
         return .idle
     }
 
-    /// An operation is on one of the disks (read only, no lock).
-    static func isActive(disks: [DiskSpec]) -> Bool {
-        disks.contains { !$0.readOnly && readJournal(path: $0.path) != nil }
-    }
-
-    /// The guest pass ended without the filesystem fitting: forget the operation. The partition
-    /// table was never touched, and the next boot grows the filesystem back to the partition.
-    static func abandon(disks: [DiskSpec]) {
-        for disk in disks where !disk.readOnly {
-            guard let fd = try? DiskLock.lock(disk.path, writable: true) else { continue }
-            defer { close(fd) }
-            guard let journal = readJournal(fd: fd), journal.phase == .filesystem else { continue }
-            try? clearJournal(fd: fd, path: disk.path)
-            log("shrink-disk: operation on \(disk.path) abandoned; its partition table was not changed")
-        }
-    }
-
-    /// Options hook (VM process): a journal in phase filesystem makes this boot the one-shot
-    /// shrink boot, so initramfs can e2fsck and resize2fs before the host rewrites the tables.
-    static func attachPending(_ o: inout Options) {
-        for disk in o.disks where !disk.readOnly {
-            guard let journal = readJournal(path: disk.path), journal.phase == .filesystem else { continue }
-            let words = o.cmdline.split(separator: " ")
-            if !words.contains(where: { $0.hasPrefix(cmdlineFlagPrefix) }) { o.cmdline += " " + cmdlineFlag(homeGiB: journal.homeGiB) }
-            if !words.contains("steamac.slot=stop") { o.cmdline += " steamac.slot=stop" }
-            log("shrink-disk: this boot will shrink home to \(journal.homeGiB) GiB then power off")
-            return
-        }
+    /// Only the supervisor can authorize a one-shot boot, after checking the journal and GPT.
+    static func attachPending(_ o: inout Options) throws {
+        guard let disk = o.disks.first, !disk.readOnly,
+              let journal = readJournal(path: disk.path), journal.phase != .partitionTable else { throw diskChanged }
+        guard let home = try plannedTable(journal).entries.last else { throw diskChanged }
+        // initramfs uses the last occurrence before "--"; the journal owns both switches.
+        var words = o.cmdline.split(separator: " ")
+        let end = words.firstIndex(of: "--") ?? words.endIndex
+        words.insert(contentsOf: [Substring(cmdlineFlag(homeGiB: journal.homeGiB)), "steamac.slot=stop",
+                                  Substring("steamac.shrink-home-partuuid=\(home.uuid.uuidString.lowercased())")], at: end)
+        o.cmdline = words.joined(separator: " ")
+        log("shrink-disk: this boot will shrink home to \(journal.homeGiB) GiB then power off")
     }
 
     /// `GPT.read` of an image caught between the truncation and the primary GPT: the table the
@@ -367,7 +454,7 @@ enum DiskShrinker {
         var st = stat()
         guard fstat(fd, &st) == 0, let j = readJournal(fd: fd), j.phase == .partitionTable,
               UInt64(st.st_size) == j.oldSectors * 512 || UInt64(st.st_size) == j.newSectors * 512 else { return nil }
-        return try? GPT.parse(header: Array(j.primary[512..<1024]), array: Array(j.primary[1024...]), myLBA: 1, sectors: j.newSectors)
+        return try? plannedTable(j)
     }
 
     // MARK: self-check
@@ -381,6 +468,19 @@ enum DiskShrinker {
         }
         check(cmdlineFlag(homeGiB: 192) == "steamac.shrink-home=192", "cmdline flag")
         check(slackBytes == 1 << 30, "1 GiB slack")
+
+        let progress = BootProgress(shrinking: true)
+        var results: [String] = []
+        progress.onShrink = { ok, reason in results.append(ok ? "done" : reason) }
+        progress.consoleLine("Booting Linux")
+        check(progress.state.stageId == "shrink" && progress.state.indeterminate, "kernel output does not hide the shrink overlay")
+        progress.guestLine("shrink failed needs-repair: e2fsck failed (exit 4)")
+        progress.consoleLine("[ 1.23] steamac-shrink: failed needs-repair: e2fsck failed (exit 4)")
+        check(progress.state.detail == "e2fsck failed (exit 4)" && results.count == 1, "guest reason is displayed once across both channels")
+        let success = BootProgress(shrinking: true)
+        success.onShrink = progress.onShrink
+        success.consoleLine("steamac-shrink: done 8")
+        check(results.last == "done" && success.state.stageId == "shrink", "console success is parsed without leaving the protected stage")
 
         // Sparse SteamOS GPT (16 GiB home) + synthetic ext4 superblock in home.
         let table = DiskLayout.table(homeGiB: 16)
@@ -401,8 +501,10 @@ enum DiskShrinker {
             try table.write(fd: fd)
             try setSuper(fd, blocks: blocks, free: free, state: state, is64Bit: is64Bit)
         }
-        func setSuper(_ fd: Int32, blocks: UInt64, free: UInt64, state: UInt16 = 1, is64Bit: Bool = true) throws {
-            try GPT.pwriteAll(fd, Ext4Probe.superblock(blocks: blocks, free: free, state: state, is64Bit: is64Bit),
+        func setSuper(_ fd: Int32, blocks: UInt64, free: UInt64, state: UInt16 = 1,
+                      is64Bit: Bool = true, needsRecovery: Bool = false) throws {
+            try GPT.pwriteAll(fd, Ext4Probe.superblock(blocks: blocks, free: free, state: state,
+                                                     is64Bit: is64Bit, needsRecovery: needsRecovery),
                               at: homeOff + Ext4Probe.superOffset)
             guard fsync(fd) == 0 else { throw OptionError("fsync") }
         }
@@ -430,6 +532,33 @@ enum DiskShrinker {
             try table.write(fd: blank)
             close(blank)
             check(throwsError { _ = try request(path: tmp, homeGiB: 8) }, "rejects disk without ext4 home")
+
+            for start in [UInt64(108), 109] {
+                try makeImage()
+                var layout = table
+                layout.entries[0].firstLBA = start
+                try withImage { try layout.write(fd: $0) }
+                if start == 108 {
+                    let sentinel = [UInt8](repeating: 0xa5, count: 512)
+                    try withImage { try GPT.pwriteAll($0, sentinel, at: start * 512) }
+                    let forged = Request(path: tmp, homeGiB: 8, diskGUID: layout.diskGUID, filesystemFits: true)
+                    check(throwsError { _ = try apply(forged) }, "journal does not write over a partition at LBA 108")
+                    check(try withImage { try GPT.preadAll($0, 512, at: start * 512) } == sentinel, "overlapping partition is untouched")
+                } else {
+                    check(try apply(try request(path: tmp, homeGiB: 8)) == .completed, "LBA 109 leaves exactly enough room for the journal")
+                }
+            }
+
+            // A clean UI/CLI probe is only advisory: use the latest state under the writing lock.
+            try makeImage()
+            let assessed = try request(path: tmp, homeGiB: 8)
+            try withImage { try setSuper($0, blocks: 1_048_576, free: 524_288, needsRecovery: true) }
+            let dirty = try request(path: tmp, homeGiB: 8)
+            check(assessed.filesystemFits && !dirty.filesystemFits, "journal replay prevents the fast path")
+            check(throwsError { _ = try apply(assessed, allowGuestPass: false) } && readJournal(path: tmp) == nil,
+                  "CLI rechecks clean state before writing anything")
+            check(try apply(assessed) == .guestPass, "Settings starts a guest pass for dirty ext4, even if it fits")
+            check(try GPT.readStrict(path: tmp) == table, "dirty ext4 leaves the original GPT")
 
             // 4 GiB of the 16 GiB filesystem used (512k blocks used of 1M), slack 1 GiB: the range is fine.
             try makeImage()
@@ -468,9 +597,10 @@ enum DiskShrinker {
             check(readJournal(path: tmp)?.phase == .filesystem, "journal records phase filesystem")
             var options = Options()
             options.disks = disks
-            attachPending(&options)
-            check(options.cmdline.contains("steamac.shrink-home=8") && options.cmdline.contains("steamac.slot=stop"),
-                  "phase filesystem makes the next boot the shrink boot")
+            options.cmdline = "steamac.slot=A steamac.shrink-home=12 -- init-arg"
+            try attachPending(&options)
+            check(options.cmdline.hasSuffix("steamac.shrink-home=8 steamac.slot=stop steamac.shrink-home-partuuid=\(home.uuid.uuidString.lowercased()) -- init-arg"),
+                  "the journal target, slot and partition UUID take precedence before the kernel argument separator")
             check(try resume(runDir: run, disks: disks) == .guestPass, "resume asks for the guest pass again after a restart")
             let lockFD = try DiskLock.lock(tmp, writable: true)
             check(throwsError { _ = try begin(large, fd: lockFD) }, "a second operation is refused while one is on the disk")
@@ -540,21 +670,47 @@ enum DiskShrinker {
             check(readJournal(path: tmp)?.phase == .filesystem, "a torn slot falls back to the previous header")
             check(try resume(runDir: run, disks: disks) == .completed, "the previous header is enough to finish")
 
-            // The image changed under the journal: refuse and drop it.
+            // An external change to the image refuses recovery without touching the journal.
             try makeImage(blocks: 1_048_576, free: 524_288)
             failAt = "complete-backup"
             _ = try? apply(try request(path: tmp, homeGiB: 8))
             try withImage { check(ftruncate($0, off_t(table.sectors * 512 + 4096)) == 0, "grow the fixture image") }
             check(throwsError { _ = try resume(runDir: run, disks: disks) }, "an image of another size is refused")
-            check(readJournal(path: tmp) == nil, "the journal of an image that changed is dropped")
+            check(readJournal(path: tmp) != nil, "an image that changed is not written during recovery")
 
-            // The guest pass failed: abandoning forgets a phase-filesystem operation and nothing else.
+            // Older launcher ran growfs after we reached the partition-table phase. The bytes
+            // at the proposed backup GPT may again belong to the filesystem: do not touch them.
+            try makeImage()
+            failAt = "complete-backup"
+            _ = try? apply(try request(path: tmp, homeGiB: 8))
+            let grown = readJournal(path: tmp)!
+            let backupOffset = (grown.newSectors - backupSectors) * 512
+            let fileData = [UInt8](repeating: 0x5a, count: 512)
+            try withImage { fd in
+                try setSuper(fd, blocks: 4_194_304, free: 4_000_000)
+                try GPT.pwriteAll(fd, fileData, at: backupOffset)
+            }
+            check(throwsError { _ = try resume(runDir: run, disks: disks) }, "partition-table resume rejects a regrown filesystem")
+            check(try withImage { try GPT.preadAll($0, 512, at: backupOffset) } == fileData, "does not write the backup GPT over regrown home")
+            check(fileSize() == table.sectors * 512 && readJournal(path: tmp) == grown, "regrown disk and journal remain unchanged")
+
+            // Failed guest pass, clean original home: boot as usual, without changing GPT.
             try makeImage(blocks: 4_194_304, free: 4_000_000)
             _ = try apply(try request(path: tmp, homeGiB: 8))
-            abandon(disks: disks)
+            check(try finishGuestPass(disks: disks, checkedByGuest: false, failure: "target too small") == .idle,
+                  "safe guest failure allows normal boot")
             let abandoned = try GPT.readStrict(path: tmp)
             check(readJournal(path: tmp) == nil && abandoned == table, "abandon clears the journal, the table is unchanged")
-            check(!isActive(disks: disks), "no active operation after abandon")
+            try makeImage(blocks: 4_194_304, free: 4_000_000)
+            _ = try apply(try request(path: tmp, homeGiB: 8))
+            try withImage { try setSuper($0, blocks: 1_048_576, free: 524_288) }
+            check(throwsError { _ = try finishGuestPass(disks: disks, checkedByGuest: false, failure: "needs-repair: e2fsck failed") },
+                  "failed fsck is not safe to boot even if superblock appears clean")
+            check(try readJournal(path: tmp)?.phase == .repairRequired && GPT.readStrict(path: tmp) == table,
+                  "retain journal requiring a new offline check")
+            check(try resume(runDir: run, disks: disks) == .guestPass, "filesystem size alone cannot advance a failed fsck")
+            check(try finishGuestPass(disks: disks, checkedByGuest: true, failure: nil) == .completed,
+                  "a verified guest retry can finally complete the shrink")
 
             // Queue while the VM runs: only the request is stored; resume puts the journal on the disk.
             try makeImage(blocks: 1_048_576, free: 524_288)
@@ -567,6 +723,27 @@ enum DiskShrinker {
             check(throwsError { _ = try resume(runDir: run, disks: [DiskSpec(path: tmp, readOnly: true)]) },
                   "a queued request needs the disk to be writable")
             clearPending(runDir: run)
+
+            if let mke2fs = ProcessInfo.processInfo.environment["STEAMAC_SELFTEST_MKE2FS"] {
+                try makeImage()
+                let mkfs = Process()
+                mkfs.executableURL = URL(fileURLWithPath: mke2fs)
+                mkfs.arguments = ["-q", "-F", "-t", "ext4", "-b", "4096", "-O", "64bit,flex_bg,casefold",
+                                  "-E", "offset=\(homeOff)", tmp, "16384"] // a real 64 MiB ext4 in the sparse GPT image
+                try mkfs.run()
+                mkfs.waitUntilExit()
+                guard mkfs.terminationStatus == 0 else { throw OptionError("mke2fs failed (\(mkfs.terminationStatus))") }
+                let ext4 = try Ext4Probe.read(path: tmp, partitionOffset: homeOff)
+                check(ext4.isClean && ext4.blockCount == 16_384 && ext4.blockSize == 4096, "real ext4 superblock at home offset")
+                failAt = "complete-truncate"
+                check(throwsError { _ = try apply(try request(path: tmp, homeGiB: 8), allowGuestPass: false) }, "inject interruption with real ext4")
+                check(try GPT.read(path: tmp).sectors == readJournal(path: tmp)?.newSectors, "journal recovers real ext4's interrupted GPT")
+                check(try resume(runDir: run, disks: disks) == .completed, "resume real ext4 image shrink")
+                check(try Ext4Probe.read(path: tmp, partitionOffset: homeOff) == ext4, "real filesystem unchanged by GPT/truncate")
+                check(try readJournal(path: tmp) == nil && GPT.readStrict(path: tmp).entries.last?.sectors == 8 * (1 << 30) / 512,
+                      "real ext4 has strict GPT and no journal after recovery")
+                log("selftest-settings: real ext4 shrink fixture exercised")
+            }
         } catch {
             failures.append("disk shrink: \(error)")
         }

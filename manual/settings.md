@@ -65,11 +65,13 @@ used data still fits (the 1 GiB margin is only a pre-check; `resize2fs` has the 
 SteamOS stopped, or after it has shut down for **Shrink and Restart**, a one-shot boot with
 `steamac.shrink-home=N` + `steamac.slot=stop` runs `e2fsck` and `resize2fs` from the rootfs on
 unmounted home, then powers off. The launcher then rewrites the partition table and truncates the
-image. If the filesystem already fits, the launcher finishes without the one-shot boot. A journal
-between the primary GPT and the first partition lets the launcher resume after an interruption.
-An interrupted `resize2fs` leaves the filesystem marked with errors; on the next start `e2fsck`
-tries to repair it before another attempt. Repair is not guaranteed, so back up the image first.
-Terminal (filesystem already fits, VM stopped):
+image. If the filesystem is clean and already fits, the launcher finishes without the one-shot
+boot. While that boot is running, the launcher refuses quit, restart and updates. The recovery
+journal uses sectors 40–108, so the first partition must start at sector 109 or later.
+After an interruption `e2fsck` can try to repair and resume the shrink; that is not guaranteed,
+so back up the image first. If the shrink fails and home is safe to mount, SteamOS starts with
+the original partition table. If home still needs repair, the launcher keeps the journal and
+does not start SteamOS. Terminal (clean filesystem already fits, VM stopped):
 `work/out/steamac-vm --shrink-disk /path/to/steamos.img --home-gib 192`.
 
 **Reclaim space on the Mac:** after uninstalling games (or after a large Grow), the sparse

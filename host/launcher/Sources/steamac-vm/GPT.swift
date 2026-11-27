@@ -160,6 +160,11 @@ struct GPT: Equatable {
         let fd = open(path, O_RDONLY)
         guard fd >= 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
         defer { close(fd) }
+        return try readStrict(fd: fd, path: path)
+    }
+
+    /// Read from the descriptor the caller has locked, not a reopened path.
+    static func readStrict(fd: Int32, path: String) throws -> GPT {
         var st = stat()
         guard fstat(fd, &st) == 0, st.st_size >= 68 * 512 else { throw OptionError("\(path): too small for a GPT") }
         let sectors = UInt64(st.st_size) / 512

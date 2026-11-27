@@ -301,9 +301,8 @@ struct Options {
       --grow-disk PATH     grow an existing disk's home capacity to --home-gib N (grow only).
                            SteamOS must be stopped; partition and filesystem grow on its next boot.
       --shrink-disk PATH   shrink home capacity to --home-gib N (VM stopped). Refuses when used
-                           data would not fit. If the ext4 still exceeds N GiB, Shrink Disk… in
-                           Settings runs a one-shot boot first; this flag only rewrites GPT/truncate
-                           when the filesystem already fits.
+                           data would not fit. Only rewrites GPT/truncates when ext4 is clean and
+                           fits; use Shrink Disk… in Settings for the one-shot e2fsck/resize boot.
 
     SSH: --ssh-password DISK prints user, generated password and state (pending / applied) of DISK
     (the password Settings > Advanced shows; it exists once SSH was enabled for that disk).
@@ -549,9 +548,12 @@ struct Options {
         }
         if !o.isSelftest {
             AppBundle.fill(&o, settings: settings, overrides: &overrides)
-            Provision.attachPending(&o)
-            Provision.attachConfig(&o)
-            DiskShrinker.attachPending(&o)
+            if Supervisor.isShrinkBoot {
+                try DiskShrinker.attachPending(&o)
+            } else {
+                Provision.attachPending(&o)
+                Provision.attachConfig(&o)
+            }
             let words = o.cmdline.split(separator: " ")
             func add(_ key: String, _ value: @autoclosure () -> String?) {
                 guard !words.contains(where: { $0.hasPrefix(key + "=") }), let v = value() else { return }

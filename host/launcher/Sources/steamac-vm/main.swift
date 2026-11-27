@@ -69,11 +69,7 @@ if let disk = options.shrinkDisk {
     do {
         guard options.explicit.contains("--home-gib") else { throw OptionError("--shrink-disk requires --home-gib N") }
         let request = try DiskShrinker.request(path: disk, homeGiB: options.createHomeGiB)
-        guard request.filesystemFits else {
-            throw OptionError("home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot",
-                              localized: String(localized: "home filesystem still exceeds \(request.homeGiB) GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot"))
-        }
-        _ = try DiskShrinker.apply(request)
+        _ = try DiskShrinker.apply(request, allowGuestPass: false)
         print("Disk shrunk to \(request.homeGiB) GiB home capacity.")
         exit(0)
     } catch {
@@ -137,6 +133,15 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// SteamOS can take ~2 min to stop (systemd stop-job timeouts) before libkrun exits.
     static let gracePeriod: TimeInterval = 180
 
+    private var shrinkingHome: Bool { progress?.isShrinking == true }
+
+    private func requireShrinkFinished() -> Bool {
+        guard shrinkingHome else { return true }
+        log("shrink-disk: shutdown, restart and updates are unavailable until the disk is ready")
+        window?.setStatus(String(localized: "Wait until the disk shrink is finished."))
+        return false
+    }
+
     /// Force quit: no relaunch even if a restart was pending; the status tells the supervisor the
     /// user asked for it (CrashReporting.forceQuitStatus).
     private func forceQuit() -> Never {
@@ -146,6 +151,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     }
 
     func requestShutdown(force: Bool = false) {
+        guard requireShrinkFinished() else { return }
         CrashReporting.noteUserExit()
         if let at = requestedAt {
             // A terminal ^C reaches both the supervisor and us; its forwarded copy is not a second request.
@@ -186,6 +192,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// (power key, grace period, never a force quit); Sparkle installs once the launcher is gone.
     /// A shutdown or restart already under way serves (a restart became the update's relaunch).
     func shutdownForUpdate() {
+        guard requireShrinkFinished() else { return }
         if requestedAt != nil { log("update: SteamOS is already shutting down"); return }
         if let progress, case .shutdown = progress.state.phase { log("update: SteamOS is already shutting down"); return }
         requestShutdown()
@@ -194,6 +201,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// "Restart VM" (menu / Settings): power the guest off cleanly, then the supervisor boots it
     /// again with the current settings.
     func requestRestart() {
+        guard requireShrinkFinished() else { return }
         CrashReporting.noteUserExit()
         guard requestedAt == nil, let vm, let progress else { return }
         requestedAt = Date()
@@ -230,7 +238,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// The VM may be paused (suspend, guest sleep): not while SteamOS shuts down or restarts (it
     /// must run to finish).
     var canPause: Bool {
-        requestedAt == nil && (progress.map { if case .shutdown = $0.state.phase { return false } else { return true } } ?? true)
+        !shrinkingHome && requestedAt == nil && (progress.map { if case .shutdown = $0.state.phase { return false } else { return true } } ?? true)
     }
 
     @discardableResult
@@ -252,6 +260,7 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// a user's Quit asks first (the suspended state is lost; SuspendController.askQuit, answered
     /// later without a modal loop); logout / restart / shutdown of the Mac does not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard requireShrinkFinished() else { return .terminateCancel }
         // Sparkle's installer asks the app to quit once the update is handed over; SteamOS's
         // shutdown for it is under way (shutdownForUpdate): another request would force-quit.
         if Lifecycle.quitByUpdater {
@@ -290,13 +299,18 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     @objc func menuGrab() { window?.grabPointer() }
     @objc func menuOverlay() { window?.toggleOverlay() }
     @objc func menuMetalHUD() { window?.toggleMetalHUD() }
-    @objc func menuSettings() { settingsWindow?.show() }
+    @objc func menuSettings() { if requireShrinkFinished() { settingsWindow?.show() } }
     @objc func menuReport() { report?() }
-    @objc func menuCheckForUpdates() { UpdateChecker.shared.menuAction() }
+    @objc func menuCheckForUpdates() { if requireShrinkFinished() { UpdateChecker.shared.menuAction() } }
 }
 
 extension Lifecycle: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if shrinkingHome, let action = item.action,
+           [#selector(menuShutdown), #selector(menuRestart), #selector(menuForceQuit),
+            #selector(menuSuspend), #selector(menuSettings), #selector(menuCheckForUpdates)].contains(action) {
+            return false
+        }
         if item.action == #selector(menuMetalHUD) {
             item.state = LauncherSettings.shared.metalHUD ? .on : .off
             // libMTLHud's own item (MainMenu.adoptHUDMenuItems): titled and ticked like the View menu item.
@@ -335,7 +349,9 @@ do {
     atexit { Lifecycle.console?.restoreTerminal() }
     Lifecycle.console = console
 
-    let progress = BootProgress(restarting: Supervisor.bootNumber > 1)
+    let shrinkBoot = Supervisor.isShrinkBoot || options.cmdline.split(separator: " ").prefix(while: { $0 != "--" })
+        .contains { $0.hasPrefix(DiskShrinker.cmdlineFlagPrefix) }
+    let progress = BootProgress(restarting: Supervisor.bootNumber > 1, shrinking: shrinkBoot)
     lifecycle.progress = progress
     progress.onBootFailure = { detail in
         guard !options.headless, let window = lifecycle.window?.window else { return }
@@ -354,6 +370,19 @@ do {
         GameSessionTracker.consoleLine(line)
     }
     let progressPort = try ProgressPort()
+    progress.onShrink = { ok, reason in
+        if !ok { log("shrink-disk: guest reported failure: \(DiskShrinker.displayFailure(reason))") }
+        if let dir = Supervisor.runDir {
+            do {
+                let result = ok ? "done" : "failed \(reason)"
+                try Data(result.utf8).write(to: URL(fileURLWithPath: Supervisor.shrinkResultMarker(dir)), options: .atomic)
+            } catch {
+                log("shrink-disk: cannot record the guest result: \(error)")
+                return
+            }
+        }
+        progressPort.send("shrink-ack")
+    }
     // Log bundles and compact-disk replies share fx.progress with BootProgress.
     let guestLogs = GuestLogs(port: progressPort)
     let diskCompact = DiskCompact(port: progressPort)
@@ -586,7 +615,7 @@ do {
     let settingsWindow = SettingsWindowController(context: settingsContext)
     lifecycle.settingsContext = settingsContext
     lifecycle.settingsWindow = settingsWindow
-    wc.onOpenSettings = { settingsWindow.show() }
+    wc.onOpenSettings = { lifecycle.menuSettings() }
     func openReport(_ origin: String, on parent: NSWindow) {
         wc.releasePointer()
         let context = ReportContext(origin: origin, options: options, runDir: Supervisor.runDir, guest: guestLogs,
@@ -620,11 +649,13 @@ do {
         gamePause.setAppActive(NSApp.isActive)
         clipboard?.setAppActive(NSApp.isActive)
     }
-    if settings.showOverlay { wc.overlay.show() }
+    if shrinkBoot || settings.showOverlay { wc.overlay.show() }
     if options.fullscreen && !wc.window.styleMask.contains(.fullScreen) { wc.window.toggleFullScreen(nil) }
     gamepad?.start()
     // New-version check (first boot of this launch; Settings > General), after the window is up.
-    UpdateChecker.shared.start(vmWindow: { [weak wc] in wc?.window }, shutdownForUpdate: { lifecycle.shutdownForUpdate() })
+    if !shrinkBoot {
+        UpdateChecker.shared.start(vmWindow: { [weak wc] in wc?.window }, shutdownForUpdate: { lifecycle.shutdownForUpdate() })
+    }
     if let d = options.inputSelftestDelay { InputSelfTest.schedule(after: d, window: wc, gamepad: gamepad) }
     if let d = options.resizeSelftestDelay {
         ResizeSelfTest.start(after: d, window: wc, display: display, progress: progress,

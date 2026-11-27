@@ -15,12 +15,15 @@ enum Supervisor {
     static let netSockEnv = "STEAMAC_NET_SOCK"
     static let bootEnv = "STEAMAC_BOOT"
     static let frameEnv = "STEAMAC_WINDOW_FRAME"
+    private static let shrinkEnv = "STEAMAC_SHRINK_BOOT"
 
     static var isChild: Bool { ProcessInfo.processInfo.environment[childEnv] == "1" }
     static var runDir: String? { ProcessInfo.processInfo.environment[runDirEnv] }
     static var netSocket: String? { ProcessInfo.processInfo.environment[netSockEnv] }
     static var bootNumber: Int { Int(ProcessInfo.processInfo.environment[bootEnv] ?? "1") ?? 1 }
     static var windowFrame: String? { ProcessInfo.processInfo.environment[frameEnv] }
+    static var isShrinkBoot: Bool { isChild && ProcessInfo.processInfo.environment[shrinkEnv] == "1" }
+    static func shrinkResultMarker(_ dir: String) -> String { dir + "/shrink-result" }
     static func rebootMarker(_ dir: String) -> String { dir + "/reboot" }
     /// Sparkle prepared an update (SparkleUpdates): it installs once this launcher exits, so no
     /// VM process boots from the bundle again.
@@ -118,7 +121,6 @@ enum Supervisor {
 
         let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
         var boot = 1
-        var shrinkPassRan = false
         var frame: String?
         while true {
             var o: Options
@@ -155,26 +157,11 @@ enum Supervisor {
                 exit(1)
             }
             // A Shrink Disk on one of the disks: continue it from the journal on the disk (queued
-            // by Settings, or left by a launcher that went away). With the ext4 still too large
-            // this boot is the one-shot shrink boot; it runs once per launcher start.
+            // by Settings, or left by a launcher that went away). An unfinished filesystem
+            // phase gets one offline pass before the supervisor decides whether it can boot.
+            let shrinkBoot: Bool
             do {
-                let shrink = try DiskShrinker.resume(runDir: dir, disks: o.disks)
-                if shrink != .guestPass {
-                    shrinkPassRan = false
-                } else {
-                    if shrinkPassRan {
-                        DiskShrinker.abandon(disks: o.disks)
-                        log("shrink-disk: the shrink boot ended without the filesystem fitting")
-                        MainActor.assumeIsolated {
-                            AppBundle.alertIfLaunchedFromFinder(
-                                "SteamOS disk could not be shrunk",
-                                String(localized: "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again."))
-                        }
-                        cleanup()
-                        exit(1)
-                    }
-                    shrinkPassRan = true
-                }
+                shrinkBoot = try DiskShrinker.resume(runDir: dir, disks: o.disks) == .guestPass
             } catch {
                 log("shrink-disk: \(error)")
                 MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be shrunk", error.localizedDescription) }
@@ -216,6 +203,9 @@ enum Supervisor {
             env[frameEnv] = frame
             env[profileDriverEnv] = profileBoot?.driver
             env[profileLaunchEnv] = profileBoot.map { String($0.appid) }
+            env[shrinkEnv] = shrinkBoot ? "1" : nil
+            let shrinkResult = shrinkResultMarker(dir)
+            if shrinkBoot { try? FileManager.default.removeItem(atPath: shrinkResult) }
             CrashReporting.supervisorBoot(o, boot: boot, runDir: dir, env: &env)
             let vmExit = spawnAndWait(exe, CommandLine.arguments, env)
             let status = vmExit.status
@@ -231,12 +221,39 @@ enum Supervisor {
             }
             CrashReporting.vmExited(vmExit)
 
+            // Do not take any reboot/update marker from the one-shot VM. Complete or safely
+            // cancel the operation first. Unexpected termination leaves the on-disk journal.
+            if shrinkBoot && status == 0 {
+                let result = try? String(contentsOfFile: shrinkResult, encoding: .utf8)
+                try? FileManager.default.removeItem(atPath: shrinkResult)
+                let failure = result.flatMap { $0.hasPrefix("failed ") ? String($0.dropFirst("failed ".count)) : nil }
+                let reason = failure.map(DiskShrinker.displayFailure)
+                do {
+                    if try DiskShrinker.finishGuestPass(disks: o.disks, checkedByGuest: result == "done", failure: failure) == .idle {
+                        let detail = reason.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "The shrink boot finished without fitting the filesystem to the chosen size. Check the log, free space inside SteamOS, or try again.")
+                        log("shrink-disk: \(detail); starting SteamOS with the original partition table")
+                        MainActor.assumeIsolated {
+                            AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be shrunk", detail)
+                        }
+                    }
+                } catch {
+                    let detail = [reason, error.localizedDescription].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+                    log("shrink-disk: \(detail)")
+                    MainActor.assumeIsolated {
+                        AppBundle.alertIfLaunchedFromFinder("SteamOS disk could not be shrunk", detail)
+                    }
+                    cleanup()
+                    exit(1)
+                }
+                boot += 1
+                continue
+            }
             let marker = rebootMarker(dir)
             if FileManager.default.fileExists(atPath: updateMarker(dir)), FileManager.default.fileExists(atPath: marker) {
                 try? FileManager.default.removeItem(atPath: marker)
                 log("update: not booting again: the prepared update installs now that the launcher exits")
             }
-            if let contents = try? String(contentsOfFile: marker, encoding: .utf8) {
+            if !shrinkBoot, let contents = try? String(contentsOfFile: marker, encoding: .utf8) {
                 try? FileManager.default.removeItem(atPath: marker)
                 let text = contents.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text == firstRunMarker {
@@ -246,14 +263,6 @@ enum Supervisor {
                 boot += 1
                 frame = text
                 log("guest rebooted (VM exit status \(status)): starting boot #\(boot)")
-                continue
-            }
-            // The shrink boot (`steamac.slot=stop`) powers off without a reboot marker. Looping lets
-            // `resume` finish the partition table, or give up when the filesystem still does not fit.
-            // Any other exit leaves the journal: the next launcher start continues from it.
-            if status == 0 && DiskShrinker.isActive(disks: o.disks) {
-                boot += 1
-                log("shrink-disk: the shrink boot ended; checking the filesystem for boot #\(boot)")
                 continue
             }
             // Unexpected exit (crash, error): offer Report a Problem before cleaning up (the

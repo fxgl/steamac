@@ -129,9 +129,6 @@ wait_part() { # wait up to 30 s for a partition label to appear
     return 0
 }
 
-wait_part esp || fatal "no partition labelled 'esp' (is steamos.img attached as the first disk?)"
-ESP_DEV=$(part_dev esp)
-
 # ---------------------------------------------------------------- provisioning
 # First boot of a disk the launcher created without Docker (contract "Docker-
 # free disk provisioning", host = launcher, guest = this stage). The launcher
@@ -195,6 +192,36 @@ fx_say() { # fx_say <topic> <words>: hvc0 "steamac-<topic>: <words>", fx.progres
     [ -n "$PROV_PORT" ] && echo "$_t $*" > "$PROV_PORT" 2>/dev/null
     return 0
 }
+
+shrink_result() {
+    if fx_find_port && [ -n "$PROV_PORT" ]; then
+        # Keep the port open until the launcher has consumed the result. Old launchers (or
+        # a dead host) do not acknowledge, so never hold up poweroff for more than two seconds.
+        (
+            PROV_PORT=
+            fx_say shrink "$*"
+            printf 'shrink %s\n' "$*" >&3
+            timeout 2 sh -c 'while IFS= read -r line; do [ "$line" != shrink-ack ] || break; done' <&3
+        ) 3<> "$PROV_PORT" || :
+        return
+    fi
+    fx_say shrink "$*"
+}
+
+shrink_abort() {
+    warn "shrink-home: $*"
+    umount /newroot/proc 2>/dev/null; umount /newroot/dev 2>/dev/null
+    sync
+    shrink_result "failed $*"
+    poweroff -f
+}
+
+wait_part esp || {
+    [ -n "$(getarg steamac.shrink-home)" ] && shrink_abort "no partition labelled 'esp'"
+    fatal "no partition labelled 'esp' (is steamos.img attached as the first disk?)"
+}
+ESP_DEV=$(part_dev esp)
+
 prov_say() { fx_say provision "$@"; }
 prov_umount_all() {
     for _d in var-A var-B efi-A efi-B esp root; do
@@ -745,7 +772,7 @@ if ! assemble_slot "$SLOT"; then
     if [ "$FORCED" = stop ]; then
         # The shrink boot marks nothing bad: it tries the other slot's rootfs and otherwise powers off.
         SLOT=$(other_of "$SLOT")
-        assemble_slot "$SLOT" || { warn "shrink-home: neither slot's rootfs can be assembled"; sync; poweroff -f; }
+        assemble_slot "$SLOT" || shrink_abort "neither slot's rootfs can be assembled"
     else
         warn "slot $SLOT is unusable, marking it bad (BOOT_${SLOT}_LEFT=0)"
         set_left "$SLOT" 0
@@ -763,18 +790,8 @@ echo "$SLOT" > /run/steamac/slot
 # (GiB) boots no system: the read-only rootfs assembled above is only the source of e2fsprogs
 # for the unmounted home, then the VM powers off (never a switch_root: growfs would grow the
 # filesystem back into the still-large partition). Anything that goes wrong powers off too,
-# never a shell: the host finds the filesystem unfit and gives the operation up.
-# It can be repeated after an interruption: e2fsck repairs what resize2fs left half done, then
-# resize2fs starts again (it flags the filesystem with errors until it has finished, which is
-# how the host tells a finished shrink from an interrupted one).
-shrink_abort() {
-    warn "shrink-home: $*"
-    fx_find_port
-    fx_say shrink "failed $*"
-    umount /newroot/proc 2>/dev/null; umount /newroot/dev 2>/dev/null
-    sync
-    poweroff -f
-}
+# never a shell. The host will only boot normally if the old home is safe to mount.
+# After an interruption the next pass runs e2fsck again; repair is not guaranteed.
 shrink_home() {
     _gib=$(getarg steamac.shrink-home)
     [ -n "$_gib" ] || return 0
@@ -784,36 +801,51 @@ shrink_home() {
     esac
     [ "$_gib" -ge 8 ] && [ "$_gib" -le 4096 ] || shrink_abort "steamac.shrink-home=$_gib: need 8..4096"
     _d=$(part_dev home) || shrink_abort "no home partition"
+    _uuid=$(getarg steamac.shrink-home-partuuid)
+    if [ -n "$_uuid" ] && [ "$(part_field home PARTUUID | tr 'A-F' 'a-f')" != "$_uuid" ]; then
+        shrink_abort "home partition does not match the shrink request"
+    fi
     msg "shrink-home: e2fsck/resize2fs home ($_d) to ${_gib}G"
     mount -o bind /dev /newroot/dev && mount -t proc proc /newroot/proc \
         || shrink_abort "cannot prepare chroot"
     # -f: check even if the filesystem looks clean (VM killed, interrupted resize2fs); -y: repair.
-    # Exit status: 0 clean, 1 corrected, 2 corrected and reboot advised (both fine offline), 4+ not fixed.
+    # 1/2: corrected or reboot advised (the filesystem is offline); 4+: failure.
     chroot /newroot /usr/sbin/e2fsck -f -y "$_d"
     _rc=$?
-    [ "$_rc" -le 2 ] || shrink_abort "e2fsck failed (exit $_rc)"
-    _bs=$(chroot /newroot /usr/sbin/tune2fs -l "$_d" 2>/dev/null | sed -n 's/^Block size: *//p')
+    [ "$_rc" -lt 4 ] || shrink_abort "needs-repair: e2fsck failed (exit $_rc)"
+    _stats=$(chroot /newroot /usr/sbin/tune2fs -l "$_d" 2>/dev/null)
+    _bs=$(echo "$_stats" | sed -n 's/^Block size: *//p')
     case $_bs in
         ""|*[!0-9]*) shrink_abort "cannot read the block size of $_d" ;;
     esac
-    _target_blocks=$((_gib * 1024 * 1024 * 1024 / _bs))
-    # resize2fs -P: "Estimated minimum size of the filesystem: <blocks>" (filesystem blocks).
-    _min=$(chroot /newroot /usr/sbin/resize2fs -P "$_d" 2>/dev/null | sed -n 's/.*: *//p')
-    case $_min in
-        *[!0-9]*) _min= ;;
+    [ "$_bs" -gt 0 ] || shrink_abort "cannot read the block size of $_d"
+    _blocks=$(echo "$_stats" | sed -n 's/^Block count: *//p')
+    case $_blocks in
+        ""|*[!0-9]*) shrink_abort "cannot read the block count of $_d" ;;
     esac
-    if [ -n "$_min" ] && [ "$_min" -gt "$_target_blocks" ]; then
-        shrink_abort "filesystem needs at least $_min blocks of $_bs bytes; ${_gib}G is too small"
-    fi
-    if ! chroot /newroot /usr/sbin/resize2fs "$_d" "${_gib}G"; then
-        chroot /newroot /usr/sbin/e2fsck -f -y "$_d" >/dev/null 2>&1
-        shrink_abort "resize2fs ${_gib}G failed"
+    [ "$_blocks" -gt 0 ] || shrink_abort "cannot read the block count of $_d"
+    _target_blocks=$((_gib * 1024 * 1024 * 1024 / _bs))
+    # After e2fsck an already-small filesystem needs no resize; resize2fs would grow it.
+    if [ "$_blocks" -gt "$_target_blocks" ]; then
+        # resize2fs -P: "Estimated minimum size of the filesystem: <blocks>".
+        _min=$(chroot /newroot /usr/sbin/resize2fs -P "$_d" 2>/dev/null | sed -n 's/.*: *//p')
+        case $_min in
+            *[!0-9]*) _min= ;;
+        esac
+        if [ -n "$_min" ] && [ "$_min" -gt "$_target_blocks" ]; then
+            shrink_abort "filesystem needs at least $_min blocks of $_bs bytes; ${_gib}G is too small"
+        fi
+        if ! chroot /newroot /usr/sbin/resize2fs "$_d" "${_gib}G"; then
+            chroot /newroot /usr/sbin/e2fsck -f -y "$_d" >/dev/null 2>&1
+            _rc=$?
+            [ "$_rc" -lt 4 ] || shrink_abort "needs-repair: resize2fs ${_gib}G failed; repair e2fsck failed (exit $_rc)"
+            shrink_abort "resize2fs ${_gib}G failed"
+        fi
     fi
     umount /newroot/proc; umount /newroot/dev
     sync
-    fx_find_port
-    fx_say shrink "done $_gib"
-    msg "shrink-home: filesystem now ${_gib}G; powering off for the host's partition table rewrite"
+    shrink_result "done $_gib"
+    msg "shrink-home: filesystem fits within ${_gib}G; powering off for the host's partition table rewrite"
     poweroff -f
 }
 shrink_home

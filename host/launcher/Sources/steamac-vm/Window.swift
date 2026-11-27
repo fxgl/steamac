@@ -167,7 +167,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             if on { self?.scheduleGuestResize() }
         })
         subscriptions.append(settings.$showOverlay.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] on in
-            guard let self else { return }
+            guard let self, self.progress?.isShrinking != true else { return }
             if !on { self.overlay.hide() }
             else if self.bootOrShutdown, !self.overlayCollapsed { self.overlay.show() }
         })
@@ -479,7 +479,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Full overlay → pill (the progress stays on screen; input goes through). `sticky`: the menu
     /// or the timeout, which download-type stages respect until `ready`.
     private func collapseOverlay(_ why: String, sticky: Bool = false) {
-        guard overlay.shown else { return }
+        guard overlay.shown, progress?.isShrinking != true else { return }
         if bootOrShutdown {
             overlayCollapsed = true
             collapseIsSticky = sticky

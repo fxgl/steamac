@@ -102,6 +102,8 @@ final class BootProgress {
     /// First-boot provisioning ended (`provision done` / `provision failed <reason>`, fx.progress
     /// or hvc0 `steamac-provision: …`); may be reported on both channels.
     var onProvision: ((_ ok: Bool, _ reason: String) -> Void)?
+    /// One-shot initramfs filesystem resize result, duplicated on the console and fx.progress.
+    var onShrink: ((_ ok: Bool, _ reason: String) -> Void)?
     /// Guest password payload: `config applied` / `config failed <reason>` (or hvc0 `steamac-config: …`).
     var onConfig: ((_ ok: Bool, _ reason: String) -> Void)?
     /// Guest agent heartbeat, once a second: `alive <uptime_ms> <loadavg1>`.
@@ -125,9 +127,19 @@ final class BootProgress {
     private var stopLines = 0
     private var hostRequestedPowerOff = false
     private var rebootIntent = false
+    let isShrinking: Bool
+    private var sawShrinkResult = false
 
-    init(restarting: Bool = false) {
-        if restarting {
+    init(restarting: Bool = false, shrinking: Bool = false) {
+        isShrinking = shrinking
+        if shrinking {
+            state.stageId = "shrink"
+            state.title = String(localized: "Shrinking SteamOS home…")
+            state.logTitle = "Shrinking SteamOS home…"
+            state.detail = String(localized: "Keep the launcher open. Quit, restart and updates are unavailable until the disk is ready.")
+            state.logDetail = "Keep the launcher open until the disk is ready."
+            state.indeterminate = true
+        } else if restarting {
             state.title = String(localized: "Restarting SteamOS…")
             state.logTitle = "Restarting SteamOS…"
         }
@@ -138,6 +150,12 @@ final class BootProgress {
     func consoleLine(_ raw: String) {
         let line = BootProgress.stripKernelTimestamp(BootProgress.stripANSI(raw).trimmingCharacters(in: .whitespacesAndNewlines))
         guard !line.isEmpty else { return }
+        if isShrinking {
+            if line.hasPrefix("steamac-shrink: ") {
+                shrinkLine(String(line.dropFirst("steamac-shrink: ".count)))
+            }
+            return
+        }
         if !sawConsole {
             sawConsole = true
             if state.phase == .boot && state.stageId == "vm" {
@@ -196,6 +214,10 @@ final class BootProgress {
     /// One line from /dev/virtio-ports/fx.progress.
     func guestLine(_ raw: String) {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isShrinking {
+            if line.hasPrefix("shrink ") { shrinkLine(String(line.dropFirst("shrink ".count))) }
+            return
+        }
         let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true).map(String.init)
         guard let verb = parts.first else { return }
         if state.stageId == "boot-failed", ["stage", "log", "ready", "provision"].contains(verb) { return }
@@ -320,6 +342,26 @@ final class BootProgress {
         guard !hostRequestedPowerOff else { return }
         beginShutdown(reboot: true)
         noteReboot()
+    }
+
+    /// "done <GiB>" | "failed <reason>". Neither authorizes a GPT write; the host probes ext4.
+    private func shrinkLine(_ rest: String) {
+        let parts = rest.split(separator: " ", maxSplits: 1)
+        guard !sawShrinkResult, let word = parts.first, word == "done" || word == "failed" else { return }
+        sawShrinkResult = true
+        let ok = word == "done"
+        let reason = !ok && parts.count == 2 ? String(parts[1]) : ""
+        var s = state
+        if ok {
+            s.title = String(localized: "Finishing disk shrink…")
+            s.logTitle = "Finishing disk shrink…"
+        } else {
+            s.title = String(localized: "SteamOS disk could not be shrunk")
+            s.logTitle = "SteamOS disk could not be shrunk"
+            if !reason.isEmpty { s.detail = DiskShrinker.displayFailure(reason); s.logDetail = s.detail }
+        }
+        publish(s)
+        onShrink?(ok, reason)
     }
 
     /// "applied" | "failed <reason>" (Config payload v1).

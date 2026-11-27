@@ -1009,6 +1009,22 @@
         }
       }
     },
+    "Attach the SteamOS image as the first disk to run the shrink boot." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите образ SteamOS первым диском, чтобы запустить уменьшение."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请将 SteamOS 映像作为第一块磁盘连接，然后启动磁盘缩小。"
+          }
+        }
+      }
+    },
     "Auto" : {
       "localizations" : {
         "ru" : {
@@ -2904,6 +2920,22 @@
         }
       }
     },
+    "Finishing disk shrink…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершение уменьшения диска…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在完成磁盘缩小…"
+          }
+        }
+      }
+    },
     "Finishing…" : {
       "localizations" : {
         "ru" : {
@@ -3528,6 +3560,22 @@
         }
       }
     },
+    "Home is not clean or no longer fits the shrink target. The partition table and image size were not changed on this attempt." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файловая система home требует проверки или больше не помещается в выбранный размер. В этой попытке таблица разделов и размер образа не изменялись."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "home 文件系统需要检查，或已经超出缩小目标。本次尝试未更改分区表或映像大小。"
+          }
+        }
+      }
+    },
     "Home partition (games, sparse)" : {
       "localizations" : {
         "ru" : {
@@ -3764,6 +3812,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已保存在 %@。请稍后重试，或通过电子邮件将该文件夹发送给开发者。"
+          }
+        }
+      }
+    },
+    "Keep the launcher open. Quit, restart and updates are unavailable until the disk is ready." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не закрывайте лаунчер. Выход, перезапуск и обновления недоступны, пока диск не будет готов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请保持启动器开启。在磁盘就绪之前，无法退出、重启或更新。"
           }
         }
       }
@@ -6597,6 +6661,22 @@
         }
       }
     },
+    "Shrinking SteamOS home…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшение раздела home SteamOS…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在缩小 SteamOS 的 home…"
+          }
+        }
+      }
+    },
     "Shut Down SteamOS" : {
       "localizations" : {
         "ru" : {
@@ -7572,6 +7652,22 @@
         }
       }
     },
+    "SteamOS was not started because home still needs repair. The shrink journal was kept for recovery on the next launch." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS не запущена: файловая система home всё ещё требует восстановления. Журнал уменьшения сохранён для восстановления при следующем запуске."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 未启动，因为 home 仍需修复。已保留缩小日志，以便在下次启动时恢复。"
+          }
+        }
+      }
+    },
     "SteamOS will shut down normally, the image will be enlarged while it is stopped, then restart." : {
       "localizations" : {
         "ru" : {
@@ -8013,6 +8109,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此设备须重新配对才能连接。其当前串流将结束。"
+          }
+        }
+      }
+    },
+    "The disk's first partition overlaps the sectors Shrink Disk needs for its recovery journal." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Первый раздел диска занимает секторы, нужные для журнала восстановления операции уменьшения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘的第一个分区与缩小操作用于保存恢复日志的扇区重叠。"
           }
         }
       }
@@ -8961,6 +9073,22 @@
     "W" : {
 
     },
+    "Wait until the disk shrink is finished." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дождитесь окончания уменьшения диска."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请等待磁盘缩小完成。"
+          }
+        }
+      }
+    },
     "Waiting for SteamOS to draw…" : {
       "localizations" : {
         "ru" : {
@@ -9539,22 +9667,6 @@
         }
       }
     },
-    "home filesystem still exceeds %lld GiB; use Settings → Advanced → Shrink Disk… for the one-shot shrink boot" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "файловая система home всё ещё больше %lld GiB; для одноразовой загрузки сжатия используйте Настройки → Дополнительно → Уменьшить диск…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "home 文件系统仍大于 %lld GiB；请使用 设置 → 高级 → 缩小磁盘… 进行一次性缩小启动"
-          }
-        }
-      }
-    },
     "home size must be 8..4096 GiB" : {
       "localizations" : {
         "ru" : {
@@ -10005,9 +10117,6 @@
           }
         }
       }
-    },
-    "start SteamOS once so a run directory exists, then shrink again" : {
-
     },
     "the SteamOS disk %@ is in use by another FX Steam Launcher (or steamac-vm). Quit it first: two VMs writing one disk corrupt its file systems." : {
       "localizations" : {
