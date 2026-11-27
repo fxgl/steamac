@@ -31,6 +31,8 @@ The project is maintained in English, Russian and Simplified Chinese:
   `manual/zh/`), which keep the same files and sections in every language;
 - the website (`docs/`), where every string carries one `<span lang>` per language.
 
+The Japanese (`ja`) README (`README.ja.md`) and manual (`manual/ja/`) are maintained by the community on a best-effort basis.
+
 If you change text in one language and cannot translate it, say so in the pull request.
 
 ## Build and run
@@ -73,8 +75,8 @@ Each component, its pinned upstream and what its patches do are described in
 - Patches to upstream projects go into that component's `patches/` series as numbered files
   (`0026-short-description.patch`). Mention the number in the commit subject.
 - Say how you tested it: Mac, macOS version, Vulkan driver and the games or scripts you ran.
-- If the change affects what users see or do, update the README and the manual in all three languages,
-  or say which ones still need translating.
+- If the change affects what users see or do, update the English, Russian and Simplified Chinese
+  README and manual, or say which translations are still needed.
 
 ## License
 

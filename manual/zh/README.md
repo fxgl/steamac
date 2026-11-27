@@ -1,6 +1,6 @@
 # 手册
 
-[English](../README.md) · [Русский](../ru/README.md) · **简体中文**
+[English](../README.md) · [Русский](../ru/README.md) · **简体中文** · [日本語](../ja/README.md)
 
 ← [README](../../README.zh.md)
 

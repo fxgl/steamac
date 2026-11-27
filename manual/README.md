@@ -1,6 +1,6 @@
 # Manual
 
-**English** · [Русский](ru/README.md) · [简体中文](zh/README.md)
+**English** · [Русский](ru/README.md) · [简体中文](zh/README.md) · [日本語](ja/README.md)
 
 ← [README](../README.md)
 
