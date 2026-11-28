@@ -1,0 +1,1665 @@
+Overwatch 2 on DXMT: crash, memory and stutter fixes (steamac add-on, see OVERWATCH.md)
+
+Applied after 0001-0027 by host/dxmt/build.sh. Written with an AI coding assistant (Claude).
+
+diff --git a/src/airconv/air_operations.cpp b/src/airconv/air_operations.cpp
+index 795d0cb..2c62d56 100644
+--- a/src/airconv/air_operations.cpp
++++ b/src/airconv/air_operations.cpp
+@@ -450,8 +450,34 @@ AIRBuilderResult pull_vec4_from_addr_checked(
+   co_return value;
+ };
+ 
++unsigned
++attribute_format_size(MTLAttributeFormat format) {
++  using F = MTLAttributeFormat;
++  switch (format) {
++  case F::UChar: case F::Char: case F::UCharNormalized: case F::CharNormalized:
++    return 1;
++  case F::UChar2: case F::Char2: case F::UChar2Normalized: case F::Char2Normalized:
++  case F::UShort: case F::Short: case F::UShortNormalized: case F::ShortNormalized: case F::Half:
++    return 2;
++  case F::UChar4: case F::Char4: case F::UChar4Normalized: case F::Char4Normalized: case F::UChar4Normalized_BGRA:
++  case F::UShort2: case F::Short2: case F::UShort2Normalized: case F::Short2Normalized: case F::Half2:
++  case F::Float: case F::Int: case F::UInt: case F::Int1010102Normalized: case F::UInt1010102Normalized:
++  case F::FloatRG11B10: case F::FloatRGB9E5:
++    return 4;
++  case F::UShort4: case F::Short4: case F::UShort4Normalized: case F::Short4Normalized: case F::Half4:
++  case F::Float2: case F::Int2: case F::UInt2:
++    return 8;
++  case F::Float3: case F::Int3: case F::UInt3:
++    return 12;
++  case F::Float4: case F::Int4: case F::UInt4:
++    return 16;
++  default:
++    return 16; // unknown: the strictest bound
++  }
++}
++
+ AIRBuilderResult pull_vec4_from_addr(
+-  MTLAttributeFormat format, pvalue base_addr, pvalue byte_offset
++  MTLAttributeFormat format, pvalue base_addr, pvalue byte_offset, pvalue length
+ ) {
+   return make_op([=](struct AIRBuilderContext ctx) -> llvm::Expected<pvalue> {
+     using namespace llvm;
+@@ -460,8 +486,14 @@ AIRBuilderResult pull_vec4_from_addr(
+ 
+     auto current = builder.GetInsertBlock();
+ 
+-    auto is_null_binding = builder.CreateICmpEQ(
+-      builder.CreatePtrToInt(base_addr, ctx.types._long), builder.getInt64(0)
++    // zeros, as D3D11 reads them, when the buffer is unbound or the element is not wholly inside it (64-bit:
++    // stride * index + offset can exceed 32 bits with a stray index)
++    auto end = builder.CreateAdd(
++      builder.CreateZExt(byte_offset, ctx.types._long), builder.getInt64(attribute_format_size(format))
++    );
++    auto is_null_binding = builder.CreateOr(
++      builder.CreateICmpEQ(builder.CreatePtrToInt(base_addr, ctx.types._long), builder.getInt64(0)),
++      builder.CreateICmpUGT(end, builder.CreateZExt(length, ctx.types._long))
+     );
+ 
+     auto pull_vertex =
+diff --git a/src/airconv/air_operations.hpp b/src/airconv/air_operations.hpp
+index 2754169..1516508 100644
+--- a/src/airconv/air_operations.hpp
++++ b/src/airconv/air_operations.hpp
+@@ -88,8 +88,11 @@ enum class MTLAttributeFormat {
+   FloatRGB9E5 = 55,
+ };
+ 
++unsigned attribute_format_size(MTLAttributeFormat format);
++
++/* D3D11 vertex fetch: an unbound buffer or an element not wholly inside `length` bytes reads as zeros */
+ AIRBuilderResult pull_vec4_from_addr(
+-  MTLAttributeFormat format, pvalue base_addr, pvalue byte_offset
++  MTLAttributeFormat format, pvalue base_addr, pvalue byte_offset, pvalue length
+ );
+ 
+ }; // namespace dxmt::air
+\ No newline at end of file
+diff --git a/src/airconv/air_type.cpp b/src/airconv/air_type.cpp
+index 01fb51b..b23508a 100644
+--- a/src/airconv/air_type.cpp
++++ b/src/airconv/air_type.cpp
+@@ -64,7 +64,7 @@ AirType::AirType(LLVMContext &context) : context(context) {
+     context,
+     {
+       _int->getPointerTo((uint32_t)AddressSpace::device),
+-      _int->getPointerTo((uint32_t)AddressSpace::device),
++      _long, // vertices per instance
+     },
+     "dxmt_stream_output_buffer_entry"
+   );
+diff --git a/src/airconv/airconv_public.h b/src/airconv/airconv_public.h
+index 59fba60..fdd7bb6 100644
+--- a/src/airconv/airconv_public.h
++++ b/src/airconv/airconv_public.h
+@@ -46,6 +46,11 @@ enum MTL_SM50_SHADER_ARGUMENT_FLAG : uint32_t {
+   MTL_SM50_SHADER_ARGUMENT_TEXTURE_ARRAY = 1 << 6,
+   MTL_SM50_SHADER_ARGUMENT_READ_ACCESS = 1 << 10,
+   MTL_SM50_SHADER_ARGUMENT_WRITE_ACCESS = 1 << 11,
++  /* SRV textures: bits 12-15 the declared ResourceType + 1 (0: not reported), bits 16-17 its ScalerDataType,
++     bit 18 a depth texture (sampled with comparison). */
++  MTL_SM50_SHADER_ARGUMENT_TEXTURE_KIND_SHIFT = 12,
++  MTL_SM50_SHADER_ARGUMENT_TEXTURE_SCALAR_SHIFT = 16,
++  MTL_SM50_SHADER_ARGUMENT_TEXTURE_DEPTH = 1 << 18,
+ };
+ 
+ struct MTL_SM50_SHADER_ARGUMENT {
+@@ -88,6 +93,7 @@ struct MTL_GEOMETRY_SHADER_REFLECTION {
+     uint32_t GSPassThrough;
+   };
+   uint32_t Primitive;
++  uint32_t OutputIsInput; // passes its input through unchanged
+ };
+ 
+ struct MTL_POST_TESSELLATOR_REFLECTION {
+diff --git a/src/airconv/dxbc_converter.cpp b/src/airconv/dxbc_converter.cpp
+index b0704ac..c318f69 100644
+--- a/src/airconv/dxbc_converter.cpp
++++ b/src/airconv/dxbc_converter.cpp
+@@ -661,7 +661,10 @@ llvm::Error convert_dxbc_vertex_shader(
+       auto slot0_entry =
+           builder.CreateLoad(so_entries_type, builder.CreateConstInBoundsGEP1_32(so_entries_type, so_entries, 0));
+       auto slot0 = builder.CreateExtractValue(slot0_entry, {0});
+-      auto adjusted_vertex_id = builder.CreateSub(vertex_id, base_vertex);
++      auto vertices_per_instance = builder.CreateTrunc(builder.CreateExtractValue(slot0_entry, {1}), ctx.types._int);
++      auto adjusted_vertex_id = builder.CreateAdd(
++          builder.CreateSub(vertex_id, base_vertex), builder.CreateMul(ctx.resource.instance_id, vertices_per_instance)
++      );
+       auto output_regs = builder.CreateBitOrPointerCast(
+         ctx.resource.output.ptr_int4, llvm::PointerType::get(ctx.types._int, 0)
+       );
+@@ -902,8 +905,20 @@ llvm::Error convertDXBC(
+ bool CheckGSBBIsPassThrough(dxmt::dxbc::BasicBlock *bb) {
+   using namespace dxmt::dxbc;
+   if (bb->instructions.any(patterns{
+-        [](InstNop &) { return false; }, [](InstMov &mov) { return false; },
+-        [](InstEmit &) { return false; }, [](InstCut &) { return false; },
++        [](const InstNop &) { return false; },
++        [](const InstMov &mov) {
++          // only an input copied unchanged to the output with its register
++          auto dst = std::get_if<DstOperandOutput>(&mov.dst);
++          auto src = std::get_if<SrcOperandInputICP>(&mov.src);
++          if (mov._.saturate || !dst || !src || src->_.abs || src->_.neg || dst->regid != src->regid)
++            return true;
++          uint8_t swizzle[4] = {src->_.swizzle.x, src->_.swizzle.y, src->_.swizzle.z, src->_.swizzle.w};
++          for (uint8_t c = 0; c < 4; c++)
++            if ((dst->_.mask & (1 << c)) && swizzle[c] != c)
++              return true;
++          return false;
++        },
++        [](const InstEmit &) { return false; }, [](const InstCut &) { return false; },
+         [](auto &) { return true; }
+       }))
+     return false;
+@@ -1135,6 +1150,15 @@ AIRCONV_API int SM50Initialize(
+         break;
+       }
+     }
++    if (srv.resource_type != ResourceType::NonApplicable) {
++      // The declared texture, so an unbound slot can get a dummy of the same kind instead of a null texture (D3D11
++      // reads zeros there; Metal's null texture access is undefined and page-faulted Overwatch's GPU work).
++      flags |= (MTL_SM50_SHADER_ARGUMENT_FLAG)(
++          (((uint32_t)srv.resource_type + 1) << MTL_SM50_SHADER_ARGUMENT_TEXTURE_KIND_SHIFT) |
++          (((uint32_t)srv.scaler_type & 3) << MTL_SM50_SHADER_ARGUMENT_TEXTURE_SCALAR_SHIFT) |
++          (srv.compared ? MTL_SM50_SHADER_ARGUMENT_TEXTURE_DEPTH : 0)
++      );
++    }
+     if (srv.read || srv.sampled || srv.compared) {
+       flags |= MTL_SM50_SHADER_ARGUMENT_READ_ACCESS;
+     }
+@@ -1295,12 +1319,13 @@ AIRCONV_API int SM50Initialize(
+       pRefl->PostTessellator = {.MaxPotentialTessFactor = max_potential_tess_factor};
+     }
+     if (sm50_shader->shader_type == microsoft::D3D10_SB_GEOMETRY_SHADER) {
+-      if (binding_cbuffer_mask || binding_sampler_mask || binding_uav_mask || binding_srv_hi_mask ||
+-          binding_srv_lo_mask ||
+-          !(CheckGSBBIsPassThrough(sm50_shader->entry()) &&
+-            CheckGSSignatureIsPassThrough(inputParser, outputParser, pRefl->GeometryShader.Data))) {
++      bool pass_through = !(binding_cbuffer_mask || binding_sampler_mask || binding_uav_mask || binding_srv_hi_mask ||
++                            binding_srv_lo_mask) &&
++                          CheckGSBBIsPassThrough(sm50_shader->entry()) &&
++                          CheckGSSignatureIsPassThrough(inputParser, outputParser, pRefl->GeometryShader.Data);
++      if (!pass_through)
+         pRefl->GeometryShader.GSPassThrough = ~0u;
+-      }
++      pRefl->GeometryShader.OutputIsInput = pass_through;
+       pRefl->GeometryShader.Primitive = sm50_shader->gs_input_primitive;
+     }
+     if (sm50_shader->shader_type == microsoft::D3D10_SB_PIXEL_SHADER) {
+diff --git a/src/airconv/dxbc_converter_basicblock.cpp b/src/airconv/dxbc_converter_basicblock.cpp
+index a289a58..f04f130 100644
+--- a/src/airconv/dxbc_converter_basicblock.cpp
++++ b/src/airconv/dxbc_converter_basicblock.cpp
+@@ -428,12 +428,13 @@ IREffect pull_vertex_input(
+     );
+     auto base_addr = builder.CreateExtractValue(vertex_buffer_entry, {0});
+     auto stride = builder.CreateExtractValue(vertex_buffer_entry, {1});
++    auto length = builder.CreateExtractValue(vertex_buffer_entry, {2});
+     auto byte_offset = builder.CreateAdd(
+       builder.CreateMul(stride, index),
+       builder.getInt32(element_info.aligned_byte_offset)
+     );
+     auto vec4 = co_yield air::pull_vec4_from_addr(
+-      (air::MTLAttributeFormat)element_info.format, base_addr, byte_offset
++      (air::MTLAttributeFormat)element_info.format, base_addr, byte_offset, length
+     );
+     if (vec4->getType() == types._float4) {
+       co_yield store_at_vec4_array_masked(
+diff --git a/src/d3d11/d3d11_context_impl.cpp b/src/d3d11/d3d11_context_impl.cpp
+index ce268c2..d5b391e 100644
+--- a/src/d3d11/d3d11_context_impl.cpp
++++ b/src/d3d11/d3d11_context_impl.cpp
+@@ -40,10 +40,20 @@
+ #include "dxmt_texture.hpp"
+ #include "util_flags.hpp"
+ #include "util_math.hpp"
++#include "util_env.hpp"
+ #include "util_win32_compat.h"
+ 
+ namespace dxmt {
+ 
++/* DXMT_ASYNC_PIPELINES=1: an ordinary graphics pipeline still compiling draws nothing that time instead of stalling
++ * the encoder (and the frame) until Metal finishes, a 50-100 ms hitch per new pipeline. Opt-in: a draw made only once
++ * (a lookup texture rendered at load) is then lost for good. */
++static bool
++AsyncPipelines() {
++  static const bool enabled = env::getEnvVar("DXMT_ASYNC_PIPELINES") == "1";
++  return enabled;
++}
++
+ template<typename Object> Rc<Object> forward_rc(Rc<Object>& obj);
+ 
+ inline bool
+@@ -1310,6 +1320,8 @@ public:
+     if (unlikely(!VertexCount))
+       return;
+     std::lock_guard<mutex_t> lock(mutex);
++    if (unlikely(!AppendStreamOutput(VertexCount, 1, StartVertexLocation)))
++      return;
+ 
+     WMTPrimitiveType Primitive;
+     uint32_t ControlPointCount;
+@@ -1386,6 +1398,8 @@ public:
+     if (unlikely(!VertexCountPerInstance || !InstanceCount))
+       return;
+     std::lock_guard<mutex_t> lock(mutex);
++    if (unlikely(!AppendStreamOutput(VertexCountPerInstance, InstanceCount, StartVertexLocation)))
++      return;
+ 
+     WMTPrimitiveType Primitive;
+     uint32_t ControlPointCount;
+@@ -2303,6 +2317,10 @@ public:
+ 
+     if (!ValidateMultiSOTargets(NumBuffers, ppSOTargets))
+       return;
++    if (!NumBuffers || !ppSOTargets[0] || !pOffsets || pOffsets[0] != UINT(-1)) {
++      so_append_offset_ = NumBuffers && ppSOTargets[0] && pOffsets ? pOffsets[0] : 0;
++      so_append_bytes_ = 0;
++    }
+ 
+     for (unsigned slot = 0; slot < D3D11_SO_BUFFER_SLOT_COUNT; slot++) {
+       auto pBuffer = slot < NumBuffers ? GetResourceCommon(ppSOTargets[slot]) : nullptr;
+@@ -3329,6 +3347,34 @@ public:
+   GetDynamicBufferAllocation(Rc<DynamicBuffer> &dynamic);
+ 
+   uint64_t *allocated_encoder_argbuf_size_ = nullptr;
++  UINT so_append_offset_ = 0;
++  uint64_t so_append_bytes_ = 0;
++
++  /**
++  D3D appends stream output draw after draw and instance after instance. Moves the binding to the
++  append position before a point-list draw; false when the draw's output would not fit.
++  */
++  bool
++  AppendStreamOutput(UINT VertexCount, UINT InstanceCount, UINT StartVertex) {
++    if (likely(!state_.StreamOutput.Targets.test_bound(0)))
++      return true;
++    auto layout = com_cast<IMTLD3D11StreamOutputLayout>(state_.ShaderStages[PipelineStage::Geometry].Shader.ptr());
++    if (!layout || state_.InputAssembler.Topology != D3D11_PRIMITIVE_TOPOLOGY_POINTLIST || StartVertex)
++      return true;
++    MTL_SHADER_STREAM_OUTPUT_ELEMENT_DESC *elements;
++    uint32_t strides[4] = {};
++    layout->GetStreamOutputElements(&elements, strides);
++    uint64_t at = so_append_offset_ + so_append_bytes_, size = uint64_t(VertexCount) * InstanceCount * strides[0];
++    if (at + size > state_.StreamOutput.Targets[0].Buffer->buffer()->length())
++      return false;
++    so_append_bytes_ += size;
++    EmitST([at = unsigned(at), VertexCount](ArgumentEncodingContext &enc) {
++      enc.bindStreamOutputBufferOffset(0, at);
++      enc.setStreamOutputVerticesPerInstance(0, VertexCount);
++    });
++    state_.StreamOutput.Targets.set_dirty(0);
++    return true;
++  }
+ 
+   uint64_t PreAllocateArgumentBuffer(size_t size, size_t alignment) {
+     assert(allocated_encoder_argbuf_size_ && "otherwise invalid call");
+@@ -4565,6 +4611,15 @@ public:
+         dsv_info.viewId = state_.OutputMerger.DSV->viewId();
+         dsv_info.PixelFormat = state_.OutputMerger.DSV->pixelFormat();
+         dsv_info.ReadOnlyFlags =  state_.OutputMerger.DSV->readonlyFlags();
++      } else if (effective_render_target == 0 && !state_.OutputMerger.UAVs.any_bound() &&
++                 state_.StreamOutput.Targets.any_bound()) {
++        // Stream output only: a pass without attachments, as for UAVs.
++        auto &viewport = state_.Rasterizer.viewports[0];
++        bool sized = state_.Rasterizer.NumViewports && viewport.Width >= 1 && viewport.Height >= 1;
++        render_target_width = sized ? viewport.Width : 1;
++        render_target_height = sized ? viewport.Height : 1;
++        sample_count = 1;
++        uav_only = true;
+       } else if (effective_render_target == 0) {
+         if (!state_.OutputMerger.UAVs.any_bound()) {
+           DEBUG("No rendering attachment or uav is bounded");
+@@ -4909,7 +4964,9 @@ public:
+     device->CreateGraphicsPipeline(&pipelineDesc, &pipeline);
+     EmitST([pso = std::move(pipeline)](ArgumentEncodingContext& enc) {
+       MTL_COMPILED_GRAPHICS_PIPELINE GraphicsPipeline{};
+-      pso->GetPipeline(&GraphicsPipeline); // may block
++      // Not ready and async: a null pipeline, whose draws winemetal drops until the next valid one.
++      if (!AsyncPipelines() || pso->GetIsDone())
++        pso->GetPipeline(&GraphicsPipeline); // may block
+       auto &cmd = enc.encodeRenderCommand<wmtcmd_render_setpso>();
+       cmd.type = WMTRenderCommandSetPSO;
+       cmd.pso = GraphicsPipeline.PipelineState;
+diff --git a/src/d3d11/d3d11_device.cpp b/src/d3d11/d3d11_device.cpp
+index 2817aea..c557720 100644
+--- a/src/d3d11/d3d11_device.cpp
++++ b/src/d3d11/d3d11_device.cpp
+@@ -2,6 +2,8 @@
+ #include "config/config.hpp"
+ #include "d3d11_fence.hpp"
+ #include "d3d11_input_layout.hpp"
++#include "DXBCParser/BlobContainer.h"
++#include "DXBCParser/d3d12tokenizedprogramformat.hpp"
+ #include "d3d11_interfaces.hpp"
+ #include "d3d11_multithread.hpp"
+ #include "d3d11_pipeline.hpp"
+@@ -262,6 +264,36 @@ public:
+                                               ppGeometryShader);
+   }
+ 
++  /**
++  Stream output is emulated in the vertex shader: from a vertex shader, or from a geometry shader that
++  passes points through unchanged.
++  */
++  bool
++  CanEmulateStreamOutput(const void *pShaderBytecode, SIZE_T BytecodeLength) {
++    using namespace microsoft;
++    CDXBCParser parser;
++    if (parser.ReadDXBC(pShaderBytecode, BytecodeLength) != S_OK)
++      return false;
++    UINT blob = parser.FindNextMatchingBlob(DXBC_GenericShaderEx);
++    if (blob == DXBC_BLOB_NOT_FOUND)
++      blob = parser.FindNextMatchingBlob(DXBC_GenericShader);
++    if (blob == DXBC_BLOB_NOT_FOUND)
++      return false;
++    switch (DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE(*(const UINT *)parser.GetBlob(blob))) {
++    case D3D10_SB_VERTEX_SHADER:
++      return true;
++    case D3D10_SB_GEOMETRY_SHADER: {
++      Com<ID3D11GeometryShader> shader;
++      if (FAILED(pipeline_cache_->AddGeometryShader(pShaderBytecode, BytecodeLength, &shader)))
++        return false;
++      auto &gs = com_cast<IMTLD3D11Shader>(shader.ptr())->GetManagedShader()->reflection().GeometryShader;
++      return gs.OutputIsInput && gs.Primitive == D3D10_SB_PRIMITIVE_POINT;
++    }
++    default:
++      return false;
++    }
++  }
++
+   HRESULT STDMETHODCALLTYPE CreateGeometryShaderWithStreamOutput(
+       const void *pShaderBytecode, SIZE_T BytecodeLength,
+       const D3D11_SO_DECLARATION_ENTRY *pSODeclaration, UINT NumEntries,
+@@ -276,8 +308,7 @@ public:
+         ((char *)pShaderBytecode)[0] == 'D' &&
+         ((char *)pShaderBytecode)[1] == 'X' &&
+         ((char *)pShaderBytecode)[2] == 'B' &&
+-        ((char *)pShaderBytecode)[3] == 'C') {
+-      // FIXME: ensure the input shader is a vertex shader
++        ((char *)pShaderBytecode)[3] == 'C' && CanEmulateStreamOutput(pShaderBytecode, BytecodeLength)) {
+       WARN("Emulate stream output");
+ 
+       Com<IMTLD3D11StreamOutputLayout> so_layout;
+diff --git a/src/d3d11/d3d11_input_layout.cpp b/src/d3d11/d3d11_input_layout.cpp
+index 8c03b2b..7191387 100644
+--- a/src/d3d11/d3d11_input_layout.cpp
++++ b/src/d3d11/d3d11_input_layout.cpp
+@@ -185,6 +185,8 @@ HRESULT ExtractMTLStreamOutputElements(
+   uint32_t element_count = 0;
+   CSignatureParser parser;
+   HRESULT hr = DXBCGetOutputSignature(pShaderBytecode, &parser);
++  if (FAILED(hr)) // a pass-through geometry shader (OSG5): its inputs are its outputs
++    hr = DXBCGetInputSignature(pShaderBytecode, &parser);
+   if (FAILED(hr)) {
+     return hr;
+   }
+diff --git a/src/d3d11/d3d11_pipeline.cpp b/src/d3d11/d3d11_pipeline.cpp
+index 8e1522b..ca91376 100644
+--- a/src/d3d11/d3d11_pipeline.cpp
++++ b/src/d3d11/d3d11_pipeline.cpp
+@@ -1,13 +1,35 @@
+ #include "Metal.hpp"
+ #include "d3d11_private.h"
+ #include "d3d11_pipeline.hpp"
++#include "dxmt_context.hpp"
++#include "util_env.hpp"
+ #include "d3d11_device.hpp"
+ #include "d3d11_shader.hpp"
+ #include "log/log.hpp"
+ #include <atomic>
++#include <chrono>
++#include <ctime>
++#include <iomanip>
+ 
+ namespace dxmt {
+ 
++/* A frame waiting on a pipeline Metal is still compiling (compute, geometry and tessellation ones are never skipped,
++ * even with DXMT_ASYNC_PIPELINES): logged with the wall-clock time when the wait is long enough to be a visible hitch. */
++void
++WaitLogged(std::atomic_bool &ready, const char *kind, const std::string &name) {
++  if (ready.load(std::memory_order_acquire)) return;
++  auto t0 = std::chrono::steady_clock::now();
++  ready.wait(false, std::memory_order_acquire);
++  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
++  if (ms < 20) return;
++  auto now = std::chrono::system_clock::now();
++  std::time_t tt = std::chrono::system_clock::to_time_t(now);
++  std::tm tm{};
++  localtime_s(&tm, &tt);
++  auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
++  WARN("pipeline wait: ", ms, " ms on ", kind, " ", name, " at ", str::format(std::put_time(&tm, "%H:%M:%S")), ".", msec);
++}
++
+ class MTLCompiledGraphicsPipelineImpl
+     : public MTLCompiledGraphicsPipeline {
+ public:
+@@ -28,6 +50,17 @@ public:
+       unorm_output_reg_mask |= (uint32_t(IsUnorm8RenderTargetFormat(pDesc->ColorAttachmentFormats[i])) << i);
+     }
+ 
++    wait_name_ = pDesc->VertexShader->sha1().string().substr(0, 8) + "/" +
++                 (pDesc->PixelShader ? pDesc->PixelShader->sha1().string().substr(0, 8) : std::string("-")) +
++                 (pDesc->SOLayout ? " (stream output)" : "");
++    if (LabelEncoders()) {
++      auto vs = pDesc->VertexShader->sha1().string().substr(0, 8);
++      auto ps = pDesc->PixelShader ? pDesc->PixelShader->sha1().string().substr(0, 8) : std::string("-");
++      shader_names_ = vs + "/" + ps;
++      // DXMT_SKIP_SHADERS=<8-hex prefixes, comma separated>: diagnostic bisect, pipelines using one draw nothing
++      static const std::string skip = env::getEnvVar("DXMT_SKIP_SHADERS");
++      skip_ = !skip.empty() && (skip.find(vs) != std::string::npos || skip.find(ps) != std::string::npos);
++    }
+     if (pDesc->SOLayout) {
+       VertexShader =
+           pDesc->VertexShader->get_shader(ShaderVariantVertexStreamOutput{
+@@ -51,7 +84,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_GRAPHICS_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    WaitLogged(ready_, "graphics", wait_name_);
+     *pPipeline = {state_};
+   }
+ 
+@@ -100,12 +133,16 @@ public:
+     info.immutable_vertex_buffers = (1 << 16) | (1 << 29) | (1 << 30);
+     info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
+ 
++    if (skip_)
++      return this; // null state: its draws are dropped, as for a failed pipeline
+     state_ = device_->GetMTLDevice().newRenderPipelineState(info, err);
+ 
+     if (state_ == nullptr) {
+       ERR("Failed to create PSO: ", err.description().getUTF8String());
+       return this;
+     }
++    if (!shader_names_.empty())
++      RegisterPipelineName(state_.handle, shader_names_);
+ 
+     TRACE("Compiled 1 PSO");
+ 
+@@ -129,6 +166,9 @@ private:
+   std::atomic_bool ready_;
+   CompiledShader *VertexShader;
+   CompiledShader *PixelShader;
++  std::string shader_names_; // "vs/ps" hash prefixes, DXMT_LABEL_ENCODERS only
++  std::string wait_name_;
++  bool skip_ = false;
+   IMTLD3D11BlendState *pBlendState;
+   WMT::Reference<WMT::RenderPipelineState> state_;
+   bool RasterizationEnabled;
+@@ -147,6 +187,12 @@ public:
+   MTLCompiledComputePipelineImpl(MTLD3D11Device *pDevice, ManagedShader shader)
+       : device_(pDevice) {
+     ComputeShader = shader->get_shader(ShaderVariantDefault{});
++    wait_name_ = shader->sha1().string().substr(0, 8);
++    if (LabelEncoders()) {
++      shader_name_ = "cs:" + shader->sha1().string().substr(0, 8);
++      static const std::string skip = env::getEnvVar("DXMT_SKIP_SHADERS");
++      skip_ = !skip.empty() && skip.find(shader_name_.substr(3)) != std::string::npos;
++    }
+     uint32_t total_tgsize = shader->reflection().ThreadgroupSize[0] *
+                             shader->reflection().ThreadgroupSize[1] *
+                             shader->reflection().ThreadgroupSize[2];
+@@ -155,7 +201,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_COMPUTE_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    WaitLogged(ready_, "compute", wait_name_);
+     *pPipeline = {state_};
+   }
+ 
+@@ -176,12 +222,16 @@ public:
+     info.tgsize_is_multiple_of_sgwidth = tgsize_is_multiple_of_sgwidth;
+     info.immutable_buffers = (1 << 29) | (1 << 30);
+ 
++    if (skip_)
++      return this; // null state: its dispatches are dropped, as for a failed pipeline
+     state_ = device_->GetMTLDevice().newComputePipelineState(info, err);
+ 
+     if (!state_) {
+       ERR("Failed to create compute PSO: ", err.description().getUTF8String());
+       return this;
+     }
++    if (!shader_name_.empty())
++      RegisterPipelineName(state_.handle, shader_name_);
+ 
+     TRACE("Compiled 1 PSO");
+ 
+@@ -196,6 +246,9 @@ public:
+   }
+ 
+ private:
++  std::string shader_name_; // DXMT_LABEL_ENCODERS only
++  std::string wait_name_;
++  bool skip_ = false;
+   MTLD3D11Device *device_;
+   std::atomic_bool ready_;
+   CompiledShader *ComputeShader;
+diff --git a/src/d3d11/d3d11_pipeline.hpp b/src/d3d11/d3d11_pipeline.hpp
+index 1a9c4f4..a47203f 100644
+--- a/src/d3d11/d3d11_pipeline.hpp
++++ b/src/d3d11/d3d11_pipeline.hpp
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include "Metal.hpp"
++#include <atomic>
++#include <string>
+ #include "d3d11_device.hpp"
+ #include "d3d11_input_layout.hpp"
+ #include "d3d11_shader.hpp"
+@@ -140,6 +142,9 @@ template <> struct equal_to<MTL_GRAPHICS_PIPELINE_DESC> {
+ 
+ namespace dxmt {
+ 
++/* Wait for a pipeline compile; logs waits long enough to be a visible hitch (d3d11_pipeline.cpp). */
++void WaitLogged(std::atomic_bool &ready, const char *kind, const std::string &name);
++
+ class MTLCompiledGraphicsPipeline : public ThreadpoolWork {
+ public:
+   /**
+diff --git a/src/d3d11/d3d11_pipeline_cache.cpp b/src/d3d11/d3d11_pipeline_cache.cpp
+index 74417f6..8a49531 100644
+--- a/src/d3d11/d3d11_pipeline_cache.cpp
++++ b/src/d3d11/d3d11_pipeline_cache.cpp
+@@ -10,10 +10,110 @@
+ #include "../d3d10/d3d10_shader.hpp"
+ #include "../d3d10/d3d10_input_layout.hpp"
+ #include <cstring>
++#include <vector>
++#include <fstream>
++#include "dxmt_context.hpp"
++#include <functional>
+ #include <shared_mutex>
++#include <deque>
++#include <unordered_set>
++#include "util_env.hpp"
+ 
+ namespace dxmt {
+ 
++/* The declared texture of each t# register, read from the shader's SHDR/SHEX tokens (dcl_resource, plus sample_c /
++   gather4_c for depth), in the MTL_SM50_SHADER_ARGUMENT_TEXTURE_* flag bits. Lets an unbound slot get a dummy of the
++   right kind when the shader converter (airconv, on the Mac with steamac's executor) does not report it. 0 = unknown.
++   shortcut: SM 5.1 range declarations are skipped (no Overwatch-era shaders use them); depth detection covers
++   SM 4.x/5.0 only. */
++static void
++ReadTextureDeclarations(const void *bytecode, size_t size, uint32_t (&kinds)[128]) {
++  const uint8_t *p = (const uint8_t *)bytecode;
++  auto u32 = [&](size_t off) -> uint32_t {
++    uint32_t v = 0;
++    if (off + 4 <= size)
++      memcpy(&v, p + off, 4);
++    return v;
++  };
++  if (size < 32 || memcmp(p, "DXBC", 4) != 0)
++    return;
++  uint32_t chunks = u32(28);
++  if (chunks > 64 || 32 + (size_t)chunks * 4 > size)
++    return;
++  for (uint32_t c = 0; c < chunks; c++) {
++    size_t chunk = u32(32 + c * 4);
++    if (chunk + 16 > size || (memcmp(p + chunk, "SHEX", 4) != 0 && memcmp(p + chunk, "SHDR", 4) != 0))
++      continue;
++    size_t base = chunk + 8; // version token, length in dwords (including both), then instructions
++    uint32_t version = u32(base), dwords = u32(base + 4);
++    if (base + (size_t)dwords * 4 > size || u32(chunk + 4) < (size_t)dwords * 4)
++      return;
++    bool sm51 = ((version >> 4) & 0xf) == 5 && (version & 0xf) >= 1;
++    auto tok = [&](uint32_t i) { return i < dwords ? u32(base + (size_t)i * 4) : 0u; };
++
++    // dwords taken by the operand at `j` (0 if malformed); `reg` gets index 0 when it is an immediate
++    std::function<uint32_t(uint32_t, uint32_t *)> operand = [&](uint32_t j, uint32_t *reg) -> uint32_t {
++      uint32_t start = j, t = tok(j++);
++      for (uint32_t ext = t; (ext >> 31) && j < dwords; ext = tok(j++)) {}
++      uint32_t type = (t >> 12) & 0xff, comps = t & 3;
++      if (type == 4) // immediate32
++        j += comps == 1 ? 1 : comps == 2 ? 4 : 0;
++      else if (type == 5) // immediate64
++        j += comps == 1 ? 2 : comps == 2 ? 8 : 0;
++      for (uint32_t d = 0; d < ((t >> 20) & 3); d++) {
++        uint32_t rep = (t >> (22 + 3 * d)) & 7;
++        if (d == 0 && reg && (rep == 0 || rep == 3))
++          *reg = tok(j);
++        if (rep == 0 || rep == 3)
++          j += 1;
++        else if (rep == 1 || rep == 4)
++          j += 2;
++        if (rep >= 2) {
++          uint32_t n = operand(j, nullptr);
++          if (!n)
++            return 0;
++          j += n;
++        }
++      }
++      return j > dwords ? 0 : j - start;
++    };
++
++    for (uint32_t i = 2; i < dwords;) {
++      uint32_t t = tok(i), opcode = t & 0x7ff;
++      uint32_t len = opcode == 0x35 ? tok(i + 1) : (t >> 24) & 0x7f; // customdata carries its length
++      if (len == 0 || i + len > dwords)
++        return;
++      if (opcode == 0x58 && !sm51 && len >= 4) { // dcl_resource: opcode, operand, t#, return type
++        uint32_t reg = tok(i + 2), ret = tok(i + len - 1) & 0xf;
++        static constexpr uint8_t kKind[11] = {0, 1, 2, 4, 6, 8, 9, 3, 5, 7, 10}; // D3D dimension -> ResourceType + 1
++        uint32_t dim = (t >> 11) & 0x1f;
++        uint32_t kind = dim < 11 ? kKind[dim] : 0;
++        uint32_t scalar = ret == 4 ? 1 : ret == 3 ? 2 : 0; // UINT, SINT, else float
++        if (reg < 128 && kind)
++          kinds[reg] = (kind << MTL_SM50_SHADER_ARGUMENT_TEXTURE_KIND_SHIFT) |
++                       (scalar << MTL_SM50_SHADER_ARGUMENT_TEXTURE_SCALAR_SHIFT);
++      } else if (!sm51 && (opcode == 0x46 || opcode == 0x47 || opcode == 0x7e || opcode == 0x80)) {
++        // sample_c, sample_c_lz, gather4_c, gather4_po_c: the resource is operand 2 (3 for gather4_po_c)
++        uint32_t j = i + 1;
++        for (uint32_t ext = t; (ext >> 31) && j < i + len; ext = tok(j++)) {}
++        uint32_t want = opcode == 0x80 ? 3 : 2, reg = ~0u;
++        for (uint32_t k = 0; k <= want && j < i + len; k++) {
++          uint32_t r = ~0u, n = operand(j, &r);
++          if (!n)
++            break;
++          if (k == want && ((tok(j) >> 12) & 0xff) == 7) // resource operand
++            reg = r;
++          j += n;
++        }
++        if (reg < 128)
++          kinds[reg] |= MTL_SM50_SHADER_ARGUMENT_TEXTURE_DEPTH;
++      }
++      i += len;
++    }
++    return;
++  }
++}
++
+ class MTLD3D11InputLayout final
+     : public MTLD3D11DeviceChild<IMTLD3D11InputLayout> {
+ public:
+@@ -74,37 +174,96 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+     MTL_SHADER_REFLECTION reflection_;
+     MTL_SM50_SHADER_ARGUMENT *arguments_info_buffer;
+     std::unordered_map<ShaderVariant, std::unique_ptr<CompiledShader>> variants;
++    // get_shader runs under the lock of whichever pipeline kind is being created (mutex_, mutex_gs_, mutex_ts_,
++    // mutex_cs_), and one shader can be in pipelines of several kinds: without its own lock two contexts' threads
++    // insert into `variants` at once and corrupt the heap.
++    dxmt::mutex variants_mutex_;
++    // The parsed shader (airconv IR, in the executor) is only needed to compile a variant. Games create tens of
++    // thousands of shaders up front (Overwatch ~62k, ~8.6 GB of IR held for the whole session): keep the bytecode,
++    // free the IR once the reflection is read, parse again on the first variant compile.
++    std::vector<uint8_t> bytecode_;
++    dxmt::mutex handle_mutex_;
+ 
+   public:
+     CachedSM50Shader(PipelineCache *cache, sm50_shader_t shader_transferred,
+-                     const Sha1Digest &hash, MTL_SHADER_REFLECTION &reflection)
++                     const Sha1Digest &hash, MTL_SHADER_REFLECTION &reflection,
++                     const void *bytecode, size_t bytecode_length)
+         : cache(cache), shader(shader_transferred), sha1_(hash),
+           reflection_(reflection) {
++      if (LabelEncoders() && bytecode) {
++        // diagnostic: keep each shader's DXBC once so a pass named in a GPU fault report can be read back
++        CreateDirectoryA("C:\\dxmt_shaders", nullptr);
++        auto path = "C:\\dxmt_shaders\\" + hash.string() + ".cso";
++        if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
++          std::fstream out(path, std::ios::out | std::ios::binary);
++          if (out)
++            out.write((const char *)bytecode, bytecode_length);
++        }
++      }
+       if (reflection_.NumConstantBuffers + reflection_.NumArguments) {
+-        arguments_info_buffer = (MTL_SM50_SHADER_ARGUMENT *)malloc(
+-            sizeof(MTL_SM50_SHADER_ARGUMENT) *
+-            (reflection_.NumConstantBuffers + reflection_.NumArguments));
++        // Zeroed: with a remote executor (steamac's wmtr) a lost reply leaves the table unwritten, and heap leftovers
++        // read as binding slots index far past the encoder's arrays (Overwatch crashed in encodeConstantBuffers).
++        arguments_info_buffer = (MTL_SM50_SHADER_ARGUMENT *)calloc(
++            reflection_.NumConstantBuffers + reflection_.NumArguments, sizeof(MTL_SM50_SHADER_ARGUMENT));
+         SM50GetArgumentsInfo(shader, arguments_info_buffer,
+                              arguments_info_buffer +
+                                  reflection_.NumConstantBuffers);
++        for (unsigned i = 0; i < reflection_.NumConstantBuffers; i++) {
++          auto &arg = arguments_info_buffer[i];
++          if (arg.Type != SM50BindingType::ConstantBuffer || arg.SM50BindingSlot >= 14) {
++            ERR("Shader ", hash.string(), ": constant buffer ", i, "/", reflection_.NumConstantBuffers,
++                " has type ", (uint32_t)arg.Type, " slot ", arg.SM50BindingSlot);
++            break;
++          }
++        }
++        // Texture kinds the converter did not report: from the shader's own declarations.
++        uint32_t kinds[128] = {};
++        bool read = false;
++        for (unsigned i = 0; i < reflection_.NumArguments; i++) {
++          auto &arg = arguments_info_buffer[reflection_.NumConstantBuffers + i];
++          if (arg.Type != SM50BindingType::SRV || !(arg.Flags & MTL_SM50_SHADER_ARGUMENT_TEXTURE) ||
++              ((arg.Flags >> MTL_SM50_SHADER_ARGUMENT_TEXTURE_KIND_SHIFT) & 15) || arg.SM50BindingSlot >= 128)
++            continue;
++          if (!read) {
++            ReadTextureDeclarations(bytecode, bytecode_length, kinds);
++            read = true;
++          }
++          arg.Flags = (MTL_SM50_SHADER_ARGUMENT_FLAG)(arg.Flags | kinds[arg.SM50BindingSlot]);
++        }
+       } else {
+         arguments_info_buffer = nullptr;
+       }
++      if (bytecode && bytecode_length) {
++        bytecode_.assign((const uint8_t *)bytecode, (const uint8_t *)bytecode + bytecode_length);
++        SM50Destroy(shader);
++        shader = nullptr;
++      }
+     }
+ 
+     ~CachedSM50Shader() {
+-      if (shader) {
++      if (shader)
+         SM50Destroy(shader);
+-        if (arguments_info_buffer)
+-          free(arguments_info_buffer);
+-        shader = nullptr;
+-      }
++      shader = nullptr;
++      if (arguments_info_buffer)
++        free(arguments_info_buffer);
+     };
+ 
+     CachedSM50Shader(CachedSM50Shader &&moved) = delete;
+     CachedSM50Shader(const CachedSM50Shader &copy) = delete;
+ 
+-    virtual sm50_shader_t handle() { return shader; };
++    virtual sm50_shader_t handle() {
++      std::lock_guard<dxmt::mutex> lock(handle_mutex_);
++      if (!shader && !bytecode_.empty()) {
++        MTL_SHADER_REFLECTION reflection;
++        sm50_error_t err;
++        if (SM50Initialize(bytecode_.data(), bytecode_.size(), &shader, &reflection, &err)) {
++          ERR("Shader ", sha1_.string(), ": failed to parse again: ", SM50GetErrorMessageString(err));
++          SM50FreeError(err);
++          shader = nullptr;
++        }
++      }
++      return shader;
++    };
+     virtual MTL_SHADER_REFLECTION &reflection() { return reflection_; }
+     virtual MTL_SM50_SHADER_ARGUMENT *constant_buffers_info() {
+       return arguments_info_buffer;
+@@ -113,6 +272,7 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       return arguments_info_buffer + reflection_.NumConstantBuffers;
+     };
+     virtual CompiledShader *get_shader(ShaderVariant variant) {
++      std::lock_guard<dxmt::mutex> lock(variants_mutex_);
+       auto c = variants.insert({variant, nullptr});
+       if (c.second) {
+         c.first->second = std::visit(
+@@ -217,6 +377,284 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+   std::unordered_map<ManagedShader, std::unique_ptr<MTLCompiledComputePipeline>> pipelines_cs_;
+   dxmt::mutex mutex_cs_;
+ 
++  /* Pipeline prewarm (DXMT_PIPELINE_PREWARM=0 turns it off). Every ordinary graphics pipeline a game builds is
++   * recorded (shader hashes plus render state) in %LOCALAPPDATA%\dxmt\<exe>\pipelines.bin. In later sessions, as
++   * soon as the game has created all the shaders of a recorded pipeline (it does so while loading a map, during
++   * the loading screen), the pipeline is built in the background, a few at a time so the game's own requests
++   * (compute pipelines it must wait for) never queue behind a burst. The game later finds it ready instead of
++   * compiling it mid-match. */
++  struct PipelineRecord {
++    Sha1Digest vs, ps;
++    bool has_ps, has_layout, raster, gs_strip;
++    uint8_t samples;
++    uint32_t num_rt, rt[8], ds, topo, ib_fmt, sample_mask, gs_passthrough;
++    D3D11_BLEND_DESC1 blend;
++    std::vector<MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC> layout;
++  };
++  bool prewarm_on_ = false;
++  std::vector<PipelineRecord> records_;
++  std::unordered_set<Sha1Digest> record_keys_;
++  std::unordered_multimap<Sha1Digest, uint32_t> records_by_shader_;
++  std::vector<bool> record_queued_;
++  std::deque<uint32_t> prewarm_ready_;
++  std::unordered_set<MTLCompiledGraphicsPipeline *> prewarmed_;
++  uint64_t prewarm_built_ = 0, prewarm_hits_ = 0, prewarm_logged_ = 0;
++  std::ofstream record_out_;
++  dxmt::mutex prewarm_mutex_;
++  dxmt::condition_variable prewarm_cv_;
++  bool prewarm_stop_ = false;
++  dxmt::thread prewarm_thread_;
++
++  static void PutU32(std::string &b, uint32_t v) { b.append((const char *)&v, 4); }
++
++  static std::string SerializeRecord(const PipelineRecord &r) {
++    std::string b("PR01", 4);
++    b.append((const char *)r.vs.data, 20);
++    b.append((const char *)r.ps.data, 20);
++    PutU32(b, r.has_ps | (r.has_layout << 1) | (r.raster << 2) | (r.gs_strip << 3));
++    PutU32(b, r.samples);
++    PutU32(b, r.num_rt);
++    for (unsigned i = 0; i < 8; i++)
++      PutU32(b, r.rt[i]);
++    PutU32(b, r.ds);
++    PutU32(b, r.topo);
++    PutU32(b, r.ib_fmt);
++    PutU32(b, r.sample_mask);
++    PutU32(b, r.gs_passthrough);
++    b.append((const char *)&r.blend, sizeof(r.blend));
++    PutU32(b, (uint32_t)r.layout.size());
++    for (auto &e : r.layout) {
++      PutU32(b, e.Index);
++      PutU32(b, e.Slot);
++      PutU32(b, e.Offset);
++      PutU32(b, e.Format);
++      PutU32(b, (uint32_t)e.StepFunction);
++      PutU32(b, e.InstanceStepRate);
++    }
++    return b;
++  }
++
++  /* Parses one record at `pos`; false at the end or on a damaged tail (the rest of the file is ignored). */
++  static bool ParseRecord(const std::string &f, size_t &pos, PipelineRecord &r) {
++    auto u32 = [&](uint32_t &v) {
++      if (pos + 4 > f.size()) return false;
++      memcpy(&v, f.data() + pos, 4);
++      pos += 4;
++      return true;
++    };
++    if (pos + 44 > f.size() || f.compare(pos, 4, "PR01") != 0) return false;
++    pos += 4;
++    memcpy(r.vs.data, f.data() + pos, 20);
++    memcpy(r.ps.data, f.data() + pos + 20, 20);
++    pos += 40;
++    uint32_t flags, samples, n;
++    if (!u32(flags) || !u32(samples) || !u32(r.num_rt) || r.num_rt > 8) return false;
++    for (unsigned i = 0; i < 8; i++)
++      if (!u32(r.rt[i])) return false;
++    if (!u32(r.ds) || !u32(r.topo) || !u32(r.ib_fmt) || !u32(r.sample_mask) || !u32(r.gs_passthrough)) return false;
++    if (pos + sizeof(r.blend) > f.size()) return false;
++    memcpy(&r.blend, f.data() + pos, sizeof(r.blend));
++    pos += sizeof(r.blend);
++    if (!u32(n) || n > 64) return false;
++    r.has_ps = flags & 1; r.has_layout = flags & 2; r.raster = flags & 4; r.gs_strip = flags & 8;
++    r.samples = (uint8_t)samples;
++    r.layout.resize(n);
++    for (auto &e : r.layout) {
++      uint32_t step, rate;
++      if (!u32(e.Index) || !u32(e.Slot) || !u32(e.Offset) || !u32(e.Format) || !u32(step) || !u32(rate)) return false;
++      e.StepFunction = (D3D11_INPUT_CLASSIFICATION)step;
++      e.InstanceStepRate = rate;
++    }
++    return true;
++  }
++
++  /* Call with prewarm_mutex_ held. */
++  void IndexRecord(PipelineRecord &&r, const Sha1Digest &key) {
++    uint32_t idx = (uint32_t)records_.size();
++    record_keys_.insert(key);
++    records_by_shader_.insert({r.vs, idx});
++    if (r.has_ps)
++      records_by_shader_.insert({r.ps, idx});
++    records_.push_back(std::move(r));
++    record_queued_.push_back(false);
++  }
++
++  CachedSM50Shader *FindShader(const Sha1Digest &sha1) {
++    std::shared_lock<std::shared_mutex> lock(mutex_shares);
++    auto it = shaders_.find(sha1);
++    return it == shaders_.end() ? nullptr : it->second.get();
++  }
++
++  void LoadRecords() {
++    if (env::getEnvVar("DXMT_PIPELINE_PREWARM") == "0")
++      return;
++    char base[MAX_PATH];
++    DWORD len = GetEnvironmentVariableA("LOCALAPPDATA", base, sizeof base);
++    if (!len || len >= sizeof base)
++      return;
++    std::string dir = std::string(base) + "\\dxmt";
++    CreateDirectoryA(dir.c_str(), nullptr);
++    dir += "\\" + env::getExeName();
++    CreateDirectoryA(dir.c_str(), nullptr);
++    std::string path = dir + "\\pipelines.bin";
++    std::string data;
++    {
++      std::ifstream in(path, std::ios::binary);
++      if (in)
++        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
++    }
++    size_t pos = 0, good = 0;
++    PipelineRecord r;
++    while (ParseRecord(data, pos, r)) {
++      good = pos;
++      auto bytes = SerializeRecord(r);
++      auto key = Sha1HashState::compute(bytes.data(), bytes.size());
++      if (!record_keys_.contains(key))
++        IndexRecord(std::move(r), key);
++      r = PipelineRecord{};
++    }
++    // Drop a damaged tail so new records are not appended after garbage.
++    if (good != data.size()) {
++      std::ofstream fix(path, std::ios::binary | std::ios::trunc);
++      fix.write(data.data(), good);
++    }
++    record_out_.open(path, std::ios::binary | std::ios::app);
++    prewarm_on_ = record_out_.is_open();
++    if (prewarm_on_) {
++      WARN("pipeline prewarm: ", records_.size(), " recorded pipelines loaded from ", path);
++      prewarm_thread_ = dxmt::thread([this]() { PrewarmLoop(); });
++      prewarm_thread_.set_priority(ThreadPriority::Lowest);
++    }
++  }
++
++  /* A game pipeline was just created: remember it for the next sessions. */
++  void RecordPipeline(const MTL_GRAPHICS_PIPELINE_DESC &d) {
++    if (!prewarm_on_ || d.HullShader || d.DomainShader || d.GeometryShader || d.SOLayout || !d.VertexShader ||
++        !d.BlendState || d.NumColorAttachments > 8)
++      return;
++    PipelineRecord r{};
++    r.vs = d.VertexShader->sha1();
++    r.has_ps = d.PixelShader != nullptr;
++    if (r.has_ps)
++      r.ps = d.PixelShader->sha1();
++    r.has_layout = d.InputLayout != nullptr;
++    if (r.has_layout) {
++      MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC *el;
++      uint32_t n = d.InputLayout->input_layout_element(&el);
++      r.layout.assign(el, el + n);
++    }
++    r.raster = d.RasterizationEnabled;
++    r.gs_strip = d.GSStripTopology;
++    r.samples = d.SampleCount;
++    r.num_rt = d.NumColorAttachments;
++    for (unsigned i = 0; i < 8; i++)
++      r.rt[i] = i < d.NumColorAttachments ? (uint32_t)d.ColorAttachmentFormats[i] : 0;
++    r.ds = (uint32_t)d.DepthStencilFormat;
++    r.topo = (uint32_t)d.TopologyClass;
++    r.ib_fmt = (uint32_t)d.IndexBufferFormat;
++    r.sample_mask = d.SampleMask;
++    r.gs_passthrough = d.GSPassthrough;
++    d.BlendState->GetDesc1(&r.blend);
++    auto bytes = SerializeRecord(r);
++    auto key = Sha1HashState::compute(bytes.data(), bytes.size());
++    std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++    if (record_keys_.contains(key))
++      return;
++    record_out_.write(bytes.data(), bytes.size());
++    record_out_.flush();
++    IndexRecord(std::move(r), key);
++    record_queued_.back() = true; // this session has it already
++  }
++
++  /* A shader was just created: queue the recorded pipelines whose shaders all exist now. */
++  void OnShaderAdded(const Sha1Digest &sha1) {
++    if (!prewarm_on_)
++      return;
++    std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++    auto [b, e] = records_by_shader_.equal_range(sha1);
++    bool any = false;
++    for (auto it = b; it != e; ++it) {
++      uint32_t idx = it->second;
++      if (record_queued_[idx])
++        continue;
++      auto &r = records_[idx];
++      if (!FindShader(r.vs) || (r.has_ps && !FindShader(r.ps)))
++        continue;
++      record_queued_[idx] = true;
++      prewarm_ready_.push_back(idx);
++      any = true;
++    }
++    if (any)
++      prewarm_cv_.notify_one();
++  }
++
++  void PrewarmLoop() {
++    std::vector<MTLCompiledGraphicsPipeline *> in_flight;
++    constexpr size_t kMaxInFlight = 3;
++    for (;;) {
++      uint32_t idx;
++      {
++        std::unique_lock<dxmt::mutex> lock(prewarm_mutex_);
++        prewarm_cv_.wait(lock, [&]() { return prewarm_stop_ || !prewarm_ready_.empty(); });
++        if (prewarm_stop_)
++          return;
++        idx = prewarm_ready_.front();
++        prewarm_ready_.pop_front();
++      }
++      while (in_flight.size() >= kMaxInFlight) {
++        std::erase_if(in_flight, [](MTLCompiledGraphicsPipeline *p) { return p->GetIsDone(); });
++        if (in_flight.size() >= kMaxInFlight)
++          Sleep(2);
++        std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++        if (prewarm_stop_)
++          return;
++      }
++      if (auto p = BuildRecorded(records_[idx]))
++        in_flight.push_back(p);
++    }
++  }
++
++  /* The pipeline of a record, created through the same cache the game uses (nullptr if it existed already). */
++  MTLCompiledGraphicsPipeline *BuildRecorded(const PipelineRecord &r) {
++    MTL_GRAPHICS_PIPELINE_DESC d{};
++    d.VertexShader = FindShader(r.vs);
++    d.PixelShader = r.has_ps ? FindShader(r.ps) : nullptr;
++    if (!d.VertexShader || (r.has_ps && !d.PixelShader))
++      return nullptr;
++    IMTLD3D11BlendState *blend = nullptr;
++    if (FAILED(blend_states.CreateStateObject(&r.blend, &blend)) || !blend)
++      return nullptr;
++    d.BlendState = blend;
++    blend->Release(); // owned by the blend state cache for the device's lifetime, like the game's own
++    if (r.has_layout) {
++      std::lock_guard<dxmt::mutex> lock(mutex_ia_);
++      MTL_INPUT_LAYOUT_DESC buffer(r.layout);
++      if (!input_layouts.contains(buffer)) {
++        uint32_t mask = 0;
++        for (auto &el : buffer)
++          mask |= 1 << el.Slot;
++        auto copy = buffer;
++        input_layouts.emplace(std::move(copy), std::make_unique<CachedInputLayout>(std::move(buffer), mask));
++      }
++      d.InputLayout = input_layouts.at(MTL_INPUT_LAYOUT_DESC(r.layout)).get();
++    }
++    d.NumColorAttachments = r.num_rt;
++    for (unsigned i = 0; i < 8; i++)
++      d.ColorAttachmentFormats[i] = (WMTPixelFormat)r.rt[i];
++    d.DepthStencilFormat = (WMTPixelFormat)r.ds;
++    d.TopologyClass = (WMTPrimitiveTopologyClass)r.topo;
++    d.RasterizationEnabled = r.raster;
++    d.SampleCount = r.samples;
++    d.GSStripTopology = r.gs_strip;
++    d.IndexBufferFormat = (SM50_INDEX_BUFFER_FORMAT)r.ib_fmt;
++    d.SampleMask = r.sample_mask;
++    d.GSPassthrough = r.gs_passthrough;
++    MTLCompiledGraphicsPipeline *pipeline;
++    if (!GetGraphicsPipelineImpl(&d, &pipeline, true))
++      return nullptr;
++    return pipeline;
++  }
++
+   CachedSM50Shader *CreateShader(const void *pBytecode,
+                                  uint32_t BytecodeLength) {
+     auto sha1 = Sha1HashState::compute(pBytecode, BytecodeLength);
+@@ -235,7 +673,8 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       SM50FreeError(err);
+       return nullptr;
+     }
+-    auto shader = std::make_unique<CachedSM50Shader>(this, sm50, sha1, reflection);
++    auto shader = std::make_unique<CachedSM50Shader>(this, sm50, sha1, reflection, pBytecode, BytecodeLength);
++    CachedSM50Shader *created;
+     {
+       std::unique_lock<std::shared_mutex> lock(mutex_shares);
+       auto result = shaders_.find(sha1);
+@@ -247,8 +686,10 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       shader->bytecode_length = BytecodeLength;
+       memcpy(shader->bytecode, pBytecode, BytecodeLength);
+ #endif
+-      return shaders_.emplace(sha1, std::move(shader)).first->second.get();
++      created = shaders_.emplace(sha1, std::move(shader)).first->second.get();
+     }
++    OnShaderAdded(sha1);
++    return created;
+   }
+ 
+   virtual HRESULT AddVertexShader(const void *pBytecode,
+@@ -379,19 +820,46 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+ 
+   void GetGraphicsPipeline(MTL_GRAPHICS_PIPELINE_DESC *pDesc,
+                            MTLCompiledGraphicsPipeline **ppPipeline) override {
+-    std::lock_guard<dxmt::mutex> lock(mutex_);
++    GetGraphicsPipelineImpl(pDesc, ppPipeline, false);
++  }
+ 
+-    if (auto iter = pipelines_.find(*pDesc); iter != pipelines_.end()) {
++  /* Returns true if the pipeline was created by this call. */
++  bool GetGraphicsPipelineImpl(MTL_GRAPHICS_PIPELINE_DESC *pDesc, MTLCompiledGraphicsPipeline **ppPipeline,
++                               bool prewarm) {
++    {
++      std::lock_guard<dxmt::mutex> lock(mutex_);
++      if (auto iter = pipelines_.find(*pDesc); iter != pipelines_.end()) {
++        *ppPipeline = iter->second.get();
++        if (!prewarm && prewarm_on_)
++          CountPrewarmHit(*ppPipeline);
++        return false;
++      }
++      auto [iter, inserted] = pipelines_.insert({*pDesc, CreateGraphicsPipeline(device, pDesc)});
++      if (!inserted) {
++        D3D11_ASSERT(0 && "duplicated graphics pipeline");
++      } else {
++        scheduler_.submit(iter->second.get());
++      }
+       *ppPipeline = iter->second.get();
+-      return;
+     }
+-    auto [iter, inserted] = pipelines_.insert({*pDesc, CreateGraphicsPipeline(device, pDesc)});
+-    if (!inserted) {
+-      D3D11_ASSERT(0 && "duplicated graphics pipeline");
++    if (prewarm) {
++      std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++      prewarmed_.insert(*ppPipeline);
++      ++prewarm_built_;
++      if (prewarm_ready_.empty() && prewarm_built_ >= prewarm_logged_ + 50 && (prewarm_logged_ = prewarm_built_))
++        WARN("pipeline prewarm: queue empty, built ", prewarm_built_, " ahead, ", prewarm_hits_,
++             " already used by the game");
+     } else {
+-      scheduler_.submit(iter->second.get());
++      RecordPipeline(*pDesc);
+     }
+-    *ppPipeline = iter->second.get();
++    return true;
++  }
++
++  void CountPrewarmHit(MTLCompiledGraphicsPipeline *p) {
++    std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++    if (prewarmed_.erase(p) && (++prewarm_hits_ == 10 || prewarm_hits_ == 50 || prewarm_hits_ % 100 == 0))
++      WARN("pipeline prewarm: ", prewarm_hits_, " pipelines were ready when the game asked (", prewarm_built_,
++           " built ahead)");
+   }
+ 
+   void GetGeometryPipeline(
+@@ -449,6 +917,14 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+ 
+ public:
+   ~PipelineCache() override {
++    if (prewarm_thread_.joinable()) {
++      {
++        std::lock_guard<dxmt::mutex> lock(prewarm_mutex_);
++        prewarm_stop_ = true;
++      }
++      prewarm_cv_.notify_all();
++      prewarm_thread_.join();
++    }
+     // Members are destroyed in reverse declaration order. Join workers while
+     // shader variants, pipelines and their dependencies are still alive.
+     scheduler_.shutdown();
+@@ -458,7 +934,9 @@ public:
+       scache_(ShaderCache::getInstance(pDevice->GetDXMTDevice().metalVersion())),
+       device(pDevice),
+       blend_states(pDevice),
+-      so_layouts(pDevice) {};
++      so_layouts(pDevice) {
++    LoadRecords();
++  };
+ };
+ 
+ std::unique_ptr<MTLD3D11PipelineCacheBase>
+diff --git a/src/d3d11/d3d11_pipeline_gs.cpp b/src/d3d11/d3d11_pipeline_gs.cpp
+index 4fa7b5c..3d83d5d 100644
+--- a/src/d3d11/d3d11_pipeline_gs.cpp
++++ b/src/d3d11/d3d11_pipeline_gs.cpp
+@@ -67,7 +67,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_GRAPHICS_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    WaitLogged(ready_, "geometry", std::string());
+     *pPipeline = {state_mesh_};
+   }
+ 
+diff --git a/src/d3d11/d3d11_pipeline_ts.cpp b/src/d3d11/d3d11_pipeline_ts.cpp
+index 784fa44..3b4f860 100644
+--- a/src/d3d11/d3d11_pipeline_ts.cpp
++++ b/src/d3d11/d3d11_pipeline_ts.cpp
+@@ -95,7 +95,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_TESSELLATION_MESH_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    WaitLogged(ready_, "tessellation", std::string());
+     *pPipeline = {state_rasterization_, hull_reflection.NumOutputElement,
+                   hull_reflection.ThreadsPerPatch};
+   }
+diff --git a/src/d3d11/d3d11_shader.cpp b/src/d3d11/d3d11_shader.cpp
+index 17057f1..17e6c15 100644
+--- a/src/d3d11/d3d11_shader.cpp
++++ b/src/d3d11/d3d11_shader.cpp
+@@ -126,8 +126,11 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+   h.update(getGlobalShaderFlag());
+   h.update(variant.gs_passthrough);
+   h.update(variant.rasterization_disabled);
++  h.update(uint32_t(0xb0d5c4ec)); // vertex fetch bounds-checked: cached variants without it are stale
+   if (variant.input_layout_handle)
+     h.update(variant.input_layout_handle->sha1());
++  else
++    h.update(uint32_t(0x1a10e0)); // empty-layout vertex pulling: never reuse cached stage_in variants
+   auto variant_digest = h.final();
+   std::string func_name = "vs_" + shader->sha1().string().substr(0, 8) + "_" + variant_digest.string();
+ 
+@@ -138,10 +141,17 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+     data_gs_passthrough.DataEncoded = variant.gs_passthrough;
+     data_gs_passthrough.RasterizationDisabled = variant.rasterization_disabled;
+     data_gs_passthrough.next = common;
++    // Always pull vertices in the shader: without an input layout D3D11 reads declared inputs as 0, while a
++    // stage_in fallback needs a Metal vertex descriptor the pipeline never sets ("Vertex function has input
++    // attributes but no vertex descriptor was set"), as the tessellation/geometry variants already avoid.
++    data_gs_passthrough.next = &data_ia_layout;
++    data_ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
++    data_ia_layout.next = common;
++    data_ia_layout.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
++    data_ia_layout.slot_mask = 0;
++    data_ia_layout.num_elements = 0;
++    data_ia_layout.elements = nullptr;
+     if (variant.input_layout_handle) {
+-      data_gs_passthrough.next = &data_ia_layout;
+-      data_ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
+-      data_ia_layout.next = common;
+       data_ia_layout.slot_mask = variant.input_layout_handle->input_slot_mask();
+       data_ia_layout
+           .num_elements = variant.input_layout_handle->input_layout_element(
+@@ -238,6 +248,7 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+   h.update(variant.vertex_shader_handle->sha1());
+   h.update(variant.index_buffer_format);
+   h.update(variant.max_potential_tess_factor);
++  h.update(uint32_t(0xb0d5c4ec)); // vertex fetch bounds-checked: cached variants without it are stale
+   if (variant.input_layout_handle)
+     h.update(variant.input_layout_handle->sha1());
+   auto variant_digest = h.final();
+@@ -323,8 +334,12 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+   Sha1HashState h;
+   h.update(getGlobalShaderFlag());
+   h.update(((IMTLD3D11StreamOutputLayout *)variant.stream_output_layout_handle)->Digest());
++  h.update(uint32_t(1)); // instanced write index
++  h.update(uint32_t(0xb0d5c4ec)); // vertex fetch bounds-checked: cached variants without it are stale
+   if (variant.input_layout_handle)
+     h.update(variant.input_layout_handle->sha1());
++  else
++    h.update(uint32_t(0x1a10e0)); // empty-layout vertex pulling: never reuse cached stage_in variants
+   auto variant_digest = h.final();
+   std::string func_name = "vsso_" + shader->sha1().string().substr(0, 8) + "_" + variant_digest.string();
+   auto proc = [=](const char *func_name, SM50_SHADER_COMMON_DATA *common) -> sm50_bitcode_t  {
+@@ -339,10 +354,15 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+                 (MTL_SHADER_STREAM_OUTPUT_ELEMENT_DESC **)&data_so.elements,
+                 data_so.strides);
+ 
++    // As for plain vertex shaders: an empty layout instead of a stage_in fallback without a vertex descriptor.
++    data_so.next = &data_vertex_pulling;
++    data_vertex_pulling.type = SM50_SHADER_IA_INPUT_LAYOUT;
++    data_vertex_pulling.next = common;
++    data_vertex_pulling.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
++    data_vertex_pulling.slot_mask = 0;
++    data_vertex_pulling.num_elements = 0;
++    data_vertex_pulling.elements = nullptr;
+     if (variant.input_layout_handle) {
+-      data_so.next = &data_vertex_pulling;
+-      data_vertex_pulling.type = SM50_SHADER_IA_INPUT_LAYOUT;
+-      data_vertex_pulling.next = common;
+       data_vertex_pulling.slot_mask =
+           variant.input_layout_handle->input_slot_mask();
+       data_vertex_pulling.num_elements =
+@@ -375,6 +395,7 @@ CreateVariantShader(MTLD3D11Device *pDevice, ManagedShader shader,
+   h.update(variant.geometry_shader_handle->sha1());
+   h.update(variant.index_buffer_format);
+   h.update(variant.strip_topology);
++  h.update(uint32_t(0xb0d5c4ec)); // vertex fetch bounds-checked: cached variants without it are stale
+   if (variant.input_layout_handle)
+     h.update(variant.input_layout_handle->sha1());
+   auto variant_digest = h.final();
+diff --git a/src/dxmt/dxmt_command_queue.cpp b/src/dxmt/dxmt_command_queue.cpp
+index 3c668a6..aa99eb6 100644
+--- a/src/dxmt/dxmt_command_queue.cpp
++++ b/src/dxmt/dxmt_command_queue.cpp
+@@ -158,6 +158,10 @@ CommandQueue::CommitChunkInternal(CommandChunk &chunk, uint64_t seq) {
+     std::time(&now);
+     std::strftime(filename, 1024, "_%H'%M'%S_%m-%d-%y.gputrace", std::localtime(&now));
+     auto fileUrl = env::getUnixPath(env::getExeBaseName() + "_F." + std::to_string(chunk.frame_) + filename);
++    // The capture runs where Metal runs: with a remote executor (steamac's wmtr) that is another machine, where this
++    // process's Unix path does not exist. DXMT_CAPTURE_DIR names a directory on that side instead.
++    if (auto dir = env::getEnvVar("DXMT_CAPTURE_DIR"); !dir.empty())
++      fileUrl = dir + (dir.ends_with('/') ? "" : "/") + env::getExeBaseName() + "_F." + std::to_string(chunk.frame_) + filename;
+     WARN("A new capture will be saved to ", fileUrl);
+     info.output_url.set(fileUrl.c_str());
+ 
+diff --git a/src/dxmt/dxmt_context.cpp b/src/dxmt/dxmt_context.cpp
+index 0cb604e..f4a61eb 100644
+--- a/src/dxmt/dxmt_context.cpp
++++ b/src/dxmt/dxmt_context.cpp
+@@ -24,9 +24,105 @@
+ #include "dxmt_occlusion_query.hpp"
+ #include "dxmt_presenter.hpp"
+ #include "wsi_platform.hpp"
++#include "util_env.hpp"
++#include <cstdarg>
++#include <cstdio>
++#include <algorithm>
++#include <string>
++#include <unordered_map>
+ #include <cstdint>
+ #include <cfloat>
+ 
++
++namespace dxmt {
++// DXMT_LABEL_ENCODERS=1: name each encoder so a GPU fault report says which pass faulted (diagnostic; extra calls)
++bool
++LabelEncoders() {
++  static const bool on = dxmt::env::getEnvVar("DXMT_LABEL_ENCODERS") == "1";
++  return on;
++}
++
++static dxmt::mutex pipeline_names_mutex;
++static std::unordered_map<obj_handle_t, std::string> pipeline_names;
++
++void
++RegisterPipelineName(obj_handle_t pso, std::string name) {
++  std::lock_guard<dxmt::mutex> lock(pipeline_names_mutex);
++  pipeline_names[pso] = std::move(name);
++}
++
++// "draws=N <vs/ps> <vs/ps> ..." for the pipelines a render pass binds (first 32 distinct)
++static std::string
++DescribeRenderCommands(const wmtcmd_render_nop *head) {
++  unsigned draws = 0, named = 0;
++  obj_handle_t seen[32] = {};
++  std::string names;
++  std::lock_guard<dxmt::mutex> lock(pipeline_names_mutex);
++  for (auto cmd = (const wmtcmd_base *)head->next.ptr; cmd; cmd = (const wmtcmd_base *)cmd->next.ptr) {
++    if (cmd->type >= WMTRenderCommandDraw && cmd->type <= WMTRenderCommandDrawMeshThreadgroupsIndirect) {
++      draws++;
++    } else if (cmd->type == WMTRenderCommandSetPSO && named < 32) {
++      auto pso = ((const wmtcmd_render_setpso *)cmd)->pso;
++      if (std::find(seen, seen + named, pso) != seen + named)
++        continue;
++      seen[named++] = pso;
++      auto it = pipeline_names.find(pso);
++      names += ' ';
++      names += it != pipeline_names.end() ? it->second : std::string("?");
++    }
++  }
++  return "draws=" + std::to_string(draws) + names;
++}
++// "dispatches=N indirect=M maxgroups=WxHxD <cs> ..." for a compute pass
++static std::string
++DescribeComputeCommands(const wmtcmd_compute_nop *head) {
++  unsigned dispatches = 0, indirect = 0, named = 0;
++  uint64_t max_groups = 0;
++  WMTSize max_size{};
++  obj_handle_t seen[16] = {};
++  std::string names;
++  std::lock_guard<dxmt::mutex> lock(pipeline_names_mutex);
++  for (auto cmd = (const wmtcmd_base *)head->next.ptr; cmd; cmd = (const wmtcmd_base *)cmd->next.ptr) {
++    if (cmd->type == WMTComputeCommandDispatch || cmd->type == WMTComputeCommandDispatchThreads) {
++      dispatches++;
++      auto &size = ((const wmtcmd_compute_dispatch *)cmd)->size;
++      if (size.width * size.height * size.depth > max_groups) {
++        max_groups = size.width * size.height * size.depth;
++        max_size = size;
++      }
++    } else if (cmd->type == WMTComputeCommandDispatchIndirect) {
++      indirect++;
++    } else if (cmd->type == WMTComputeCommandSetPSO && named < 16) {
++      auto pso = ((const wmtcmd_compute_setpso *)cmd)->pso;
++      if (std::find(seen, seen + named, pso) != seen + named)
++        continue;
++      seen[named++] = pso;
++      auto it = pipeline_names.find(pso);
++      names += ' ';
++      names += it != pipeline_names.end() ? it->second : std::string("?");
++    }
++  }
++  return "dispatches=" + std::to_string(dispatches) + " indirect=" + std::to_string(indirect) + " max=" +
++         std::to_string(max_size.width) + "x" + std::to_string(max_size.height) + "x" + std::to_string(max_size.depth) +
++         names;
++}
++} // namespace dxmt
++
++namespace {
++
++void
++SetEncoderLabel(WMT::CommandEncoder encoder, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
++void
++SetEncoderLabel(WMT::CommandEncoder encoder, const char *fmt, ...) {
++  char label[1024];
++  va_list args;
++  va_start(args, fmt);
++  vsnprintf(label, sizeof label, fmt, args);
++  va_end(args);
++  encoder.setLabel(WMT::String::string(label, WMTUTF8StringEncoding));
++}
++} // namespace
++
+ namespace dxmt {
+ 
+ ArgumentEncodingContext::ArgumentEncodingContext(CommandQueue &queue, WMT::Device device, InternalCommandLibrary &lib) :
+@@ -73,6 +169,64 @@ ArgumentEncodingContext::~ArgumentEncodingContext() {
+   wsi::aligned_free(dummy_cbuffer_host_);
+ };
+ 
++const ArgumentEncodingContext::DummyTexture *
++ArgumentEncodingContext::dummyTexture(uint32_t argument_flags) {
++  unsigned kind = (argument_flags >> MTL_SM50_SHADER_ARGUMENT_TEXTURE_KIND_SHIFT) & 15; // ResourceType + 1
++  if (kind == 0 || kind > 10)
++    return nullptr; // not reported (older airconv): keep the null texture
++  unsigned scalar = (argument_flags >> MTL_SM50_SHADER_ARGUMENT_TEXTURE_SCALAR_SHIFT) & 3;
++  if (scalar > 2)
++    scalar = 0;
++  bool depth = argument_flags & MTL_SM50_SHADER_ARGUMENT_TEXTURE_DEPTH;
++  auto &dummy = dummy_textures_[kind - 1][scalar][depth];
++  if (dummy.texture)
++    return &dummy;
++
++  // airconv's ResourceType order: TextureBuffer, 1D, 1DArray, 2D, 2DArray, 2DMS, 2DMSArray, 3D, Cube, CubeArray
++  static constexpr WMTTextureType kTypes[10] = {
++      WMTTextureTypeTextureBuffer, WMTTextureType1D,   WMTTextureType1DArray, WMTTextureType2D,
++      WMTTextureType2DArray,       WMTTextureType2DMultisample, WMTTextureType2DMultisampleArray,
++      WMTTextureType3D,            WMTTextureTypeCube, WMTTextureTypeCubeArray,
++  };
++  WMTTextureInfo info{};
++  info.type = kTypes[kind - 1];
++  info.pixel_format = depth         ? WMTPixelFormatDepth32Float
++                      : scalar == 1 ? WMTPixelFormatR32Uint
++                      : scalar == 2 ? WMTPixelFormatR32Sint
++                                    : WMTPixelFormatR32Float;
++  info.width = info.height = info.depth = 1;
++  info.array_length = 1;
++  info.mipmap_level_count = 1;
++  bool multisample = info.type == WMTTextureType2DMultisample || info.type == WMTTextureType2DMultisampleArray;
++  info.sample_count = multisample ? 4 : 1;
++  info.usage = WMTTextureUsageShaderRead;
++  // shortcut: depth and multisample dummies cannot be uploaded to (private storage), so they read undefined values;
++  // give them a zeroing render pass if a game depends on reading zeros from them.
++  bool uploadable = !depth && !multisample;
++  info.options = (WMTResourceOptions)((uploadable ? WMTResourceStorageModeShared : WMTResourceStorageModePrivate) |
++                                      WMTResourceHazardTrackingModeUntracked);
++
++  if (info.type == WMTTextureTypeTextureBuffer) {
++    // backed by the zeroed dummy constant buffer
++    info.options = dummy_cbuffer_info_.options;
++    dummy.texture = dummy_cbuffer_.newTexture(info, 0, 256);
++  } else {
++    dummy.texture = device_.newTexture(info);
++    if (dummy.texture && uploadable) {
++      static const uint32_t zero[4] = {};
++      unsigned slices = info.type == WMTTextureTypeCube || info.type == WMTTextureTypeCubeArray ? 6 : 1;
++      for (unsigned slice = 0; slice < slices; slice++)
++        dummy.texture.replaceRegion({0, 0, 0}, {1, 1, 1}, 0, slice, zero, sizeof(uint32_t), sizeof(uint32_t));
++    }
++  }
++  if (!dummy.texture) {
++    ERR("Failed to create a dummy texture of type ", (unsigned)info.type, " for unbound shader resources");
++    return nullptr;
++  }
++  dummy.gpu_resource_id = info.gpu_resource_id;
++  return &dummy;
++}
++
+ template void ArgumentEncodingContext::encodeVertexBuffers<PipelineKind::Ordinary>(uint32_t slot_mask, uint64_t argument_buffer_offset);
+ template void ArgumentEncodingContext::encodeVertexBuffers<PipelineKind::Tessellation>(uint32_t slot_mask, uint64_t argument_buffer_offset);
+ template void ArgumentEncodingContext::encodeVertexBuffers<PipelineKind::Geometry>(uint32_t slot_mask, uint64_t argument_buffer_offset);
+@@ -140,7 +294,7 @@ ArgumentEncodingContext::encodeStreamOutputBuffers<PipelineKind::Ordinary>(uint6
+     }
+     auto [buffer_alloc, buffer_offset] = access<PipelineStage::Vertex>(buffer, state.offset, 0, ResourceAccess::Write);
+     entries[slot].buffer_handle = buffer_alloc->gpuAddress() + buffer_offset + state.offset;
+-    entries[slot].counter_handle = 0; // TODO(stream-output): counter & buffer_filled_size
++    entries[slot].counter_handle = state.vertices_per_instance; // TODO(stream-output): counter & buffer_filled_size
+     makeResident<PipelineStage::Vertex, PipelineKind::Ordinary>(buffer.ptr(), false, true);
+   };
+   {
+@@ -213,6 +367,16 @@ ArgumentEncodingContext::encodeConstantBuffers(const MTL_SHADER_REFLECTION *refl
+   for (unsigned i = 0; i < reflection->NumConstantBuffers; i++) {
+     auto &arg = constant_buffers[i];
+     auto slot = 14 * unsigned(stage) + arg.SM50BindingSlot;
++    // A corrupt argument table (logged when the shader was created) must not index past cbuf_ into a wild pointer,
++    // nor past this shader's argument buffer: bind the dummy buffer when its offset is sane, else skip the entry.
++    if (arg.Type != SM50BindingType::ConstantBuffer || arg.SM50BindingSlot >= 14 ||
++        arg.StructurePtrOffset >= reflection->NumConstantBuffers) {
++      if (arg.StructurePtrOffset < reflection->NumConstantBuffers) {
++        encoded_buffer[arg.StructurePtrOffset] = dummy_cbuffer_info_.gpu_address;
++        makeResident<stage, kind>(dummy_cbuffer_, GetResidencyMask<kind>(stage, true, false));
++      }
++      continue;
++    }
+     switch (arg.Type) {
+     case SM50BindingType::ConstantBuffer: {
+       auto &cbuf = cbuf_[slot];
+@@ -359,6 +523,12 @@ ArgumentEncodingContext::encodeShaderResources(
+               access<stage>(srv.texture, viewIdChecked, ResourceAccess::Read).gpuResourceID;
+           encoded_buffer[arg.StructurePtrOffset + 1] = TextureMetadata(srv.texture->arrayLength(viewIdChecked), 0);
+           makeResident<stage, kind>(srv.texture.ptr(), viewIdChecked);
++        } else if (auto dummy = dummyTexture(arg.Flags)) {
++          // unbound: D3D11 reads zeros, Metal's null texture access is undefined
++          encoded_buffer[arg.StructurePtrOffset] = dummy->gpu_resource_id;
++          encoded_buffer[arg.StructurePtrOffset + 1] =
++              (arg.Flags & MTL_SM50_SHADER_ARGUMENT_TBUFFER_OFFSET) ? (1ull << 32) : TextureMetadata(1, 0);
++          makeResident<stage, kind>(dummy->texture, GetResidencyMask<kind>(stage, true, false));
+         } else {
+           encoded_buffer[arg.StructurePtrOffset] = 0;
+           encoded_buffer[arg.StructurePtrOffset + 1] = 0;
+@@ -974,6 +1144,13 @@ ArgumentEncodingContext::flushCommands(WMT::CommandBuffer cmdbuf, uint64_t seqId
+       }
+       auto gpu_buffer_ = data->allocated_argbuf;
+       auto encoder = cmdbuf.renderCommandEncoder(render_pass_info);
++      if (LabelEncoders())
++        SetEncoderLabel(
++            encoder, "R%u %ux%u%s%s%s seq=%llu %s", encoder_count - encoder_index,
++            data->render_target_width, data->render_target_height, data->use_geometry ? " GS" : "",
++            data->use_tessellation ? " TESS" : "", data->use_emulated_so ? " SO" : "", (unsigned long long)seqId,
++            DescribeRenderCommands(&data->cmd_head).c_str()
++        );
+       data->fence_wait.forEach(
+           data->fence_wait_vertex, // if a fence is waited pre-raster, no need to wait again at fragment
+           [&](auto id) { encoder.waitForFence(fence_pool_[id], WMTRenderStagePreRaster); },
+@@ -1069,6 +1246,9 @@ ArgumentEncodingContext::flushCommands(WMT::CommandBuffer cmdbuf, uint64_t seqId
+     case EncoderType::Compute: {
+       auto data = static_cast<ComputeEncoderData *>(current);
+       auto encoder = cmdbuf.computeCommandEncoder(true);
++      if (LabelEncoders())
++        SetEncoderLabel(encoder, "C%u seq=%llu %s", encoder_count - encoder_index, (unsigned long long)seqId,
++                        DescribeComputeCommands(&data->cmd_head).c_str());
+       data->fence_wait.forEach([&](auto id) { encoder.waitForFence(fence_pool_[id]); });
+       struct wmtcmd_compute_setbuffer setcmd;
+       setcmd.type = WMTComputeCommandSetBuffer;
+@@ -1088,6 +1268,8 @@ ArgumentEncodingContext::flushCommands(WMT::CommandBuffer cmdbuf, uint64_t seqId
+     case EncoderType::Blit: {
+       auto data = static_cast<BlitEncoderData *>(current);
+       auto encoder = cmdbuf.blitCommandEncoder();
++      if (LabelEncoders())
++        SetEncoderLabel(encoder, "B%u seq=%llu", encoder_count - encoder_index, (unsigned long long)seqId);
+       data->fence_wait.forEach([&](auto id) { encoder.waitForFence(fence_pool_[id]); });
+       encoder.encodeCommands(&data->cmd_head);
+       data->fence_update.forEach([&](auto id) { encoder.updateFence(fence_pool_[id]); });
+diff --git a/src/dxmt/dxmt_context.hpp b/src/dxmt/dxmt_context.hpp
+index 5d2092f..f86e0de 100644
+--- a/src/dxmt/dxmt_context.hpp
++++ b/src/dxmt/dxmt_context.hpp
+@@ -41,6 +41,10 @@
+ 
+ namespace dxmt {
+ 
++/* DXMT_LABEL_ENCODERS=1 diagnostics: encoder labels name each pass and the shaders it drew with */
++bool LabelEncoders();
++void RegisterPipelineName(obj_handle_t pso, std::string name);
++
+ constexpr size_t kCommandChunkCPUHeapSize = 0x400000;
+ constexpr size_t kCommandChunkGPUHeapSize = 0x400000;
+ constexpr size_t kEncodingContextCPUHeapSize = 0x100000;
+@@ -104,6 +108,7 @@ struct StreamOutputBinding {
+   Rc<Buffer> buffer;
+   uint64_t offset;
+   Rc<Buffer> counter;
++  uint32_t vertices_per_instance;
+ };
+ 
+ enum class EncoderType {
+@@ -479,6 +484,7 @@ public:
+     entry.buffer = std::move(buffer);
+     entry.offset = offset;
+     entry.counter = std::move(counter);
++    entry.vertices_per_instance = 0;
+   }
+   
+   void bindStreamOutputBufferOffset(unsigned slot, unsigned offset) {
+@@ -486,6 +492,10 @@ public:
+     entry.offset = offset;
+   }
+ 
++  void setStreamOutputVerticesPerInstance(unsigned slot, unsigned vertices) {
++    so_[slot].vertices_per_instance = vertices;
++  }
++
+   void
+   bindVertexBuffer(unsigned slot, unsigned offset, unsigned stride, Rc<Buffer> &&buffer) {
+     auto &entry = vbuf_[slot];
+@@ -907,6 +917,14 @@ private:
+   WMT::Reference<WMT::Buffer> dummy_cbuffer_;
+   void *dummy_cbuffer_host_;
+   WMTBufferInfo dummy_cbuffer_info_;
++  /* Zeroed 1x1 textures for unbound SRV texture slots, per declared kind (airconv's ResourceType), scalar type and
++     depth; created on first use by the encoder thread. */
++  struct DummyTexture {
++    WMT::Reference<WMT::Texture> texture;
++    uint64_t gpu_resource_id = 0;
++  };
++  DummyTexture dummy_textures_[10][3][2];
++  const DummyTexture *dummyTexture(uint32_t argument_flags);
+ 
+   EncoderData encoder_head = {EncoderType::Null, nullptr, ~0ull};
+   EncoderData *encoder_last = &encoder_head;
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 9be8312..ee70d8b 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -103,10 +103,47 @@ _NSAutoreleasePool_alloc_init(void *obj) {
+   return STATUS_SUCCESS;
+ }
+ 
++/* Logs which encoders of a failed command buffer faulted (label + state), for the first few failures:
++ * a GPU page fault or hang is otherwise reported for the whole command buffer only. */
++static void
++log_failed_encoders(id<MTLCommandBuffer> cb) {
++  static atomic_int logged;
++  NSError *err = cb.error;
++  if (!err || err.code == MTLCommandBufferErrorNotPermitted || err.code == 4 /* SubmissionsIgnored */)
++    return;
++  if (atomic_fetch_add(&logged, 1) >= 16)
++    return;
++  static const char *states[] = {"unknown", "completed", "affected", "pending", "faulted"};
++  fprintf(stderr, "wmtr-gpu-fault: command buffer failed (%ld): %s\n", (long)err.code,
++          err.localizedDescription.UTF8String);
++  NSArray *infos = err.userInfo[MTLCommandBufferEncoderInfoErrorKey];
++  for (id<MTLCommandBufferEncoderInfo> info in infos) {
++    MTLCommandEncoderErrorState s = info.errorState;
++    fprintf(stderr, "wmtr-gpu-fault:   encoder %-9s %s%s\n", (unsigned)s < 5 ? states[s] : "?",
++            info.label.length ? info.label.UTF8String : "(no label)",
++            info.debugSignposts.count ? [[info.debugSignposts componentsJoinedByString:@" > "] UTF8String] : "");
++  }
++}
++
+ static NTSTATUS
+ _MTLCommandQueue_commandBuffer(void *obj) {
+   struct unixcall_generic_obj_obj_ret *params = obj;
+-  params->ret = (obj_handle_t)[(id<MTLCommandQueue>)params->handle commandBuffer];
++  /* WMTR_GPU_FAULT_INFO=1 (launcher environment): per-encoder fault reports; off by default */
++  static int fault_info = -1;
++  if (fault_info < 0) {
++    const char *v = getenv("WMTR_GPU_FAULT_INFO");
++    fault_info = v && v[0] == '1';
++  }
++  if (!fault_info) {
++    params->ret = (obj_handle_t)[(id<MTLCommandQueue>)params->handle commandBuffer];
++    return STATUS_SUCCESS;
++  }
++  MTLCommandBufferDescriptor *desc = [[MTLCommandBufferDescriptor alloc] init];
++  desc.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
++  id<MTLCommandBuffer> cb = [(id<MTLCommandQueue>)params->handle commandBufferWithDescriptor:desc];
++  [desc release];
++  [cb addCompletedHandler:^(id<MTLCommandBuffer> done) { log_failed_encoders(done); }];
++  params->ret = (obj_handle_t)cb;
+   return STATUS_SUCCESS;
+ }
+ 

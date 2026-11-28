@@ -12,6 +12,8 @@
 #include <pthread.h>
 #include <time.h>
 #include <setjmp.h>
+#include <execinfo.h>
+#include <unistd.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <unistd.h>
@@ -170,6 +172,10 @@ struct wmtr_host {
   /* VR export (call 146); owned when created from the environment */
   struct wmtr_vr *_Atomic vr;
   int owns_vr;
+  /* parsed shaders (SM50Initialize) the client has not destroyed: freed with the client, or a game that exits
+   * leaves its whole shader IR behind (Overwatch: ~8 GB per game session) */
+  pthread_mutex_t sm50_lock;
+  CFMutableSetRef sm50_live;
 };
 
 static int log_level = 1;
@@ -191,6 +197,12 @@ static struct sigaction prev_segv, prev_bus;
 static void
 fault_handler(int sig, siginfo_t *si, void *uc) {
   if (fault_jmp) { fault_addr = si ? si->si_addr : NULL; siglongjmp(*fault_jmp, sig); }
+  { /* uncontained: leave the stack in the log before the previous handler / default action */
+    static const char m[] = "wmtr-host: fatal signal outside a call, backtrace:\n";
+    write(2, m, sizeof m - 1);
+    void *frames[48];
+    backtrace_symbols_fd(frames, backtrace(frames, 48), 2);
+  }
   struct sigaction *prev = sig == SIGBUS ? &prev_bus : &prev_segv;
   if (prev->sa_flags & SA_SIGINFO) { prev->sa_sigaction(sig, si, uc); return; }
   if (prev->sa_handler != SIG_DFL && prev->sa_handler != SIG_IGN) { prev->sa_handler(sig); return; }
@@ -388,6 +400,38 @@ callstats_on(void) {
   static pthread_once_t once = PTHREAD_ONCE_INIT;
   if (__builtin_expect(!__atomic_load_n(&cs_state, __ATOMIC_ACQUIRE), 0)) pthread_once(&once, callstats_init);
   return __atomic_load_n(&cs_state, __ATOMIC_RELAXED) == 1;
+}
+
+/* Wall-clock "HH:MM:SS.mmm" for logs that are lined up with the launcher's long-frame lines. */
+static void
+wall_time(char out[16]) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  struct tm tm;
+  localtime_r(&ts.tv_sec, &tm);
+  snprintf(out, 16, "%02d:%02d:%02d.%03ld", tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
+}
+
+/* Always on: one call that keeps the executor (and so every later call of the ring) busy for 100 ms or more. */
+static void
+log_slow_call(uint16_t call, uint64_t ns) {
+  if (ns < 100000000ull) return;
+  char t[16];
+  wall_time(t);
+  LOG(0, "slow call: %s (%u) took %llu ms, done at %s\n", call < WMTR_NCALLS && call_name[call] ? call_name[call] : "?", call,
+      (unsigned long long)(ns / 1000000), t);
+}
+
+/* Always on: a command buffer whose GPU work took 100 ms or more. */
+static void
+log_slow_gpu_on_completion(id<MTLCommandBuffer> cb) {
+  [cb addCompletedHandler:^(id<MTLCommandBuffer> b) {
+    double ms = (b.GPUEndTime - b.GPUStartTime) * 1000;
+    if (ms < 100) return;
+    char t[16];
+    wall_time(t);
+    LOG(0, "slow gpu: command buffer ran %.0f ms on the GPU, done at %s\n", ms, t);
+  }];
 }
 
 static inline void
@@ -854,6 +898,301 @@ push_event(WMTRCallbackState *state, uint64_t listener, uint64_t event_handle) {
   pthread_mutex_unlock(&state->lock);
 }
 
+
+/* Deferred release. DXMT reaches most buffers and textures through argument buffers (GPU addresses), which
+ * Metal does not retain for a command buffer, so a resource released while committed GPU work still reads it
+ * gets its GPU mapping torn down under that work (kIOGPUCommandBufferCallbackErrorPageFault, then the process
+ * is blocked). Released MTLResources are held until every command buffer committed before the release has
+ * completed (released at once when none is in flight). WMTR_DEFER_RELEASE=0 turns it off. */
+#define DR_WINDOW 8192 /* command buffers in flight at most; more just completes the oldest flags late */
+static pthread_mutex_t dr_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t dr_committed, dr_done_wm; /* every command buffer numbered <= dr_done_wm has completed */
+static uint8_t dr_done[DR_WINDOW];
+static struct dr_item { id obj; uint64_t after; int last; } *dr_items;
+static int qr_enabled(void);
+static void qr_failed(id<MTLCommandBuffer> cb);
+static void qr_created(id<MTLCommandQueue> q, uint64_t max_cbs);
+static void ar_drop(id obj);
+static size_t dr_n, dr_cap;
+
+static int
+dr_enabled(void) {
+  static int on = -1;
+  if (on < 0) { const char *v = getenv("WMTR_DEFER_RELEASE"); on = !(v && v[0] == '0'); }
+  return on;
+}
+
+static void
+dr_complete(uint64_t seq) {
+  struct dr_item *ready = NULL;
+  size_t n_ready = 0;
+  pthread_mutex_lock(&dr_lock);
+  dr_done[seq % DR_WINDOW] = 1;
+  while (dr_done_wm < dr_committed && dr_done[(dr_done_wm + 1) % DR_WINDOW]) {
+    dr_done[(dr_done_wm + 1) % DR_WINDOW] = 0;
+    dr_done_wm++;
+  }
+  size_t keep = 0;
+  for (size_t i = 0; i < dr_n; i++) {
+    if (dr_items[i].after > dr_done_wm) { dr_items[keep++] = dr_items[i]; continue; }
+    if (!ready) ready = malloc(dr_n * sizeof *ready);
+    if (ready) ready[n_ready++] = dr_items[i];
+    else dr_items[keep++] = dr_items[i]; /* retried at the next completion */
+  }
+  dr_n = keep;
+  pthread_mutex_unlock(&dr_lock);
+  for (size_t i = 0; i < n_ready; i++) {
+    if (ready[i].last) ar_drop(ready[i].obj);
+    [ready[i].obj release];
+  }
+  free(ready);
+}
+
+/* executor thread, before the command buffer commits */
+static void
+dr_track_commit(id<MTLCommandBuffer> cb) {
+  if (!cb) return;
+  if (qr_enabled())
+    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) { if (done.error) qr_failed(done); }];
+  if (!dr_enabled()) return;
+  pthread_mutex_lock(&dr_lock);
+  uint64_t seq = ++dr_committed;
+  pthread_mutex_unlock(&dr_lock);
+  [cb addCompletedHandler:^(id<MTLCommandBuffer> done) { (void)done; dr_complete(seq); }];
+}
+
+/* executor thread: 1 when the release was taken over (released later, by dr_complete) */
+/* WMTR_DEFER_TEXTURES=N: textures are held N command buffers longer (a freed texture read through an argument
+ * buffer page-faults the GPU and blocks the queue; a freed buffer's address does not) */
+static uint64_t
+dr_texture_extra(void) {
+  static long long n = -1;
+  if (n < 0) { const char *v = getenv("WMTR_DEFER_TEXTURES"); n = v ? atoll(v) : 0; if (n < 0) n = 0; }
+  return (uint64_t)n;
+}
+
+static int
+dr_defer_release(id obj, int last) {
+  if (!dr_enabled() || !obj || ![obj conformsToProtocol:@protocol(MTLResource)]) return 0;
+  uint64_t extra = [obj conformsToProtocol:@protocol(MTLTexture)] ? dr_texture_extra() : 0;
+  pthread_mutex_lock(&dr_lock);
+  if (!extra && dr_done_wm >= dr_committed) { pthread_mutex_unlock(&dr_lock); return 0; } /* no GPU work in flight */
+  if (dr_n == dr_cap) {
+    size_t cap = dr_cap ? 2 * dr_cap : 1024;
+    struct dr_item *q = realloc(dr_items, cap * sizeof *q);
+    if (!q) { pthread_mutex_unlock(&dr_lock); return 0; }
+    dr_items = q; dr_cap = cap;
+  }
+  dr_items[dr_n++] = (struct dr_item){obj, dr_committed + extra, last};
+  pthread_mutex_unlock(&dr_lock);
+  return 1;
+}
+
+
+/* All-resident experiment (WMTR_RESIDENT_ALL=1): every buffer, texture and heap the client creates joins one
+ * residency set that every command buffer uses, until the client's last reference to it is released. Tests
+ * whether GPU page faults come from resources reached through argument buffers but never made resident.
+ * The set retains its allocations, so the client's references are counted here (create/retain +1, release -1). */
+static pthread_mutex_t ar_lock = PTHREAD_MUTEX_INITIALIZER;
+static id<MTLResidencySet> ar_set;
+static CFMutableDictionaryRef ar_refs; /* allocation -> client references */
+static int ar_dirty;
+
+static int
+ar_enabled(void) {
+  static int on = -1;
+  if (on < 0) { const char *v = getenv("WMTR_RESIDENT_ALL"); on = v && v[0] == '1'; }
+  return on;
+}
+
+/* executor thread: a resource-creating call returned obj */
+static void
+ar_created(id obj) {
+  if (!ar_enabled() || !obj || ![obj conformsToProtocol:@protocol(MTLAllocation)]) return;
+  pthread_mutex_lock(&ar_lock);
+  if (!ar_set) {
+    MTLResidencySetDescriptor *d = [[MTLResidencySetDescriptor alloc] init];
+    ar_set = [[(id<MTLResource>)obj device] newResidencySetWithDescriptor:d error:nil];
+    [d release];
+    ar_refs = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+    LOG(0, "all-resident residency set %s\n", ar_set ? "created" : "FAILED");
+  }
+  if (ar_set) {
+    [ar_set addAllocation:(id<MTLAllocation>)obj];
+    CFDictionarySetValue(ar_refs, (const void *)obj, (const void *)(uintptr_t)1);
+    ar_dirty = 1;
+  }
+  pthread_mutex_unlock(&ar_lock);
+}
+
+/* executor thread: the client retains (+1) or releases (-1) obj; 1 when that release was the client's last */
+static int
+ar_client_ref(id obj, int delta) {
+  if (!ar_set) return 0;
+  int last = 0;
+  pthread_mutex_lock(&ar_lock);
+  const void *v;
+  if (ar_refs && CFDictionaryGetValueIfPresent(ar_refs, (const void *)obj, &v)) {
+    intptr_t n = (intptr_t)v + delta;
+    CFDictionarySetValue(ar_refs, (const void *)obj, (const void *)n);
+    last = n <= 0;
+  }
+  pthread_mutex_unlock(&ar_lock);
+  return last;
+}
+
+/* before obj's last client reference goes: out of the set (the set's own reference with it) */
+static void
+ar_drop(id obj) {
+  if (!ar_set) return;
+  pthread_mutex_lock(&ar_lock);
+  if (ar_refs && CFDictionaryContainsKey(ar_refs, (const void *)obj)) {
+    CFDictionaryRemoveValue(ar_refs, (const void *)obj);
+    [ar_set removeAllocation:(id<MTLAllocation>)obj];
+    ar_dirty = 1;
+  }
+  pthread_mutex_unlock(&ar_lock);
+}
+
+/* executor thread, before a command buffer commits */
+static void
+ar_use(id<MTLCommandBuffer> cb) {
+  if (!ar_set || !cb) return;
+  pthread_mutex_lock(&ar_lock);
+  if (ar_dirty) { [ar_set commit]; ar_dirty = 0; }
+  [cb useResidencySet:ar_set];
+  pthread_mutex_unlock(&ar_lock);
+}
+
+static void
+ar_after_call(struct wmtr_host *h, uint16_t call, uint8_t *params) {
+  if (call == 74 || call == 75) {
+    pthread_mutex_lock(&h->sm50_lock);
+    if (call == 74) {
+      struct sm50_initialize_params *p = (void *)params;
+      if (!p->ret && p->shader && *p->shader) CFSetAddValue(h->sm50_live, (const void *)*p->shader);
+    } else {
+      CFSetRemoveValue(h->sm50_live, (const void *)((struct sm50_destroy_params *)params)->shader);
+    }
+    pthread_mutex_unlock(&h->sm50_lock);
+    return;
+  }
+  if (call == 9) {
+    struct unixcall_generic_obj_uint64_obj_ret *p = (void *)params;
+    qr_created((id<MTLCommandQueue>)(uintptr_t)p->ret, p->arg);
+    return;
+  }
+  if (!ar_enabled()) return;
+  obj_handle_t ret = 0;
+  switch (call) {
+  case 18: ret = ((struct unixcall_mtldevice_newbuffer *)params)->ret; break;
+  case 21: case 120: ret = ((struct unixcall_mtldevice_newtexture *)params)->ret; break;
+  case 22: ret = ((struct unixcall_mtlbuffer_newtexture *)params)->ret; break;
+  case 23: ret = ((struct unixcall_mtltexture_newtextureview *)params)->ret; break;
+  case 138: ret = ((struct unixcall_mtldevice_newheap *)params)->ret; break; /* placed resources: via their heap */
+  default: return;
+  }
+  ar_created((id)(uintptr_t)ret);
+}
+
+
+/* Queue recovery (on unless WMTR_QUEUE_RECOVERY=0). After a GPU page fault or hang macOS ignores every later
+ * command buffer of that queue ("SubmissionsIgnored"): the picture freezes for good. A new queue of the same
+ * device is not affected, so once a queue's command buffer fails, the next commandBuffer call of the client's
+ * queue is served by a fresh replacement (with the residency sets the client attached). */
+#define QR_MAX 16
+static pthread_mutex_t qr_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct qr_queue {
+  id<MTLCommandQueue> client, current; /* current: the queue that serves the client's queue now */
+  uint64_t max_cbs;
+  id<MTLResidencySet> sets[4];
+  int n_sets, failed, replacements;
+} qr_queues[QR_MAX];
+static int qr_n;
+
+static int
+qr_enabled(void) {
+  static int on = -1;
+  if (on < 0) { const char *v = getenv("WMTR_QUEUE_RECOVERY"); on = !(v && v[0] == '0'); }
+  return on;
+}
+
+static struct qr_queue *
+qr_find(id q) { /* qr_lock held */
+  for (int i = 0; i < qr_n; i++)
+    if (qr_queues[i].client == q || qr_queues[i].current == q) return &qr_queues[i];
+  return NULL;
+}
+
+static void
+qr_created(id<MTLCommandQueue> q, uint64_t max_cbs) {
+  if (!qr_enabled() || !q) return;
+  pthread_mutex_lock(&qr_lock);
+  if (qr_n < QR_MAX) qr_queues[qr_n++] = (struct qr_queue){.client = q, .current = q, .max_cbs = max_cbs};
+  pthread_mutex_unlock(&qr_lock);
+}
+
+static void
+qr_residency_set(id q, id<MTLResidencySet> set) {
+  pthread_mutex_lock(&qr_lock);
+  struct qr_queue *e = qr_find(q);
+  if (e && e->n_sets < 4) e->sets[e->n_sets++] = set;
+  pthread_mutex_unlock(&qr_lock);
+}
+
+/* any thread: a command buffer completed with an error */
+static void
+qr_failed(id<MTLCommandBuffer> cb) {
+  NSInteger code = cb.error.code;
+  if (code != 2 /* hang/timeout */ && code != 3 /* page fault */ && code != 4 /* submissions ignored */)
+    return;
+  pthread_mutex_lock(&qr_lock);
+  struct qr_queue *e = qr_find(cb.commandQueue);
+  if (e && e->current == cb.commandQueue) e->failed = 1;
+  pthread_mutex_unlock(&qr_lock);
+}
+
+/* executor thread, call 11: the queue to take the command buffer from (a replacement once the queue failed) */
+static id<MTLCommandQueue>
+qr_queue_for(id<MTLCommandQueue> client) {
+  pthread_mutex_lock(&qr_lock);
+  struct qr_queue *e = qr_find(client);
+  id<MTLCommandQueue> q = e ? e->current : client;
+  /* WMTR_QUEUE_SWITCH_EVERY=N (test): replace the queue every N command buffers, as after a GPU error */
+  static long long every = -1, calls;
+  if (every < 0) { const char *v = getenv("WMTR_QUEUE_SWITCH_EVERY"); every = v ? atoll(v) : 0; }
+  if (e && every > 0 && ++calls % every == 0) e->failed = 1;
+  if (e && e->failed) {
+    /* at most QR_BURST recoveries per QR_WINDOW_S: a fault in every frame would pile up queues of failing work
+     * (that wedged the GPU driver: the process could not exit); past the budget the queue stays blocked */
+    enum { QR_BURST = 3, QR_WINDOW_S = 30 };
+    static uint64_t recent[QR_BURST];
+    static int gave_up_logged;
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    int i_oldest = 0;
+    for (int i = 1; i < QR_BURST; i++) if (recent[i] < recent[i_oldest]) i_oldest = i;
+    if (recent[i_oldest] && now - recent[i_oldest] < (uint64_t)QR_WINDOW_S * 1000000000ull) {
+      if (!gave_up_logged++) LOG(0, "queue recovery: %d GPU errors within %d s, pausing recovery (the queue stays blocked)\n",
+                                 QR_BURST + 1, QR_WINDOW_S);
+      pthread_mutex_unlock(&qr_lock);
+      return q;
+    }
+    recent[i_oldest] = now;
+    id<MTLCommandQueue> fresh = [client.device newCommandQueueWithMaxCommandBufferCount:e->max_cbs];
+    if (fresh) {
+      for (int i = 0; i < e->n_sets; i++) [fresh addResidencySet:e->sets[i]];
+      if (e->current != e->client) [e->current release];
+      e->current = q = fresh;
+      e->replacements++;
+      LOG(0, "queue recovery: queue %p blocked by a GPU error, continuing on a new queue (#%d)\n", (void *)client,
+          e->replacements);
+    }
+    e->failed = 0;
+  }
+  pthread_mutex_unlock(&qr_lock);
+  return q;
+}
+
 static NTSTATUS
 host_call(struct wmtr_host *h, uint16_t call, uint8_t *params, const struct wmtr_req_ext *r, const uint32_t *relocs,
           const uint64_t *orig) {
@@ -876,9 +1215,42 @@ host_call(struct wmtr_host *h, uint16_t call, uint8_t *params, const struct wmtr
   switch (call) {
   case 0: /* NSObject_retain */
     if (is_vpool(h, *(uint64_t *)params)) return STATUS_SUCCESS;
+    ar_client_ref((id)(uintptr_t)*(uint64_t *)params, +1);
     break;
   case 1: /* NSObject_release: a virtual pool drains */
     if (is_vpool(h, *(uint64_t *)params)) { vpool_pop(h, (struct vpool *)(uintptr_t)*(uint64_t *)params); return STATUS_SUCCESS; }
+    {
+      id obj = (id)(uintptr_t)*(uint64_t *)params;
+      int last = ar_client_ref(obj, -1);
+      if (dr_defer_release(obj, last)) return STATUS_SUCCESS; /* ar_drop at the deferred release */
+      if (last) ar_drop(obj);
+    }
+    break;
+  case 11: /* MTLCommandQueue_commandBuffer: from a replacement queue once the client's queue failed */
+    if (qr_enabled()) {
+      struct unixcall_generic_obj_obj_ret *p = (void *)params;
+      obj_handle_t client = p->handle;
+      obj_handle_t serving = (obj_handle_t)qr_queue_for((id<MTLCommandQueue>)(uintptr_t)client);
+      if (serving != client) {
+        /* the params keep naming the client's queue: object bookkeeping walks them after the call */
+        p->handle = serving;
+        NTSTATUS st = ((impl_fn)wmtr_impl_funcs[11])(params);
+        p->handle = client;
+        if (st == STATUS_SUCCESS) keep_autoreleased(h, r->h.slot, call, params); /* the command buffer is autoreleased */
+        return st;
+      }
+    }
+    break;
+  case 137: /* MTLCommandQueue_addResidencySet: also on the queue serving it now, and on later replacements */
+    if (qr_enabled()) {
+      struct unixcall_generic_obj_obj_noret *p = (void *)params;
+      qr_residency_set((id)(uintptr_t)p->handle, (id<MTLResidencySet>)(uintptr_t)p->arg);
+    }
+    break;
+  case 12: /* MTLCommandBuffer_commit */
+    ar_use((id<MTLCommandBuffer>)(uintptr_t)*(uint64_t *)params);
+    dr_track_commit((id<MTLCommandBuffer>)(uintptr_t)*(uint64_t *)params);
+    log_slow_gpu_on_completion((id<MTLCommandBuffer>)(uintptr_t)*(uint64_t *)params);
     break;
   case 10: /* NSAutoreleasePool_alloc_init */
     ((struct unixcall_generic_obj_ret *)params)->ret =
@@ -1115,10 +1487,11 @@ execute(struct wmtr_host *h, uint8_t *rec, uint32_t len) {
         if (sigsetjmp(jb, 1) == 0) {
           fault_jmp = &jb;
           int cs = callstats_on();
-          uint64_t t0 = cs ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
+          uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
           @autoreleasepool {
             @try {
               st = host_call(h, r->h.call, payload, r, relocs, orig);
+              if (st == STATUS_SUCCESS) ar_after_call(h, r->h.call, payload);
               if (object_checks(h) && st == STATUS_SUCCESS) {
                 walk.mode = OBJECT_EXPORT;
                 pthread_mutex_lock(&h->object_lock);
@@ -1136,7 +1509,9 @@ execute(struct wmtr_host *h, uint8_t *rec, uint32_t len) {
               st = STATUS_INVALID_PARAMETER;
             }
           }
-          if (cs) callstats_add(r->h.call, r->h.flags & WMTR_F_SYNC, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0);
+          uint64_t call_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0;
+          if (cs) callstats_add(r->h.call, r->h.flags & WMTR_F_SYNC, call_ns);
+          log_slow_call(r->h.call, call_ns);
           fault_jmp = NULL;
           if (cid) handle_created(h, r, payload, cid);
           uint32_t ti = atomic_fetch_add(&h->trace_n, 1) % 128;
@@ -1241,7 +1616,16 @@ executor(void *arg) {
       j->h = h; j->len = hdr.size; j->copy = calloc(1, hdr.size + WMTR_COPY_SLACK);
       memcpy(j->copy, scratch, hdr.size);
       atomic_fetch_add(&h->n_worker, 1);
-      dispatch_async_f(cls == WMTR_CLASS_B ? h->block_q : h->compile_q, j, job_run);
+      if (cls == WMTR_CLASS_B) { dispatch_async_f(h->block_q, j, job_run); continue; }
+      /* Compile priority: a compute pipeline is always waited for by the frame (DXMT never skips it), while
+       * graphics pipelines and shader translations can be skipped (DXMT_ASYNC_PIPELINES). A burst of 40+ graphics
+       * compiles at match start ran at the executor's priority and made each compile, and the one compute pipeline
+       * the frame waited on, take 100-900 ms (a 500-700 ms freeze). Graphics work now runs at utility QoS, which
+       * the Metal compiler service inherits; compute stays user-interactive. */
+      qos_class_t qos = hdr.call == 29 ? QOS_CLASS_USER_INTERACTIVE : QOS_CLASS_UTILITY;
+      dispatch_block_t b = dispatch_block_create_with_qos_class(DISPATCH_BLOCK_ENFORCE_QOS_CLASS, qos, 0, ^{ job_run(j); });
+      dispatch_async(h->compile_q, b);
+      Block_release(b);
       continue;
     }
     execute(h, scratch, hdr.size);
@@ -1325,6 +1709,8 @@ wmtr_host_create(void *ring, const struct wmtr_host_ops *ops, void *ctx) {
   pthread_mutexattr_init(&recursive);
   pthread_mutexattr_settype(&recursive, PTHREAD_MUTEX_RECURSIVE);
   pthread_mutex_init(&h->object_lock, &recursive);
+  pthread_mutex_init(&h->sm50_lock, NULL);
+  h->sm50_live = CFSetCreateMutable(NULL, 0, NULL);
   pthread_mutexattr_destroy(&recursive);
 #ifdef WMTR_TESTING
   h->strict_objects = getenv("WMTR_TEST_STRICT_OBJECTS") != NULL;
@@ -1394,6 +1780,25 @@ wmtr_host_destroy(struct wmtr_host *h) {
   /* overflow frees are of no use to a client that is gone; no deallocator can add one now
    * (push_free saw host == NULL above and the executor has been joined) */
   pthread_mutex_lock(&h->callbacks->lock);
+  /* the compile/blocking queues are drained (barriers above): no call can still use a parsed shader */
+  if (h->sm50_live) {
+    CFIndex n = CFSetGetCount(h->sm50_live);
+    if (n) {
+      const void **all = malloc((size_t)n * sizeof *all);
+      if (all) {
+        CFSetGetValues(h->sm50_live, all);
+        impl_fn destroy = (impl_fn)wmtr_impl_funcs[75]; /* SM50Destroy, as the client's call would run it */
+        for (CFIndex i = 0; destroy && i < n; i++) {
+          struct sm50_destroy_params dp = {.shader = (sm50_shader_t)all[i]};
+          destroy(&dp);
+        }
+        free(all);
+        LOG(1, "freed %ld parsed shaders the client left\n", (long)n);
+      }
+    }
+    CFRelease(h->sm50_live);
+    h->sm50_live = NULL;
+  }
   free(h->free_ovf); h->free_ovf = NULL;
   h->n_free_ovf = h->cap_free_ovf = 0;
   atomic_store_explicit(&h->n_free_ovf_hint, 0, memory_order_relaxed);

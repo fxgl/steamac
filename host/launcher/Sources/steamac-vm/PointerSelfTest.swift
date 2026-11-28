@@ -147,6 +147,16 @@ enum PointerSelfTest {
             check("cursor policy mode=\(mode.rawValue), captured=\(captured)",
                   WindowController.hostCursorShouldBeHidden(mouseMode: mode, captured: captured) == want)
         }
+        // A focused game never gets the anchoring jump: stale estimates sync to the reported cursor.
+        let start = WindowController.gameCursorStart
+        expect("game, unknown cursor, no report: under the pointer",
+               start(false, nil, (300, 200), false, nil), (300, 200))
+        expect("game, stale, cursor shown and reported: reported position",
+               start(true, (10, 10), (300, 200), true, (290, 205)), (290, 205))
+        expect("game, stale, mouse-look (hidden): keeps the estimate, no jump",
+               start(true, (10, 10), (300, 200), false, (290, 205)), (10, 10))
+        expect("game, fresh estimate: kept",
+               start(false, (120, 80), (300, 200), true, (290, 205)), (120, 80))
         do {
             let picture = CAMetalLayer(), game = CAMetalLayer(), ordinary = CALayer()
             picture.bounds = CGRect(x: 0, y: 0, width: 1200, height: 750)

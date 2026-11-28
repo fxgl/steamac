@@ -574,6 +574,19 @@ wmtr_find_nt_set_event(void) {
   return f;
 }
 
+/* Stop markers read by another device's listener thread, until their own thread takes them (under event_lock).
+ * shortcut: fixed size; more than 16 listeners stopping at once overwrites the oldest entry. */
+#define WMTR_STOPPED_MAX 16
+static uint64_t stopped_listeners[WMTR_STOPPED_MAX];
+static unsigned stopped_next;
+
+static int
+take_stopped(uint64_t listener) {
+  for (unsigned i = 0; i < WMTR_STOPPED_MAX; i++)
+    if (stopped_listeners[i] == listener) { stopped_listeners[i] = 0; return 1; }
+  return 0;
+}
+
 static NTSTATUS
 listener_run(uint64_t listener) {
   static pNtSetEvent set_event;
@@ -584,17 +597,22 @@ listener_run(uint64_t listener) {
     pthread_mutex_lock(&event_lock);
     uint64_t t = R->event_tail;
     uint64_t h = __atomic_load_n(&R->event_head, __ATOMIC_ACQUIRE);
-    int stop = 0;
+    /* All listener threads (one per DXMT device; games can have several) drain the one ring. Every event is a
+     * Win32 event of this process, so whichever thread reads it sets it; a stop marker for another device is
+     * kept for that device's thread instead of being dropped (dropping it left that thread waiting forever and
+     * hung ~CommandQueue's join at exit). */
     for (; t < h; t++) {
       struct wmtr_event e = R->event_ring[t % WMTR_EVENT_RING];
-      if (e.listener != listener) continue; /* one listener per device in DXMT; others are dropped */
-      if (!e.event_handle) { stop = 1; continue; }
-      set_event((void *)(uintptr_t)e.event_handle, NULL);
+      if (e.event_handle) { set_event((void *)(uintptr_t)e.event_handle, NULL); continue; }
+      stopped_listeners[stopped_next++ % WMTR_STOPPED_MAX] = e.listener;
     }
     __atomic_store_n(&R->event_tail, t, __ATOMIC_RELEASE);
+    int stop = take_stopped(listener);
     pthread_mutex_unlock(&event_lock);
     if (stop) return STATUS_SUCCESS;
-    T->wait(T, &R->event_head, t + 1, WMTR_EVENT_SLOT, 0); /* events come once or twice a frame */
+    /* A stop marker taken by another thread advanced event_head past every waiter's t, so its owner wakes here
+     * (v_wait rechecks at least every 100 ms) and finds it in stopped_listeners. */
+    T->wait(T, &R->event_head, t + 1, WMTR_EVENT_SLOT, 0);
   }
 }
 
