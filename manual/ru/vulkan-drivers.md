@@ -87,6 +87,9 @@ KosmicKrisp не поддерживает и у которого нет сост
 `kk_gather_program` читал его как NULL; `REPRO_CASE=sentry-cg-mesh`). Пулы запросов окклюзии хранят индексы в
 памяти хоста: перезаписанный индекс, видимый GPU (после ошибки адреса GPU в AC Valhalla, STEAMAC-7C/7D),
 пишется в журнал и восстанавливается, а не роняет `vkResetQueryPool`; кто его перезаписал, пока не известно.
+Запись начинает новый командный буфер Metal каждые 4096 энкодеров: Metal 4 отклонял буфер с 30 721 проходом
+рендеринга Black Mesa при коммите с OutOfMemory и не выполнял ничего (STEAMAC-G/CT; M1 Max — после ~37 000;
+`REPRO_CASE=sentry-ct-encoders`).
 Запасной барьер Mesa на macOS мог навсегда подвесить `util_queue_finish` при закрытии устройства
 (дисковый кэш шейдеров); `host/kosmickrisp/test/util_queue_finish.c` запускается при сборке KosmicKrisp.
 MoltenVK: конвейер с блендингом вложения, которое Metal не умеет блендить (R32_UINT), не создаётся

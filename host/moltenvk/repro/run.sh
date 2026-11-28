@@ -233,6 +233,10 @@
 # Metal's "not color renderable" descriptor validation; an RGBA8 control draws 16 green pixels.
 # sentry-cg-mesh.c (KosmicKrisp only, REPRO_CASE=sentry-cg-mesh; STEAMAC-CG/CH): a mesh + fragment pipeline, which has no
 # input assembly state, must fail creation on a driver without mesh shading instead of faulting kk_gather_program.
+# sentry-ct-encoders.c (KosmicKrisp only, REPRO_CASE=sentry-ct-encoders; STEAMAC-G/CT): 40,000 clear-only render
+# passes and 40,000 dependent buffer copies in one command buffer; Metal 4 failed the single Metal command buffer at
+# commit with OutOfMemory (nothing ran, M1 Max: past ~37,000 render passes) until KosmicKrisp split it every 4096
+# encoders. Every copy must see the one before it. Uses several GB of command-allocator storage.
 # queue_residency.c (REPRO_CASE=queue-residency; STEAMAC-3/D8/D9): 40 VkDevices alive at once on one physical
 # device each fill and read back their own buffer, then half are replaced; MoltenVK aborted at the 33rd
 # (32 residency sets per shared MTLCommandQueue).
@@ -384,6 +388,12 @@ if [ "${REPRO_CASE:-}" = sentry-cg-mesh ]; then
 	glslangValidator -V --quiet -x "$here/shaders/sentry_ah.frag" -o "$work/sentry_ah.frag.inc"
 	build sentry-cg-mesh -I"$work"
 	"$work/sentry-cg-mesh"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-ct-encoders ]; then
+	[ "$driver" = kosmickrisp ] || { echo "sentry-ct-encoders requires KosmicKrisp" >&2; exit 2; }
+	build sentry-ct-encoders
+	"$work/sentry-ct-encoders"
 	exit
 fi
 if [ "${REPRO_CASE:-}" = sentry-ag ]; then

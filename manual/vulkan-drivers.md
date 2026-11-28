@@ -82,7 +82,9 @@ creation, logged, instead of Metal aborting with “not color renderable” (STE
 no input assembly state (STEAMAC-CG/CH, Final Fantasy VII Rebirth: `kk_gather_program` read it as NULL;
 `REPRO_CASE=sentry-cg-mesh`). Occlusion query pools keep their heap indices in host memory, so an
 overwritten GPU-visible index (after a GPU address fault in AC Valhalla, STEAMAC-7C/7D) is logged and
-restored instead of crashing `vkResetQueryPool`; what wrote it is not yet known.
+restored instead of crashing `vkResetQueryPool`; what wrote it is not yet known. A recording starts another
+Metal command buffer every 4096 encoders: Metal 4 failed one with Black Mesa's 30,721 render passes at commit
+with OutOfMemory and ran none of it (STEAMAC-G/CT; an M1 Max fails past ~37,000; `REPRO_CASE=sentry-ct-encoders`).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are

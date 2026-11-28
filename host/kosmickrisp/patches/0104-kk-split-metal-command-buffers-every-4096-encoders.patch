@@ -1,0 +1,123 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 13:00:00 +0000
+Subject: [PATCH] kk: split Metal command buffers every 4096 encoders
+
+STEAMAC-G/CT (1.9.15, M4 Pro 24 GB, Black Mesa's native Linux renderer
+through Zink): "kk: it failed with OutOfMemory and had 30721 render passes,
+961 compute encoders, 30720 draws (30720 indirect) ... 1 Metal command
+buffers", 0.0 ms on the GPU, then device loss and the game's abort. Two
+events, the same shape.
+
+Metal 4 fails a command buffer with too many render encoders at commit and
+nothing in it runs; vkQueueWaitIdle still succeeds, the failure only shows
+in the commit feedback. On an M1 Max one command buffer runs 36,864
+clear-only render passes (6.4 GB of allocator storage) and fails at 38,912
+(6.8 GB); 20,000 render passes with 20,000 compute encoders between them
+run. The M4 Pro failed lower, with ~2 GiB of storage: not a byte budget.
+
+Before a new render or compute encoder of the main Metal command buffer,
+once it has 4096 encoders, the recording goes on in a new Metal command
+buffer on the same allocator, the way timestamp writes already split
+(0064, which now shares the switch). Only between encoders and never with a
+pre_gfx pass open: every encoder ends with a barrier after all its stages
+before all later queue stages, later command buffers included. One extra
+Metal command buffer (~55 us of GPU time) per 4096 encoders.
+
+Not addressed: Foundation's 45.5 GiB of allocator storage over 16,384
+pre_gfx-split Metal command buffers of 1-2 encoders each (STEAMAC-S).
+
+Regression: host/moltenvk/repro/sentry-ct-encoders.c (REPRO_CASE=
+sentry-ct-encoders): 40,000 clear-only render passes and 40,000 dependent
+buffer copies in one command buffer. 1.9.15 runs none of it (OutOfMemory);
+after, every copy sees the one before it.
+
+Generated-by: LLM
+---
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c | 53 ++++++++++++++++++++++++++++------
+ 1 file changed, 44 insertions(+), 9 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index e34d243..0fa3747 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -440,6 +440,26 @@ kk_cmd_next_cmd_buf_after_pre_gfx(struct kk_cmd_buffer *cmd)
+    cmd->metal.ts_writes = 0;
+ }
+ 
++/* The recording goes on in `next`, a new Metal command buffer on the same
++ * allocator. Only between encoders: every encoder ends with a barrier after
++ * all its stages before all later queue stages, later command buffers
++ * included, so the split keeps the order. */
++static void
++kk_cmd_switch_cmd_buf(struct kk_cmd_buffer *cmd, mtl_command_buffer *next)
++{
++   assert(cmd->metal.render == NULL && cmd->metal.compute == NULL &&
++          cmd->metal.pre_gfx.cmd_buf == NULL);
++   mtl_end_command_buffer(cmd->metal.cmd_buf);
++   mtl_begin_command_buffer(next, cmd->metal.allocator);
++   if (cmd->vk.base.object_name)
++      mtl_command_buffer_set_label(next, cmd->vk.base.object_name);
++   util_dynarray_append(&cmd->metal.cmd_bufs, next);
++   cmd->metal.cmd_buf = next;
++   cmd->metal.cmd_buf_used = false;
++   cmd->metal.ts_writes = 0;
++   cmd->metal.encoder_count = 0;
++}
++
+ /* About 4x below the M5 Pro's measured limit of 61,680 single-entry resolves.
+  * M1 Max survives 40,000 such writes but fails at 65,536. */
+ #define KK_TS_WRITES_PER_CMD_BUF 16384u
+@@ -458,15 +478,28 @@ kk_cmd_count_ts_writes(struct kk_cmd_buffer *cmd, uint32_t writes)
+       return;
+ 
+    cs_end(cmd);
+-   mtl_end_command_buffer(cmd->metal.cmd_buf);
+-   mtl_begin_command_buffer(next, cmd->metal.allocator);
+-   if (cmd->vk.base.object_name)
+-      mtl_command_buffer_set_label(next, cmd->vk.base.object_name);
+-   util_dynarray_append(&cmd->metal.cmd_bufs, next);
+-   cmd->metal.cmd_buf = next;
+-   cmd->metal.cmd_buf_used = false;
+-   cmd->metal.ts_writes = 0;
+-   cmd->metal.encoder_count = 0;
++   kk_cmd_switch_cmd_buf(cmd, next);
++}
++
++/* Metal 4 fails a command buffer with too many encoders at commit with
++ * OutOfMemory, and nothing in it runs (STEAMAC-G/CT: Black Mesa's 30,721
++ * render passes, 961 compute encoders and 30,720 indirect draws, M4 Pro 24 GB,
++ * ~2 GiB of allocator storage). An M1 Max runs 36,864 clear-only render
++ * passes (6.4 GB) and fails at 38,912 (6.8 GB), so it is not a byte budget.
++ * A Metal command buffer costs ~55 us of GPU time; one per 4096 encoders is
++ * noise next to the encoders themselves. */
++#define KK_ENCODERS_PER_CMD_BUF 4096u
++
++/* Before a new encoder of cmd_buf, none open */
++static void
++kk_cmd_split_if_full(struct kk_cmd_buffer *cmd)
++{
++   if (cmd->metal.encoder_count < KK_ENCODERS_PER_CMD_BUF)
++      return;
++
++   mtl_command_buffer *next = kk_cmd_pool_get_cmd_buf(kk_cmd_buffer_pool(cmd));
++   if (next != NULL)
++      kk_cmd_switch_cmd_buf(cmd, next);
+ }
+ 
+ /* A Metal command buffer of its own for the pre_gfx pass of the open render
+@@ -506,6 +539,7 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+ 
+    /* Ensure no other active encoder, aka compute */
+    cs_end(cmd);
++   kk_cmd_split_if_full(cmd);
+ 
+    /* A rendering whose draws recorded pre_gfx work (cs_get_pre_gfx) starts
+     * its render encoders that would follow other encoders in a Metal command
+@@ -592,6 +626,7 @@ cs_get_compute(struct kk_cmd_buffer *cmd)
+    }
+ 
+    if (cmd->metal.compute == NULL) {
++      kk_cmd_split_if_full(cmd);
+       cmd->metal.encoder_count++;
+       kk_cmd_note_storage(cmd, "compute", false);
+       cmd->metal.compute = mtl_new_compute_command_encoder(cmd->metal.cmd_buf);

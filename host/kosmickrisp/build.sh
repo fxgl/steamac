@@ -480,6 +480,11 @@
 #              and log (once per pool) and restore a GPU-visible entry something overwrote
 #              (STEAMAC-7C/7D: kk_ResetQueryPool read index 0xc4d80000 after a GPU address fault,
 #              AC Valhalla). Containment and diagnostics; the stray writer is not identified.
+#   0104       steamac: a recording starts another Metal command buffer (same allocator) every 4096
+#              encoders, between encoders and outside pre_gfx passes (STEAMAC-G/CT: Black Mesa's
+#              30,721 render passes in one Metal command buffer failed at commit with OutOfMemory
+#              and nothing ran; M1 Max fails past ~37,000 clear-only render passes, not a byte
+#              budget). Repro: REPRO_CASE=sentry-ct-encoders (40,000 render passes, dependent copies).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -720,6 +725,7 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0101 = steamac: pipelines with non-renderable color attachment formats fail, logged, instead of Metal aborting (STEAMAC-BN/D5)"
 	echo "  0102 = steamac: mesh/task pipelines and pipelines without input assembly state fail, logged (STEAMAC-CG/CH)"
 	echo "  0103 = steamac: occlusion query indices from a host copy; overwritten GPU-visible entries logged and restored (STEAMAC-7C/7D)"
+	echo "  0104 = steamac: Metal command buffers split every 4096 encoders; one with ~37k+ render passes ran nothing (STEAMAC-G/CT)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."
