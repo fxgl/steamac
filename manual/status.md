@@ -69,6 +69,9 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
   available or CoreAudio does not start within 200 ms, recording fails with an ordinary audio error
   instead of blocking the VM's sound control queue; playback is independent of capture (STEAMAC-8N/8P:
   a stuck capture start left the guest's capture buffers outstanding). Capture logs include the input
-  device and microphone permission state.
+  device and microphone permission state. The playback output unit is created while the guest boots:
+  on a cold CoreAudio creating it took 2 s, past the guest's 1 s control timeout, so the first
+  PCM_PREPARE timed out (STEAMAC-DA). A sound control request still running after 1 s is logged with
+  the CoreAudio step it is blocked in; a slow one that finishes logs its slowest step.
 - Anti-cheat systems that block VMs will not work.
 - `logicOp` is unavailable (the private Metal API in the MoltenVK fork does not build); zink emits a warning.

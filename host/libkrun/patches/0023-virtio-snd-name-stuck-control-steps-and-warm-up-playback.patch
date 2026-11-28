@@ -1,0 +1,492 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: steamac <steamac@local>
+Date: Sat, 28 Nov 2026 09:00:00 +0000
+Subject: [PATCH] virtio-snd: name stuck control steps and warm up playback
+
+STEAMAC-DA (M1, macOS 27.2.1): the guest logs "virtio_snd: control
+message (0x00000102) timeout" from 4 s after boot and then every ~6 s for
+minutes, without sound; launcher.log has no host-side virtio-snd line, so
+it is unknown which CoreAudio call PCM_PREPARE is blocked in.
+
+A watchdog thread now follows each control request on the virtio-snd
+worker. A request still running after the guest's 1 s timeout is logged
+once at warn while still blocked, with the host step it is in: the stream
+locks, output device lookup, AudioComponentInstanceNew/CurrentDevice,
+StreamFormat/ChannelMap, AudioUnitInitialize, AudioOutputUnitStart/Stop,
+latency query. A request that took over 250 ms logs its total and slowest
+step when it finishes. Only the request thread's steps count; the pump,
+capture and warm-up threads running the same setup do not relabel it.
+
+The watchdog's first end-to-end run on the development M1 Max found a cold
+CoreAudio: the first PCM_PREPARE spent 2069 ms in AudioComponentInstanceNew/
+CurrentDevice, and the guest timed out PREPARE and the SET_PARAMS behind it
+(as in the earlier boot-time timeout here). The playback output unit is
+now created by a warm-up thread when the backend starts, while the guest
+boots; PREPARE finds it (or waits on the stream lock while it is created).
+Its first configure rechecks the default output route, since route changes
+are only followed once a format exists.
+
+Tests: tests/macos_control_watchdog.rs checks a blocked request is reported
+while blocked and once, names its step and not another thread's, and fast
+requests log nothing. A throwaway VM with a 1.5 s injected PREPARE delay
+logged the stuck step and the completion; without it, the warm-up unit was
+used by the first PREPARE (34 ms, sound playing, no guest timeouts). The
+cold-CoreAudio case itself cannot be forced; the persistent DA timeouts are
+not explained by it alone.
+---
+ src/devices/src/virtio/snd/audio_backends.rs       |  44 +++++
+ .../virtio/snd/audio_backends/control_watchdog.rs  | 184 +++++++++++++++++++++
+ .../src/virtio/snd/audio_backends/coreaudio.rs     |  44 ++++-
+ src/devices/src/virtio/snd/mod.rs                  |  17 ++
+ src/devices/src/virtio/snd/worker.rs               |   5 +-
+ src/devices/tests/macos_control_watchdog.rs        |   9 +
+ 6 files changed, 301 insertions(+), 2 deletions(-)
+
+diff --git a/src/devices/src/virtio/snd/audio_backends.rs b/src/devices/src/virtio/snd/audio_backends.rs
+index 2f71b1d..58cc9fe 100644
+--- a/src/devices/src/virtio/snd/audio_backends.rs
++++ b/src/devices/src/virtio/snd/audio_backends.rs
+@@ -6,6 +6,8 @@ mod capture;
+ #[cfg(target_os = "macos")]
+ mod channel_layout;
+ #[cfg(target_os = "macos")]
++mod control_watchdog;
++#[cfg(target_os = "macos")]
+ mod coreaudio;
+ #[cfg(target_os = "linux")]
+ mod pipewire;
+@@ -20,6 +22,48 @@ pub use self::coreaudio::{output_device_exists, playback_maps};
+ use self::pipewire::PwBackend;
+ use super::{stream::Stream, BackendType, Result, SndControl, VirtioSndPcmSetParams};
+ 
++/// Process-wide (one virtio-snd device per VM process): logs a control request still
++/// running past the guest's timeout, naming the host step it is in (STEAMAC-DA).
++#[cfg(target_os = "macos")]
++static CONTROL_WATCHDOG: std::sync::LazyLock<Option<control_watchdog::ControlWatchdog>> =
++    std::sync::LazyLock::new(|| {
++        control_watchdog::ControlWatchdog::new(control_watchdog::STUCK_AFTER, |m| {
++            log::warn!("{m}")
++        })
++        .map_err(|err| log::warn!("snd: control watchdog unavailable: {err}"))
++        .ok()
++    });
++
++/// Marks one control request in flight until dropped.
++pub(super) struct ControlRequest(());
++
++impl ControlRequest {
++    pub(super) fn begin(_what: &'static str) -> Self {
++        #[cfg(target_os = "macos")]
++        if let Some(dog) = CONTROL_WATCHDOG.as_ref() {
++            dog.begin(_what);
++        }
++        Self(())
++    }
++}
++
++impl Drop for ControlRequest {
++    fn drop(&mut self) {
++        #[cfg(target_os = "macos")]
++        if let Some(dog) = CONTROL_WATCHDOG.as_ref() {
++            dog.end();
++        }
++    }
++}
++
++/// Names the host step the current control request is in.
++#[cfg(target_os = "macos")]
++fn control_stage(stage: &'static str) {
++    if let Some(dog) = CONTROL_WATCHDOG.as_ref() {
++        dog.stage(stage);
++    }
++}
++
+ pub trait AudioBackend {
+     fn write(&self, stream_id: u32) -> Result<()>;
+ 
+diff --git a/src/devices/src/virtio/snd/audio_backends/control_watchdog.rs b/src/devices/src/virtio/snd/audio_backends/control_watchdog.rs
+new file mode 100644
+index 0000000..bfdf69d
+--- /dev/null
++++ b/src/devices/src/virtio/snd/audio_backends/control_watchdog.rs
+@@ -0,0 +1,184 @@
++// SPDX-License-Identifier: Apache-2.0 or BSD-3-Clause
++// Name the step a virtio-snd control request is stuck in. The guest gives up on a control
++// message after 1 s ("virtio_snd: control message (0x00000102) timeout") and keeps retrying,
++// while a worker blocked in a CoreAudio call logs nothing (STEAMAC-DA: PCM_PREPARE timed out
++// every few seconds from boot on, no host-side line at all).
++use std::sync::{Arc, Condvar, Mutex};
++use std::thread::{self, ThreadId};
++use std::time::{Duration, Instant};
++
++/// The guest's virtio_snd control timeout (msg_timeout_ms, 1000 by default).
++pub(super) const STUCK_AFTER: Duration = Duration::from_millis(1000);
++/// A request that finished but took this long is logged with its slowest step.
++pub(super) const SLOW_AFTER: Duration = Duration::from_millis(250);
++
++struct Request {
++    what: &'static str,
++    started: Instant,
++    stage: &'static str,
++    stage_started: Instant,
++    slowest: (&'static str, Duration),
++    reported: bool,
++    /// Only this thread's steps describe the request; the pump, capture and warm-up
++    /// threads run the same setup code for themselves.
++    thread: ThreadId,
++}
++
++#[derive(Default)]
++struct State {
++    current: Option<Request>,
++    quit: bool,
++}
++
++pub(super) struct ControlWatchdog {
++    shared: Arc<(Mutex<State>, Condvar)>,
++    report: Arc<dyn Fn(String) + Send + Sync>,
++}
++
++impl ControlWatchdog {
++    pub(super) fn new(
++        stuck_after: Duration,
++        report: impl Fn(String) + Send + Sync + 'static,
++    ) -> std::io::Result<Self> {
++        let shared = Arc::new((Mutex::new(State::default()), Condvar::new()));
++        let report: Arc<dyn Fn(String) + Send + Sync> = Arc::new(report);
++        let (watched, log) = (shared.clone(), report.clone());
++        std::thread::Builder::new()
++            .name("virtio-snd watchdog".into())
++            .spawn(move || {
++                let (lock, cvar) = &*watched;
++                let mut state = lock.lock().unwrap();
++                while !state.quit {
++                    let mut message = None;
++                    if let Some(req) = state.current.as_mut() {
++                        if !req.reported && req.started.elapsed() >= stuck_after {
++                            req.reported = true;
++                            message = Some(format!(
++                                "snd: control {} still running after {} ms, in {} for {} ms \
++                                 (the guest has timed out; its audio fails until it returns)",
++                                req.what,
++                                req.started.elapsed().as_millis(),
++                                req.stage,
++                                req.stage_started.elapsed().as_millis()
++                            ));
++                        }
++                    }
++                    if let Some(message) = message {
++                        drop(state);
++                        log(message);
++                        state = lock.lock().unwrap();
++                        continue;
++                    }
++                    state = cvar
++                        .wait_timeout(state, Duration::from_millis(100))
++                        .unwrap()
++                        .0;
++                }
++            })?;
++        Ok(Self { shared, report })
++    }
++
++    pub(super) fn begin(&self, what: &'static str) {
++        let now = Instant::now();
++        self.shared.0.lock().unwrap().current = Some(Request {
++            what,
++            started: now,
++            stage: "the device",
++            stage_started: now,
++            slowest: ("the device", Duration::ZERO),
++            reported: false,
++            thread: thread::current().id(),
++        });
++    }
++
++    pub(super) fn stage(&self, stage: &'static str) {
++        let mut state = self.shared.0.lock().unwrap();
++        if let Some(req) = state.current.as_mut().filter(|r| r.thread == thread::current().id()) {
++            let spent = req.stage_started.elapsed();
++            if spent > req.slowest.1 {
++                req.slowest = (req.stage, spent);
++            }
++            req.stage = stage;
++            req.stage_started = Instant::now();
++        }
++    }
++
++    pub(super) fn end(&self) {
++        let Some(mut req) = self.shared.0.lock().unwrap().current.take() else {
++            return;
++        };
++        let spent = req.stage_started.elapsed();
++        if spent > req.slowest.1 {
++            req.slowest = (req.stage, spent);
++        }
++        let total = req.started.elapsed();
++        if req.reported || total >= SLOW_AFTER {
++            (self.report)(format!(
++                "snd: control {} finished after {} ms (slowest step: {}, {} ms)",
++                req.what,
++                total.as_millis(),
++                req.slowest.0,
++                req.slowest.1.as_millis()
++            ));
++        }
++    }
++}
++
++impl Drop for ControlWatchdog {
++    fn drop(&mut self) {
++        self.shared.0.lock().unwrap().quit = true;
++        self.shared.1.notify_all();
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::mpsc;
++
++    fn watchdog(stuck: Duration) -> (ControlWatchdog, mpsc::Receiver<String>) {
++        let (tx, rx) = mpsc::channel();
++        let tx = Mutex::new(tx);
++        let dog = ControlWatchdog::new(stuck, move |m| tx.lock().unwrap().send(m).unwrap()).unwrap();
++        (dog, rx)
++    }
++
++    #[test]
++    fn a_stuck_request_is_reported_once_with_its_step_while_still_blocked() {
++        let (dog, rx) = watchdog(Duration::from_millis(50));
++        dog.begin("PCM_PREPARE");
++        dog.stage("playback AudioUnitInitialize");
++        // The audio pump running the same setup code for itself does not relabel it.
++        std::thread::scope(|s| {
++            s.spawn(|| dog.stage("AudioOutputUnitStart"));
++        });
++        // Still blocked: the report must arrive without end().
++        let stuck = rx.recv_timeout(Duration::from_secs(2)).unwrap();
++        assert!(stuck.contains("PCM_PREPARE still running after"), "{stuck}");
++        assert!(stuck.contains("in playback AudioUnitInitialize for"), "{stuck}");
++        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "reported twice");
++        dog.end();
++        let done = rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        assert!(done.contains("PCM_PREPARE finished after"), "{done}");
++        assert!(done.contains("slowest step: playback AudioUnitInitialize"), "{done}");
++    }
++
++    #[test]
++    fn fast_requests_log_nothing_and_slow_ones_name_the_slowest_step() {
++        let (dog, rx) = watchdog(Duration::from_secs(5));
++        dog.begin("PCM_START");
++        dog.stage("playback AudioOutputUnitStart");
++        dog.end();
++        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
++
++        dog.begin("PCM_PREPARE");
++        dog.stage("playback output unit creation");
++        std::thread::sleep(Duration::from_millis(10));
++        dog.stage("playback AudioOutputUnitStart");
++        std::thread::sleep(SLOW_AFTER + Duration::from_millis(20));
++        dog.end();
++        let done = rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        assert!(done.contains("slowest step: playback AudioOutputUnitStart"), "{done}");
++        assert!(!done.contains("still running"), "{done}");
++    }
++}
+diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+index af3f2df..212f0f6 100644
+--- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
++++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+@@ -49,7 +49,7 @@ use super::super::{
+ };
+ use super::capture::{CaptureWorker, Operation};
+ use super::channel_layout::{self, Mixer, MAX_CHANNELS, MAX_DEVICE_CHANNELS};
+-use super::AudioBackend;
++use super::{control_stage, AudioBackend};
+ 
+ #[allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
+ mod ffi {
+@@ -1743,9 +1743,11 @@ impl HostStream {
+         }
+         let unit = match self.direction {
+             Direction::Output => {
++                control_stage("playback output device lookup");
+                 let route = output_route(&self.control).ok_or_else(|| {
+                     Error::UnexpectedAudioBackendError("no usable output device".into())
+                 })?;
++                control_stage("playback AudioComponentInstanceNew/CurrentDevice");
+                 let unit = Unit::new(kAudioUnitSubType_HALOutput)?;
+                 unit.set(
+                     kAudioOutputUnitProperty_CurrentDevice,
+@@ -1806,8 +1808,18 @@ impl HostStream {
+     /// (Re)configure the unit for `fmt`. The unit is left initialized and stopped.
+     fn configure(&mut self, fmt: Format) -> Result<()> {
+         self.tap_pending.clear();
++        // A unit created ahead by the warm-up has no format yet, so a default-device change
++        // since then was not followed (apply_control waits for a format): recheck it once.
++        if self.direction == Direction::Output && self.format.is_none() && self.unit.is_some() {
++            control_stage("playback output device lookup");
++            if output_route(&self.control) != self.output_route {
++                self.unit = None;
++                self.output_route = None;
++            }
++        }
+         self.create_unit()?;
+         let unit = self.unit.as_mut().unwrap();
++        control_stage("AudioUnitUninitialize");
+         unit.uninitialize();
+         match self.direction {
+             Direction::Output => {
+@@ -1818,6 +1830,7 @@ impl HostStream {
+                     .get(fmt.channels as usize - 1)
+                     .ok_or(Error::UnexpectedAudioBackendConfiguration)?;
+                 let mixer = Mixer::new(fmt.format, source, &route.positions);
++                control_stage("playback StreamFormat/ChannelMap");
+                 unit.set(
+                     kAudioUnitProperty_StreamFormat,
+                     kAudioUnitScope_Input,
+@@ -1909,11 +1922,14 @@ impl HostStream {
+         }
+         self.shared.channels.store(fmt.channels, Ordering::Relaxed);
+         self.shared.silence.store(fmt.silence(), Ordering::Relaxed);
++        control_stage("AudioUnitInitialize");
+         unit.initialize()?;
+         if self.direction == Direction::Output {
++            control_stage("playback volume");
+             unit.set_volume(self.control.volume());
+         }
+         self.format = Some(fmt);
++        control_stage("output latency query");
+         self.update_latency();
+         Ok(())
+     }
+@@ -2504,6 +2520,24 @@ impl CoreAudioBackend {
+             .name("virtio-snd coreaudio".into())
+             .spawn(move || pump_thread(pump_inner))
+             .map_err(|e| Error::UnexpectedAudioBackendError(e.to_string()))?;
++        // Create the playback unit while the guest boots: on a cold CoreAudio the first
++        // AudioComponentInstanceNew/CurrentDevice took 2 s here, longer than the guest's 1 s
++        // control timeout, so its first PCM_PREPARE (and the SET_PARAMS behind it) timed out
++        // (STEAMAC-DA). PREPARE waits on the stream lock if this is still running.
++        let warm_inner = inner.clone();
++        std::thread::Builder::new()
++            .name("virtio-snd warm-up".into())
++            .spawn(move || {
++                for host in &warm_inner.hosts {
++                    let mut host = host.lock().unwrap();
++                    if host.direction == Direction::Output && host.unit.is_none() {
++                        if let Err(err) = host.create_unit() {
++                            log::debug!("snd: stream {}: output warm-up: {err}", host.id);
++                        }
++                    }
++                }
++            })
++            .map_err(|e| Error::UnexpectedAudioBackendError(e.to_string()))?;
+         for selector in ROUTE_SELECTORS {
+             let addr = property_address(selector, kAudioObjectPropertyScopeGlobal);
+             // SAFETY: `inner` outlives the registration; Drop removes it first.
+@@ -2625,6 +2659,7 @@ impl AudioBackend for CoreAudioBackend {
+     }
+ 
+     fn prepare(&self, stream_id: u32) -> Result<()> {
++        control_stage("the stream state lock");
+         self.transition(stream_id, "prepare", PCMState::Prepare, PCMState::prepare)?;
+         if let Some(capture) = &self.inner.capture[stream_id as usize] {
+             self.inner.shared[stream_id as usize].running.store(false, Ordering::Release);
+@@ -2642,10 +2677,15 @@ impl AudioBackend for CoreAudioBackend {
+             );
+             (fmt, buffer)
+         };
++        // The playback pump holds this while it talks to the HAL (device switch, restart),
++        // and the warm-up while it creates the output unit.
++        control_stage("the playback stream lock (held by the audio pump or warm-up)");
+         let mut host = self.inner.hosts[stream_id as usize].lock().unwrap();
+         let host = &mut *host;
+         self.trace(host, "PREPARE");
++        control_stage("AudioOutputUnitStop");
+         host.stop_unit();
++        control_stage("flushing queued buffers");
+         host.flush(&mut self.inner.streams.write().unwrap()[stream_id as usize]);
+         host.guest_format = Some(fmt);
+         if host.direction == Direction::Output {
+@@ -2653,11 +2693,13 @@ impl AudioBackend for CoreAudioBackend {
+             if host.format != Some(fmt) || host.unit.is_none() {
+                 host.configure(fmt)?;
+             } else {
++                control_stage("output latency query");
+                 host.update_latency(); // the FIFO depends on the guest buffer
+             }
+             host.open_dump(fmt);
+             // Run from PREPARE so START does not wait for the device; the callback plays
+             // silence until then.
++            control_stage("AudioOutputUnitStart");
+             host.start_unit()?;
+         }
+         self.trace(host, "PREPARE done");
+diff --git a/src/devices/src/virtio/snd/mod.rs b/src/devices/src/virtio/snd/mod.rs
+index 7401415..0ce4622 100644
+--- a/src/devices/src/virtio/snd/mod.rs
++++ b/src/devices/src/virtio/snd/mod.rs
+@@ -361,6 +361,23 @@ pub enum ControlMessageKind {
+     ChmapInfo = 0x0200,
+ }
+ 
++impl ControlMessageKind {
++    /// The spec name; the guest's virtio_snd timeout message identifies it by code.
++    pub fn name(self) -> &'static str {
++        match self {
++            Self::JackInfo => "JACK_INFO",
++            Self::JackRemap => "JACK_REMAP",
++            Self::PcmInfo => "PCM_INFO",
++            Self::PcmSetParams => "PCM_SET_PARAMS",
++            Self::PcmPrepare => "PCM_PREPARE (0x0102)",
++            Self::PcmRelease => "PCM_RELEASE (0x0103)",
++            Self::PcmStart => "PCM_START (0x0104)",
++            Self::PcmStop => "PCM_STOP (0x0105)",
++            Self::ChmapInfo => "CHMAP_INFO",
++        }
++    }
++}
++
+ impl TryFrom<u32> for ControlMessageKind {
+     type Error = InvalidControlMessage;
+ 
+diff --git a/src/devices/src/virtio/snd/worker.rs b/src/devices/src/virtio/snd/worker.rs
+index dd34da2..abef30a 100644
+--- a/src/devices/src/virtio/snd/worker.rs
++++ b/src/devices/src/virtio/snd/worker.rs
+@@ -9,7 +9,7 @@ use utils::eventfd::EventFd;
+ use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
+ 
+ use super::super::DeviceQueue;
+-use super::audio_backends::{alloc_audio_backend, AudioBackend};
++use super::audio_backends::{alloc_audio_backend, AudioBackend, ControlRequest};
+ use super::defs::{CTL_INDEX, EVT_INDEX, QUEUE_INDEXES, RXQ_INDEX, TXQ_INDEX};
+ use super::stream::{Error as StreamError, Stream};
+ use super::virtio_sound::{
+@@ -324,6 +324,9 @@ impl SndWorker {
+                 return Ok(());
+             }
+         };
++        // Until the reply is queued: a request still running after the guest's 1 s timeout
++        // is logged with the host step it is in.
++        let _request = ControlRequest::begin(code.name());
+         match code {
+             ControlMessageKind::ChmapInfo => {
+                 if descriptors.len() != 3 {
+diff --git a/src/devices/tests/macos_control_watchdog.rs b/src/devices/tests/macos_control_watchdog.rs
+new file mode 100644
+index 0000000..fac2343
+--- /dev/null
++++ b/src/devices/tests/macos_control_watchdog.rs
+@@ -0,0 +1,9 @@
++#![cfg(all(target_os = "macos", feature = "snd"))]
++#![allow(dead_code)]
++// A control request blocked in a host step is reported while still blocked, once, with
++// the step; a completed slow one names its slowest step; fast ones log nothing.
++mod audio_backends {
++    mod control_watchdog {
++        include!("../src/virtio/snd/audio_backends/control_watchdog.rs");
++    }
++}

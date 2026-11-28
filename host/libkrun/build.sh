@@ -46,6 +46,11 @@
 # v1.19.8 already has what patches 0001, 0002, 0004, 0005, 0006 and 0025 of the v1.19.6
 # series added: VIRTIO_GPU_F_BLOB_ALIGNMENT, the SME mask on every vCPU, the virtio-input
 # select/subsel and ABS_INFO fixes, the scanout-area read and imago 0.2.6.
+# Patch 0023 logs a virtio-snd control request still running after the guest's 1 s timeout,
+# while it is blocked, with the CoreAudio step it is in, and slow finished ones with their
+# slowest step (STEAMAC-DA: PCM_PREPARE timeouts with no host line). It also creates the
+# playback output unit while the guest boots: a cold CoreAudio took 2 s for it here, and the
+# guest timed out its first PREPARE.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -137,6 +142,9 @@ done
 	# Blocked capture setup must time out; late starts stop, and errors complete promptly.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_capture
+	# A blocked control request is reported once while blocked, with its own step.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features snd --test macos_control_watchdog
 	# A missing proxy identifies connect (not bind), its endpoint path and errno.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features net --lib -- missing_proxy_reports_connect_operation_and_peer_path
