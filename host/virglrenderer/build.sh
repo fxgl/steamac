@@ -49,6 +49,12 @@
 # No protocol or fatal behaviour changes. test/context-diagnostics.py drives the renderer
 # API without a VM: two named contexts reuse one missing object ID and a third has an
 # invalid reply resource; every line names the right context.
+# Patch 0024 binds vkSetReplyCommandStreamMESA's reply stream under resource_mutex and has
+# vkr_context_destroy_resource unpublish a resource before checking the streams and freeing
+# it (STEAMAC-G: a reply resource read with the impossible fd type 1922203991 during fossilize
+# teardown, i.e. freed memory). Unattached and non-shm reply streams stay fatal; destroy
+# lines name the context. The ring/main-thread interleaving is not reproduced here (no
+# host-only ring harness); reply-resource.py and context-diagnostics.py still pass.
 #
 # Installation never rewrites a file in place (a running VM may have the dylib mapped): meson
 # installs into a staging DESTDIR and every file is moved into work/out/host (new inode).

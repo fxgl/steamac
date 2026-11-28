@@ -1,0 +1,225 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 12:00:00 +0000
+Subject: [PATCH] venus: bind reply streams under the resource lock; free resources after unpublishing
+
+STEAMAC-G (1.9.15, fossilize context 21, event 5b831e76): the reply
+resource of a vkSetReplyCommandStreamMESA was read with fd type 1922203991,
+a value no resource ever has, amid ring-resource destruction during replay
+teardown. vkr_context_get_resource drops resource_mutex before the caller
+reads the entry, and nothing pins it: a ring thread could look the resource
+up, a destroy on the main thread could check the streams (not yet bound)
+and free it, and the ring thread then read and bound freed memory. The
+decoder's vkExecuteCommandStreamsMESA path had the same window between
+vkr_context_destroy_resource's stream check and its free.
+
+vkSetReplyCommandStreamMESA now looks up, checks and binds under
+resource_mutex. vkr_context_destroy_resource first unpublishes the resource
+(removes it from the table under resource_mutex, keeping the detach
+history), then checks the context's and rings' streams, then frees it: a
+concurrent bind has either completed (and is caught as before) or cannot
+find the resource. The mutex is never held while rings are stopped. An
+unattached or non-shm reply stream stays fatal. The context's ID and debug
+name are added to the "destroyed while ... uses it" lines.
+
+Not reproduced deterministically: the interleaving needs a guest ring
+thread; no host-only ring harness exists. reply-resource.py and
+context-diagnostics.py pass with this patch.
+
+Generated-by: LLM
+---
+ src/venus/vkr_context.c   | 41 ++++++++++++++++++++++++++++-------------
+ src/venus/vkr_context.h   | 17 ++++++++++++-----
+ src/venus/vkr_transport.c | 23 ++++++++++++++++-------
+ 3 files changed, 56 insertions(+), 25 deletions(-)
+
+diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
+index 0bc06bd3..e2395d12 100644
+--- a/src/venus/vkr_context.c
++++ b/src/venus/vkr_context.c
+@@ -285,9 +285,8 @@ vkr_context_submit_cmd(struct vkr_context *ctx, const void *buffer, size_t size)
+ }
+ 
+ static inline void
+-vkr_context_free_resource(struct hash_entry *entry)
++vkr_context_free_resource_data(struct vkr_resource *res)
+ {
+-   struct vkr_resource *res = entry->data;
+    if (res->fd_type == VIRGL_RESOURCE_FD_SHM) {
+       munmap(res->u.data, res->size);
+       if (res->shm_fd >= 0)
+@@ -297,6 +296,12 @@ vkr_context_free_resource(struct hash_entry *entry)
+    free(res);
+ }
+ 
++static inline void
++vkr_context_free_resource(struct hash_entry *entry)
++{
++   vkr_context_free_resource_data(entry->data);
++}
++
+ static inline bool
+ vkr_context_add_resource(struct vkr_context *ctx, struct vkr_resource *res)
+ {
+@@ -319,32 +324,37 @@ vkr_context_now_ns(void)
+    return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+ }
+ 
+-static inline void
+-vkr_context_remove_resource(struct vkr_context *ctx, uint32_t res_id)
++/* Removes res_id from the table and returns it: from here no lookup finds it, and
++ * vkSetReplyCommandStreamMESA (which binds under resource_mutex) has either already
++ * bound it or will fail. The caller checks the streams, then frees it. */
++static struct vkr_resource *
++vkr_context_unpublish_resource(struct vkr_context *ctx, uint32_t res_id)
+ {
+    mtx_lock(&ctx->resource_mutex);
+    struct hash_entry *entry = _mesa_hash_table_search(ctx->resource_table, &res_id);
++   struct vkr_resource *res = NULL;
+    if (likely(entry)) {
+-      vkr_context_free_resource(entry);
++      res = entry->data;
+       _mesa_hash_table_remove(ctx->resource_table, entry);
+       const uint32_t slot = ctx->resources_detached++ % ARRAY_SIZE(ctx->detached);
+       ctx->detached[slot].res_id = res_id;
+       ctx->detached[slot].time_ns = vkr_context_now_ns();
+    }
+    mtx_unlock(&ctx->resource_mutex);
++   return res;
+ }
+ 
+ void
+ vkr_context_log_reply_resource(struct vkr_context *ctx,
+                                uint32_t res_id,
+-                               const struct vkr_resource *res,
++                               int fd_type,
+                                uint64_t offset,
+                                uint64_t size)
+ {
+-   if (res) {
++   if (fd_type >= 0) {
+       vkr_log("failed to set reply stream: res_id %u of context %u (%s) has fd type %d, "
+               "not shm (offset %" PRIu64 ", size %" PRIu64 ")",
+-              res_id, ctx->ctx_id, ctx->debug_name, (int)res->fd_type, offset, size);
++              res_id, ctx->ctx_id, ctx->debug_name, fd_type, offset, size);
+       return;
+    }
+ 
+@@ -588,7 +598,11 @@ vkr_context_import_resource(struct vkr_context *ctx,
+ void
+ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+ {
+-   struct vkr_resource *res = vkr_context_get_resource(ctx, res_id);
++   /* Unpublish first: a ring thread's vkSetReplyCommandStreamMESA binds under
++    * resource_mutex, so after this it has either bound res (caught below) or cannot
++    * find it. Checking before removal let a ring bind res between the check and the free.
++    */
++   struct vkr_resource *res = vkr_context_unpublish_resource(ctx, res_id);
+    if (!res)
+       return;
+ 
+@@ -596,7 +610,8 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+     * a ring happened to be running
+     */
+    if (!vkr_cs_encoder_check_stream(&ctx->encoder, res)) {
+-      vkr_log("resource %u destroyed while the context replies into it (CS error)", res_id);
++      vkr_log("resource %u destroyed while context %u (%s) replies into it (CS error)",
++              res_id, ctx->ctx_id, ctx->debug_name);
+       vkr_context_set_fatal(ctx);
+    }
+ 
+@@ -605,8 +620,8 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+       if (ring->resource == res ||
+           !vkr_cs_decoder_check_stream(&ring->decoder, res) ||
+           !vkr_cs_encoder_check_stream(&ring->encoder, res)) {
+-         vkr_log("resource %u destroyed while ring %" PRIu64 " uses it (CS error)", res_id,
+-                 ring->id);
++         vkr_log("resource %u destroyed while ring %" PRIu64 " of context %u (%s) uses it "
++                 "(CS error)", res_id, ring->id, ctx->ctx_id, ctx->debug_name);
+          vkr_context_set_fatal(ctx);
+ 
+          mtx_unlock(&ctx->ring_mutex);
+@@ -618,7 +633,7 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+    }
+    mtx_unlock(&ctx->ring_mutex);
+ 
+-   vkr_context_remove_resource(ctx, res_id);
++   vkr_context_free_resource_data(res);
+ }
+ 
+ void
+diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
+index b3df6f37..7611b738 100644
+--- a/src/venus/vkr_context.h
++++ b/src/venus/vkr_context.h
+@@ -165,22 +165,29 @@ void
+ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id);
+ 
+ /* Logs why res_id is not a usable reply stream of ctx: not attached (and
+- * whether it was detached recently) or not a shm resource. */
++ * whether it was detached recently, fd_type -1) or not a shm resource. */
+ void
+ vkr_context_log_reply_resource(struct vkr_context *ctx,
+                                uint32_t res_id,
+-                               const struct vkr_resource *res,
++                               int fd_type,
+                                uint64_t offset,
+                                uint64_t size);
+ 
++/* With resource_mutex held: the resource stays alive until it is released. */
++static inline struct vkr_resource *
++vkr_context_get_resource_locked(struct vkr_context *ctx, uint32_t res_id)
++{
++   const struct hash_entry *entry = _mesa_hash_table_search(ctx->resource_table, &res_id);
++   return likely(entry) ? entry->data : NULL;
++}
++
+ static inline struct vkr_resource *
+ vkr_context_get_resource(struct vkr_context *ctx, uint32_t res_id)
+ {
+    mtx_lock(&ctx->resource_mutex);
+-   const struct hash_entry *entry = _mesa_hash_table_search(ctx->resource_table, &res_id);
++   struct vkr_resource *res = vkr_context_get_resource_locked(ctx, res_id);
+    mtx_unlock(&ctx->resource_mutex);
+-
+-   return likely(entry) ? entry->data : NULL;
++   return res;
+ }
+ 
+ static inline void
+diff --git a/src/venus/vkr_transport.c b/src/venus/vkr_transport.c
+index 86cb0b75..6c1f881f 100644
+--- a/src/venus/vkr_transport.c
++++ b/src/venus/vkr_transport.c
+@@ -17,16 +17,25 @@ vkr_dispatch_vkSetReplyCommandStreamMESA(
+    struct vn_command_vkSetReplyCommandStreamMESA *args)
+ {
+    struct vkr_context *ctx = dispatch->data;
+-   struct vkr_resource *res = vkr_context_get_resource(ctx, args->pStream->resourceId);
+-   if (!res || res->fd_type != VIRGL_RESOURCE_FD_SHM) {
+-      vkr_context_log_reply_resource(ctx, args->pStream->resourceId, res,
++   struct vkr_cs_encoder *enc = (struct vkr_cs_encoder *)dispatch->encoder;
++   /* Look up, check and bind under resource_mutex: vkr_context_destroy_resource on the
++    * main thread unpublishes the resource under the same mutex before it checks the
++    * streams and frees it, so the reply stream never binds a resource that is being
++    * freed (STEAMAC-G: a reply resource read with an impossible fd type 1922203991).
++    */
++   mtx_lock(&ctx->resource_mutex);
++   struct vkr_resource *res =
++      vkr_context_get_resource_locked(ctx, args->pStream->resourceId);
++   const int fd_type = res ? (int)res->fd_type : -1;
++   if (res && res->fd_type == VIRGL_RESOURCE_FD_SHM)
++      vkr_cs_encoder_set_stream(enc, res, args->pStream->offset, args->pStream->size);
++   mtx_unlock(&ctx->resource_mutex);
++
++   if (fd_type != VIRGL_RESOURCE_FD_SHM) {
++      vkr_context_log_reply_resource(ctx, args->pStream->resourceId, fd_type,
+                                      args->pStream->offset, args->pStream->size);
+       vkr_context_set_fatal(ctx);
+-      return;
+    }
+-
+-   struct vkr_cs_encoder *enc = (struct vkr_cs_encoder *)dispatch->encoder;
+-   vkr_cs_encoder_set_stream(enc, res, args->pStream->offset, args->pStream->size);
+ }
+ 
+ static void
