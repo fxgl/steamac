@@ -130,6 +130,9 @@ robustImageAccess2 is emitted as a structured loop instead of an `expected ')'` 
 (STEAMAC-B6/B7/B8/B9; `sentry-b6-continue.sh`, GPU readback). A robustBufferAccess2 load whose value is
 used after its loop is zeroed where it is assigned, instead of at every use with a bounds check naming a
 temporary of the loop (`use of undeclared identifier`, STEAMAC-CB/CF; `sentry-cb-robust-hoist.sh`).
+Each distinct buffer/image copy shape is logged once (`[mvk-copy] shape`, 128 per process), and a copy
+out of range of its Metal texture or buffer is logged and skipped instead of reaching the driver (STEAMAC-5/D3/D4:
+crashes inside AGX while encoding a texture readback; their copy is not yet known; `REPRO_CASE=sentry-5-copy-range`).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function

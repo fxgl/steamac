@@ -169,6 +169,10 @@
 #   failure 0051/0053 avoid with pull-model sample-rate interpolation, enabled only on
 #   Apple7-without-Apple8. Enable it for Apple7/Apple8 (M1, M2), not Apple9+ (no
 #   reports). Verified on M1 only: the captured pair links with the workaround.
+#   MoltenVK 0060 (STEAMAC-5/D3/D4, AGX crash encoding copyFromTexture:...toBuffer:): every
+#   distinct buffer/image copy shape is logged once ("[mvk-copy] shape", 128 per process) and
+#   a copy whose level, slice, size or buffer span is out of range of its Metal objects is
+#   logged and not encoded. REPRO_CASE=sentry-5-copy-range: Metal validation aborted before.
 #   SPIRV-Cross 0064 (STEAMAC-B6/B7/B8/B9, dxil-spirv continue-construct image writes):
 #   robustImageAccess2 guards OpImageWrite with its own if-scope, which the for-loop
 #   emitter comma-joined into the increment (`expected ')'`). A continue block whose
@@ -475,6 +479,7 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         and give opt-in capture instructions (STEAMAC-AG/G diagnostics, no hang fix)"
 	echo "  0058 = steamac: device residency sets per command buffer, not per shared queue (STEAMAC-3/D8/D9: 32-set queue limit)"
 	echo "  0059 = steamac: projected sample-rate interpolation workaround on M2 too (STEAMAC-CA)"
+	echo "  0060 = steamac: buffer/image copy shapes logged once; out-of-range copies logged and skipped (STEAMAC-5/D3/D4)"
 	echo "SPIRV-Cross patches (host/moltenvk/patches/spirv-cross):"
 	for p in "$here"/patches/spirv-cross/*.patch; do echo "  $(basename "$p")"; done
 	echo "  0001/0002 = KhronosGroup/SPIRV-Cross 35f52882+da223760 and 0706157e (PR #2666), library only"

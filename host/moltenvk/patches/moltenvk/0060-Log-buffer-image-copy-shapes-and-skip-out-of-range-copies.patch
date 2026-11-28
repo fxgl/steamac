@@ -1,0 +1,174 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 15:00:00 +0000
+Subject: [PATCH] Log buffer/image copy shapes and skip out-of-range copies
+
+STEAMAC-5/D3/D4 (1.9.15, M1 Max, macOS 15.6.1, appid 949230, two crashes):
+SIGBUS/SIGSEGV inside AGXMetalG13X under MVKCmdBufferImageCopy<1>::encode,
+the copyFromTexture:...toBuffer: call of a vkCmdCopyImageToBuffer, on a vkr
+ring thread. Nothing records what was copied: format, texture, level, slice,
+region, pitches, buffer length or span. MoltenVK never checks the span
+against the Metal buffer: Metal API validation catches it in development,
+a release process passes it to the driver.
+
+Before each Metal copy, compute the bytes the copy uses in the buffer
+(offset + (depth - 1) * bytes/image + (block rows - 1) * bytes/row + the last
+row's bytes, with the depth/stencil aspect adjustments), and check the level,
+slice and size against the texture. A copy out of range is logged
+("[mvk-copy] <reason> ...", first 16 per process) and not encoded. Every
+distinct copy shape (format, texture, level, size, pitches, options, buffer
+storage; not origin or offset) is logged once ("[mvk-copy] shape ..."), up
+to 128 per process, at any log level, so a crash in the driver can be
+matched to the copies the game made. No change to in-range copies.
+
+The crash itself is not reproduced and its copy is not known to be out of
+range. Regression: host/moltenvk/repro REPRO_CASE=sentry-5-copy-range: a
+128x128 readback checked byte for byte logs its shape; the same copy into a
+4 KiB buffer aborted the process before (Metal validation: totalBytesUsed
+65536 > length 4096, the span computed here), now it is logged and skipped.
+
+Generated-by: LLM
+---
+ MoltenVK/Commands/MVKCmdTransfer.mm | 117 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 116 insertions(+), 1 deletion(-)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdTransfer.mm b/MoltenVK/MoltenVK/Commands/MVKCmdTransfer.mm
+index a3ef8cb..d90230a 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdTransfer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdTransfer.mm
+@@ -1122,7 +1122,94 @@ static inline MTLPixelFormat getDepthStencilAspectFormat(const MTLPixelFormat fo
+     }
+     return VK_SUCCESS;
+ }
+-    
++
++// STEAMAC-5/D3/D4: the VM process crashed (SIGBUS/SIGSEGV) inside AGX while encoding
++// copyFromTexture:...toBuffer: of a vkCmdCopyImageToBuffer, with nothing in the logs saying what
++// was copied. Every distinct copy shape is logged once (bounded), at any log level, so the copy a
++// crash follows can be matched; a copy whose level, slice, size or buffer span is out of range of
++// its Metal objects is logged and not encoded instead of reaching the driver.
++struct MVKBufferImageCopyShape {
++	bool toImage;
++	id<MTLTexture> texture;
++	MTLPixelFormat format;
++	VkFormat vkFormat;
++	uint32_t level;
++	uint32_t slice;
++	MTLOrigin origin;
++	MTLSize size;
++	id<MTLBuffer> buffer;
++	uint64_t offset;
++	uint64_t bytesPerRow;
++	uint64_t bytesPerImage;
++	uint64_t end;
++	MTLBlitOption options;
++};
++
++static void mvkLogBufferImageCopy(const char* what, const MVKBufferImageCopyShape& c, MVKPixelFormats* pixFmts) {
++	id<MTLTexture> t = c.texture;
++	fprintf(stderr, "[mvk-copy] %s %s: texture %s (Vk %s) type %lu %lux%lux%lu levels %lu layers %lu storage %lu%s%s,"
++			" level %u slice %u origin %lu,%lu,%lu size %lux%lux%lu; buffer length %lu storage %lu%s%s offset %llu"
++			" bytes/row %llu bytes/image %llu end %llu options %lu\n",
++			what, c.toImage ? "vkCmdCopyBufferToImage" : "vkCmdCopyImageToBuffer",
++			pixFmts->getName(c.format), pixFmts->getName(c.vkFormat), (unsigned long)t.textureType,
++			(unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.depth,
++			(unsigned long)t.mipmapLevelCount, (unsigned long)t.arrayLength, (unsigned long)t.storageMode,
++			t.buffer ? " buffer-backed" : "", t.heap ? " heap" : "",
++			c.level, c.slice, (unsigned long)c.origin.x, (unsigned long)c.origin.y, (unsigned long)c.origin.z,
++			(unsigned long)c.size.width, (unsigned long)c.size.height, (unsigned long)c.size.depth,
++			(unsigned long)c.buffer.length, (unsigned long)c.buffer.storageMode, c.buffer.heap ? " heap" : "",
++			c.buffer.contents ? " mapped" : "", (unsigned long long)c.offset, (unsigned long long)c.bytesPerRow,
++			(unsigned long long)c.bytesPerImage, (unsigned long long)c.end, (unsigned long)c.options);
++}
++
++// Logs a shape the first time it is seen, up to 128 per process (origin and offset excluded).
++static void mvkNoteBufferImageCopyShape(const MVKBufferImageCopyShape& c, MVKPixelFormats* pixFmts) {
++	constexpr uint32_t maxShapes = 128;
++	static std::mutex lock;
++	static uint64_t seen[maxShapes];
++	static uint32_t count;
++	id<MTLTexture> t = c.texture;
++	const uint64_t fields[] = {
++		c.toImage, (uint64_t)c.format, (uint64_t)t.textureType, t.width, t.height, t.depth, t.mipmapLevelCount,
++		t.arrayLength, (uint64_t)t.storageMode, t.buffer != nil, c.level, c.size.width, c.size.height,
++		c.size.depth, c.bytesPerRow, c.bytesPerImage, (uint64_t)c.options, (uint64_t)c.buffer.storageMode,
++		c.buffer.heap != nil,
++	};
++	uint64_t hash = 1469598103934665603ull;
++	for (uint64_t f : fields) { hash = (hash ^ f) * 1099511628211ull; }
++	{
++		std::lock_guard<std::mutex> guard(lock);
++		if (count > maxShapes) { return; }
++		for (uint32_t i = 0; i < count; i++) { if (seen[i] == hash) { return; } }
++		if (count == maxShapes) {
++			count++;
++			fprintf(stderr, "[mvk-copy] %u buffer/image copy shapes logged; further ones are not\n", count - 1);
++			return;
++		}
++		seen[count++] = hash;
++	}
++	mvkLogBufferImageCopy("shape", c, pixFmts);
++}
++
++// Why the copy is out of range of its Metal texture or buffer, or NULL.
++static const char* mvkBufferImageCopyRangeError(const MVKBufferImageCopyShape& c) {
++	id<MTLTexture> t = c.texture;
++	NSUInteger slices = 1;
++	switch (t.textureType) {
++		case MTLTextureType1DArray:
++		case MTLTextureType2DArray:
++		case MTLTextureType2DMultisampleArray: slices = t.arrayLength; break;
++		case MTLTextureTypeCube: slices = 6; break;
++		case MTLTextureTypeCubeArray: slices = 6 * t.arrayLength; break;
++		default: break;
++	}
++	if (c.level >= t.mipmapLevelCount) { return "level past the texture's mip levels"; }
++	if (c.slice >= slices) { return "slice past the texture's slices"; }
++	if (!c.size.width || !c.size.height || !c.size.depth) { return "empty size (origin outside the level)"; }
++	if (c.end > c.buffer.length) { return "buffer span past the Metal buffer"; }
++	return nullptr;
++}
++
+ template <size_t N>
+ void MVKCmdBufferImageCopy<N>::encode(MVKCommandEncoder* cmdEncoder) {
+     id<MTLBuffer> mtlBuffer = _buffer->getMTLBuffer();
+@@ -1185,12 +1272,40 @@ static inline MTLPixelFormat getDepthStencilAspectFormat(const MTLPixelFormat fo
+ 		// Don't supply bytes per image if not an arrayed texture
+ 		if ( !isArrayTexture() ) { bytesPerImg = 0; }
+ 
++		// Bytes of the last row of the copied region, as Metal reads or writes them
++		uint64_t rowBytes = pixFmts->getBytesPerRow(mtlPixFmt, (uint32_t)mtlTxtSize.width);
++		if (mvkIsAnyFlagEnabled(blitOptions, MTLBlitOptionStencilFromDepthStencil)) {
++			rowBytes = mtlTxtSize.width;
++		} else if (mvkIsAnyFlagEnabled(blitOptions, MTLBlitOptionDepthFromDepthStencil) &&
++				   pixFmts->getBytesPerTexel(mtlPixFmt) != 4) {
++			rowBytes -= mtlTxtSize.width;
++		}
++		const uint64_t blockHeight = std::max(pixFmts->getBlockTexelSize(mtlPixFmt).height, 1u);
++		const uint64_t blockRows = (mtlTxtSize.height + blockHeight - 1) / blockHeight;
++
+         id<MTLBlitCommandEncoder> mtlBlitEnc = cmdEncoder->getMTLBlitEncoder(cmdUse);
+ 
+         uint32_t layCnt = cpyRgn.imageSubresource.layerCount == VK_REMAINING_ARRAY_LAYERS ?
+             _image->getLayerCount() - cpyRgn.imageSubresource.baseArrayLayer :
+             cpyRgn.imageSubresource.layerCount;
+         for (uint32_t lyrIdx = 0; lyrIdx < layCnt; lyrIdx++) {
++            MVKBufferImageCopyShape shape = {
++                .toImage = _toImage, .texture = mtlTexture, .format = mtlPixFmt, .vkFormat = _image->getVkFormat(),
++                .level = mipLevel, .slice = cpyRgn.imageSubresource.baseArrayLayer + lyrIdx,
++                .origin = mtlTxtOrigin, .size = mtlTxtSize, .buffer = mtlBuffer,
++                .offset = mtlBuffOffset + (uint64_t)bytesPerImg * lyrIdx,
++                .bytesPerRow = bytesPerRow, .bytesPerImage = bytesPerImg, .options = blitOptions,
++            };
++            shape.end = shape.offset + (mtlTxtSize.depth ? mtlTxtSize.depth - 1 : 0) * shape.bytesPerImage +
++                        (blockRows ? blockRows - 1 : 0) * shape.bytesPerRow + rowBytes;
++            mvkNoteBufferImageCopyShape(shape, pixFmts);
++            if (const char* rangeError = mvkBufferImageCopyRangeError(shape)) {
++                static std::atomic<uint32_t> rejected;
++                if (rejected.fetch_add(1, std::memory_order_relaxed) < 16) {
++                    mvkLogBufferImageCopy(rangeError, shape, pixFmts);
++                }
++                continue;
++            }
+             if (_toImage) {
+                 [mtlBlitEnc copyFromBuffer: mtlBuffer
+                               sourceOffset: (mtlBuffOffset + (bytesPerImg * lyrIdx))

@@ -240,6 +240,9 @@
 # queue_residency.c (REPRO_CASE=queue-residency; STEAMAC-3/D8/D9): 40 VkDevices alive at once on one physical
 # device each fill and read back their own buffer, then half are replaced; MoltenVK aborted at the 33rd
 # (32 residency sets per shared MTLCommandQueue).
+# sentry-5-copy-range.c (MoltenVK only, REPRO_CASE=sentry-5-copy-range; STEAMAC-5/D3/D4): a 128x128 readback is
+# checked byte for byte and its shape logged once ("[mvk-copy] shape"); the same copy into a 4 KiB buffer is logged
+# ("buffer span past the Metal buffer") and not encoded, where Metal API validation aborted the process.
 # All run with Metal API validation in assert mode (MTL_DEBUG_LAYER), so a Metal validation error
 # fails the run instead of aborting a VM later.
 # All applicable tests must pass on MoltenVK. On KosmicKrisp all but 5 and 10 must pass (1 sizes the descriptor pool with
@@ -394,6 +397,18 @@ if [ "${REPRO_CASE:-}" = sentry-ct-encoders ]; then
 	[ "$driver" = kosmickrisp ] || { echo "sentry-ct-encoders requires KosmicKrisp" >&2; exit 2; }
 	build sentry-ct-encoders
 	"$work/sentry-ct-encoders"
+	exit
+fi
+if [ "${REPRO_CASE:-}" = sentry-5-copy-range ]; then
+	[ "$driver" = moltenvk ] || { echo "sentry-5-copy-range requires MoltenVK" >&2; exit 2; }
+	build sentry-5-copy-range
+	log=$work/sentry-5-copy-range.log
+	"$work/sentry-5-copy-range" > "$log" 2>&1 || { cat "$log"; exit 1; }
+	cat "$log"
+	grep -q '^\[mvk-copy\] shape vkCmdCopyImageToBuffer: texture MTLPixelFormatRGBA8Uint' "$log" ||
+		{ echo "FAIL sentry-5-copy-range: no shape line for the valid copy" >&2; exit 1; }
+	grep -q '^\[mvk-copy\] buffer span past the Metal buffer vkCmdCopyImageToBuffer' "$log" ||
+		{ echo "FAIL sentry-5-copy-range: the out-of-range copy was not reported" >&2; exit 1; }
 	exit
 fi
 if [ "${REPRO_CASE:-}" = sentry-ag ]; then
