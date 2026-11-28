@@ -321,6 +321,12 @@ a.game-row:hover { background: var(--bg2); }
 .pair figure { margin: 0; }
 .pair img { border-radius: 6px; border: 1px solid var(--line); }
 .pair figcaption { margin-top: 8px; font: 13px/1.4 var(--mono); color: var(--text2); }
+/* Video reviews: two YouTube embeds side by side. */
+.videos { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.videos figure { margin: 0; }
+.videos iframe { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 6px; background: #000; }
+.videos figcaption { margin-top: 8px; font: 13px/1.4 var(--mono); color: var(--text2); }
+.videos figcaption b { color: var(--text); font-weight: 600; }
 .table-scroll { overflow-x: auto; }
 .bench { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .bench th, .bench td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
@@ -517,7 +523,7 @@ body.drawer-open { overflow: hidden; }
   .pipe-bridge b, .pipe-bridge small { transform: none; }
   .settings-grid { grid-template-columns: 1fr; }
   .settings-window { position: static; max-width: 420px; margin: 0 auto; order: -1; }
-  .get-grid, .footer-grid { grid-template-columns: 1fr; }
+  .get-grid, .footer-grid, .videos { grid-template-columns: 1fr; }
   .facts { grid-template-columns: repeat(2, 1fr); }
   .facts li:nth-child(3) { padding-left: 0; border-left: 0; }
   .facts li:nth-child(n + 3) { border-top: 1px solid var(--line); }
