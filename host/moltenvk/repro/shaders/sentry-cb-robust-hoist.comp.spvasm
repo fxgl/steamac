@@ -1,0 +1,71 @@
+; STEAMAC-CB/CF: a uniform-buffer load inside a loop whose value is also used after the loop,
+; as dxil-spirv emits. SPIRV-Cross hoists the loaded temporary out of the loop and assigns it
+; there; with robustBufferAccess2 it then wrapped every use of the temporary in the bounds check,
+; `(uint(idx) < size ? v : 0)`, whose index is a temporary of the loop: after the loop Metal
+; reported `use of undeclared identifier`. idx is read three times, so it is a loop temporary.
+;
+;   for (i = 0;; i++) { idx = i + 2; v = cb.m[idx].y; if (v <= i) break; o[i + 1] = cb.m[idx].x + 2 * idx; }
+;   o[0] = v;
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main"
+               OpExecutionMode %main LocalSize 1 1 1
+               OpDecorate %arr_v4 ArrayStride 16
+               OpMemberDecorate %CB 0 Offset 0
+               OpDecorate %CB Block
+               OpDecorate %cb DescriptorSet 0
+               OpDecorate %cb Binding 0
+               OpDecorate %rarr_uint ArrayStride 4
+               OpMemberDecorate %Out 0 Offset 0
+               OpDecorate %Out Block
+               OpDecorate %out DescriptorSet 0
+               OpDecorate %out Binding 1
+       %void = OpTypeVoid
+     %fnvoid = OpTypeFunction %void
+       %uint = OpTypeInt 32 0
+       %bool = OpTypeBool
+     %v4uint = OpTypeVector %uint 4
+    %uint_16 = OpConstant %uint 16
+     %arr_v4 = OpTypeArray %v4uint %uint_16
+         %CB = OpTypeStruct %arr_v4
+     %ptr_CB = OpTypePointer Uniform %CB
+         %cb = OpVariable %ptr_CB Uniform
+%ptr_u_uint = OpTypePointer Uniform %uint
+  %rarr_uint = OpTypeRuntimeArray %uint
+        %Out = OpTypeStruct %rarr_uint
+    %ptr_Out = OpTypePointer StorageBuffer %Out
+        %out = OpVariable %ptr_Out StorageBuffer
+%ptr_s_uint = OpTypePointer StorageBuffer %uint
+     %uint_0 = OpConstant %uint 0
+     %uint_1 = OpConstant %uint 1
+     %uint_2 = OpConstant %uint 2
+       %main = OpFunction %void None %fnvoid
+      %entry = OpLabel
+               OpBranch %header
+     %header = OpLabel
+          %i = OpPhi %uint %uint_0 %entry %next %continue
+               OpLoopMerge %merge %continue None
+               OpBranch %cond
+       %cond = OpLabel
+        %idx = OpIAdd %uint %i %uint_2
+         %py = OpAccessChain %ptr_u_uint %cb %uint_0 %idx %uint_1
+          %v = OpLoad %uint %py
+         %le = OpULessThanEqual %bool %v %i
+               OpBranchConditional %le %merge %body
+       %body = OpLabel
+         %px = OpAccessChain %ptr_u_uint %cb %uint_0 %idx %uint_0
+          %x = OpLoad %uint %px
+       %idx2 = OpIAdd %uint %idx %idx
+         %xs = OpIAdd %uint %x %idx2
+         %i1 = OpIAdd %uint %i %uint_1
+         %po = OpAccessChain %ptr_s_uint %out %uint_0 %i1
+               OpStore %po %xs
+               OpBranch %continue
+   %continue = OpLabel
+       %next = OpIAdd %uint %i %uint_1
+               OpBranch %header
+      %merge = OpLabel
+         %p0 = OpAccessChain %ptr_s_uint %out %uint_0 %uint_0
+               OpStore %p0 %v
+               OpReturn
+               OpFunctionEnd

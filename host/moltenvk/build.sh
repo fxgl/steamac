@@ -174,6 +174,10 @@
 #   emitter comma-joined into the increment (`expected ')'`). A continue block whose
 #   statements open a scope is now emitted structured (for (;;), continue inline).
 #   sentry-b6-continue.sh reproduces the error from valid SPIR-V and checks GPU writes.
+#   SPIRV-Cross 0065 (STEAMAC-CB/CF, `use of undeclared identifier`): a robustBufferAccess2 load
+#   hoisted out of a loop had its bounds check re-applied at every use, after the loop naming
+#   a temporary of the loop. A load emitted to a temporary is now zeroed where it is assigned.
+#   sentry-cb-robust-hoist.sh reproduces the error from valid SPIR-V and checks GPU values.
 #   Xcode        command line tools + Metal toolchain (built and tested with Xcode 26.3)
 #
 # Build is UTM's (scripts/build_dependencies.sh build_moltenvk): ./fetchDependencies --macos
@@ -589,6 +593,8 @@ mvk_version=$(sed -n 's/.*"api_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 	echo "         (STEAMAC-87/BB; 1.9.14 duplicate locnN regression, pixels/cache round trip)"
 	echo "  0064 = steamac: continue blocks with scoped statements (robust image-write guards) emitted as structured loops"
 	echo "         (STEAMAC-B6/B7/B8/B9 'expected )' in for-loop increments)"
+	echo "  0065 = steamac: robust buffer loads in temporaries zeroed where assigned, not at each use"
+	echo "         (STEAMAC-CB/CF 'use of undeclared identifier' after a loop)"
 	echo
 	echo "Geometry shader emulation limits: no GS instancing (Invocations > 1); B8G8R8A8 and packed"
 	echo "  (2_10_10_10, 11_11_10) vertex formats are not swizzled/unpacked by the object stage; vertex outputs are"

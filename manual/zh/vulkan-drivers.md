@@ -36,6 +36,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 颜色附件格式未被 KosmicKrisp 声明为可渲染（BC6H）的图形管线会创建失败并记录日志，而不是由 Metal 以“not color renderable”中止进程（STEAMAC-BN/D5，Hunt: Showdown；`REPRO_CASE=sentry-bn-bc6h`）；KosmicKrisp 无法运行、且没有输入装配状态的网格着色器管线同样如此（STEAMAC-CG/CH，《最终幻想 VII 重生》：`kk_gather_program` 读到其为 NULL；`REPRO_CASE=sentry-cg-mesh`）。遮挡查询池在主机内存中保存其堆索引：GPU 可见的索引被覆写（发生在《刺客信条：英灵殿》的 GPU 地址错误之后，STEAMAC-7C/7D）时会记录日志并恢复，而不是让 `vkResetQueryPool` 崩溃；覆写来源尚不清楚。同时存在超过 32 个 VkDevice 时 MoltenVK 不再中止：Metal 每个命令队列最多允许 32 个驻留集，而 MoltenVK 的队列由所有设备共享，因此设备的驻留集改为随其命令缓冲区使用（STEAMAC-3/D8/D9；`REPRO_CASE=queue-residency`，40 个设备）。M1 上针对按样本频率输入做投影采样的规避（未定义的 `llvm.agx2.sample.itrproj.1xf`）现也用于 M2（STEAMAC-CA，M2 Max；仅在 M1 上验证）。在 robustImageAccess2 下，continue 块写入图像的循环改为输出结构化循环，而不是带 `expected ')'` 错误的 for 循环头（STEAMAC-B6/B7/B8/B9；`sentry-b6-continue.sh`，GPU 回读）。
 录制每满 4096 个编码器就开始一个新的 Metal 命令缓冲区：Metal 4 曾在提交时以 OutOfMemory 拒绝包含 Black Mesa 30,721 个渲染通道的命令缓冲区，其中的工作完全没有执行（STEAMAC-G/CT；M1 Max 上超过约 37,000 个时失败；`REPRO_CASE=sentry-ct-encoders`）。
+在 robustBufferAccess2 下，值在循环之后仍被使用的加载改为在赋值处清零，而不是在每次使用时套上引用循环内临时变量的边界检查（`use of undeclared identifier`，STEAMAC-CB/CF；`sentry-cb-robust-hoist.sh`）。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。

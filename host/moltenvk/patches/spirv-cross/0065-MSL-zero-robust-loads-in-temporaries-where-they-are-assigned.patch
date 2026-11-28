@@ -1,0 +1,56 @@
+From: steamac <steamac@fxgam.es>
+Date: Sat, 28 Nov 2026 14:00:00 +0000
+Subject: [PATCH] MSL: zero robust loads in temporaries where they are assigned
+
+STEAMAC-CB (two events) and STEAMAC-CF (1.9.15, M1/M2): MoltenVK shader
+library compile failed, "162:24 use of undeclared identifier '_154'". A
+uniform-buffer load in an inner loop (`_156 = cb5.m[min(_154, ...)].y`,
+`_154 = _122 + 256u` a temporary of the loop) is used after the loop, so
+SPIRV-Cross hoists `_156` out of the loop and assigns it there. With
+robustBufferAccess2 the OpLoad handler then replaced the expression of the
+load, already a temporary, with `(uint(_154) < size ? _156 : 0)`: every use
+re-evaluated the bounds check, after the loop naming `_154`, out of scope
+(and in scope, with the values its operands had at that use).
+
+When the load went into a temporary (unpacked, of the logical type), zero it
+right after its assignment, `_156 = cond ? _156 : 0;`, where the operands of
+the check are those of the load, and leave its uses as the temporary.
+Forwarded loads keep the select in their expression; array loads keep their
+`if (!cond) { t = {}; }`.
+
+Regression: host/moltenvk/repro/sentry-cb-robust-hoist.sh <spirv-cross>:
+valid SPIR-V with a robust uniform load in a loop, its index a temporary of
+the loop, used after it reproduces `use of undeclared identifier` before;
+after, MSL 2.4 and 3.0 compile with and without robustness, and the GPU
+reads 0 after the loop for an out-of-bounds index (the unguarded value runs
+the loop on) and the loaded values in bounds. Of SPIRV-Cross's MSL test
+shaders (344 GLSL, 219 assembly) run with robustBufferAccess2, only
+load-packed-no-forwarding-4 changes: its two temporaries are zeroed at their
+assignment instead of at each use. sentry-msl.sh, sentry-b6-continue.sh and
+sentry-8j-projected.sh pass.
+
+Generated-by: LLM
+---
+ spirv_msl.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index b41d6e7..94b698b 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -11573,6 +11573,15 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
+ 				statement(to_name(id), " = {};");
+ 				end_scope();
+ 			}
++			else if (expr && expr->expression == to_name(id))
++			{
++				// The load went into a temporary (unpacked, of the logical type), which can be hoisted
++				// out of a loop and used after it. Zero it where it is assigned: the bounds check names
++				// temporaries of this block, which a use after the loop would not see (STEAMAC-CB/CF,
++				// `use of undeclared identifier`), and would read with their values at that use.
++				statement(to_name(id), " = ", info.bounds_check_condition, " ? ", to_name(id), " : ",
++				          robust_zero_expression(get<SPIRType>(result_type)), ";");
++			}
+ 			else if (expr)
+ 			{
+ 				// A forwarded load is still in the physical layout of the buffer (packed vectors and

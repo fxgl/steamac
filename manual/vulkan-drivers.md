@@ -127,7 +127,9 @@ command buffers (STEAMAC-3/D8/D9; `REPRO_CASE=queue-residency`, 40 devices). The
 sampling of sample-rate inputs (undefined `llvm.agx2.sample.itrproj.1xf`) now also applies on M2
 (STEAMAC-CA, M2 Max; verified on M1 only). A loop whose continue block writes an image with
 robustImageAccess2 is emitted as a structured loop instead of an `expected ')'` for-loop header
-(STEAMAC-B6/B7/B8/B9; `sentry-b6-continue.sh`, GPU readback).
+(STEAMAC-B6/B7/B8/B9; `sentry-b6-continue.sh`, GPU readback). A robustBufferAccess2 load whose value is
+used after its loop is zeroed where it is assigned, instead of at every use with a bounds check naming a
+temporary of the loop (`use of undeclared identifier`, STEAMAC-CB/CF; `sentry-cb-robust-hoist.sh`).
 `host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
