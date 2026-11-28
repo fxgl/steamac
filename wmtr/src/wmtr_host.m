@@ -1241,7 +1241,16 @@ executor(void *arg) {
       j->h = h; j->len = hdr.size; j->copy = calloc(1, hdr.size + WMTR_COPY_SLACK);
       memcpy(j->copy, scratch, hdr.size);
       atomic_fetch_add(&h->n_worker, 1);
-      dispatch_async_f(cls == WMTR_CLASS_B ? h->block_q : h->compile_q, j, job_run);
+      if (cls == WMTR_CLASS_B) { dispatch_async_f(h->block_q, j, job_run); continue; }
+      /* A frame always waits for a compute pipeline (DXMT never skips one), while graphics pipelines and shader
+       * translations can wait (DXMT_ASYNC_PIPELINES skips their draws). A burst of 40+ graphics compiles at match
+       * start ran at the executor's priority and made every compile, including the one compute pipeline a frame was
+       * waiting on, take 100-900 ms. So everything but newComputePipelineState (29) runs at utility QoS, which the
+       * Metal compiler service inherits. */
+      qos_class_t qos = hdr.call == 29 ? QOS_CLASS_USER_INTERACTIVE : QOS_CLASS_UTILITY;
+      dispatch_block_t b = dispatch_block_create_with_qos_class(DISPATCH_BLOCK_ENFORCE_QOS_CLASS, qos, 0, ^{ job_run(j); });
+      dispatch_async(h->compile_q, b);
+      Block_release(b);
       continue;
     }
     execute(h, scratch, hdr.size);
